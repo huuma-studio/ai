@@ -1,0 +1,16 @@
+{
+  "name": "@huuma/ai",
+  "version": "0.0.1",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./model": "./src/model/mod.ts",
+    "./workflow": "./src/workflow/mod.ts",
+    "./models": "./models/mod.ts",
+    "./models/google": "./models/google/mod.ts"
+  },
+  "imports": {
+    "@google/genai": "npm:@google/genai@^0.12.0",
+    "@huuma/validate": "jsr:@huuma/validate@^0.0.12",
+    "@/": "./src/"
+  }
+}
