@@ -33,7 +33,7 @@ type Gemini_2_0_Flash =
 type Gemini_2_5_Flash = "gemini-2.5-flash-preview-04-17";
 
 type Gemini_2_5_Pro =
-  | "gemini-2.5-pro-preview-03-25"
+  | "gemini-2.5-pro-preview-05-06"
   | "gemini-2.5-pro-exp-03-25";
 type GeminiModels =
   | Gemini_2_0_Flash_Light
