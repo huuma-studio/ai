@@ -1,6 +1,6 @@
 {
   "name": "@huuma/ai",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "exports": {
     ".": "./src/mod.ts",
     "./model": "./src/model/mod.ts",
