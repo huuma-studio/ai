@@ -3,6 +3,7 @@ interface WorkflowOptions<T> {
   description?: string;
   state?: T;
   start: Callable<T>;
+  maxSteps?: number;
 }
 
 enum WorkflowStatus {
@@ -13,37 +14,50 @@ enum WorkflowStatus {
 }
 
 interface Callable<T> {
-  call: (state: T) => Promise<T>;
+  call: (state: T, count: () => void) => Promise<T>;
 }
 
-export class Workflow<T> implements Callable<T> {
+export class Workflow<T> {
   #name: string;
   #description?: string;
   #status: WorkflowStatus = WorkflowStatus.CREATED;
   #start: Callable<T>;
   #state?: T;
+  #stepsCount = 0;
 
-  constructor({ name, description, start, state }: WorkflowOptions<T>) {
+  constructor(
+    { name, description, start, state }: WorkflowOptions<T>,
+  ) {
     this.#name = name;
     this.#description = description;
     this.#start = start;
     this.#state = state;
   }
 
+  get status(): WorkflowStatus {
+    return this.#status;
+  }
+
+  get stepsCount(): number {
+    return this.#stepsCount;
+  }
+
   start(state?: T): Promise<T> {
     if (!this.#state && !state) {
       throw Error("State must be present");
     }
-    return this.call(this.#state || state!);
+    return this.#call(this.#state || state!);
   }
 
-  async call(state: T): Promise<T> {
-    if (this.#state === WorkflowStatus.RUNNING) {
+  async #call(state: T): Promise<T> {
+    if (this.#status === WorkflowStatus.RUNNING) {
       throw new Error("Workflow is currently running. Wait until finished.");
     }
     this.#status = WorkflowStatus.RUNNING;
     try {
-      const result = await this.#start.call(state);
+      const result = await this.#start.call(state, () => {
+        this.#stepsCount++;
+      });
       this.#status = WorkflowStatus.COMPLETED;
       return result;
     } catch (e) {
@@ -57,7 +71,7 @@ export function workflow<T>(options: WorkflowOptions<T>): Workflow<T> {
   return new Workflow(options);
 }
 
-export class Step<T> {
+export class Step<T> implements Callable<T> {
   #fn: (state: T) => Promise<T> | T;
   #next?: Callable<T>;
 
@@ -65,10 +79,11 @@ export class Step<T> {
     this.#fn = fn;
   }
 
-  async call(state: T): Promise<T> {
+  async call(state: T, count: () => void): Promise<T> {
+    count();
     const _state = await this.#fn(state);
     if (this.#next && typeof this.#next.call === "function") {
-      return this.#next.call(_state);
+      return this.#next.call(_state, count);
     }
     return _state;
   }
@@ -81,7 +96,7 @@ export function step<T>(fn: (state: T) => Promise<T> | T): Step<T> {
   return new Step(fn);
 }
 
-export class Descision<T> implements Callable<T> {
+export class Decision<T> implements Callable<T> {
   #condition: (state: T) => Promise<boolean> | boolean;
   #then: Callable<T>;
   #else: Callable<T>;
@@ -96,18 +111,18 @@ export class Descision<T> implements Callable<T> {
     this.#then = then;
     this.#else = _else;
   }
-  async call(state: T): Promise<T> {
+  async call(state: T, count: () => void): Promise<T> {
     if (await this.#condition(state)) {
-      return this.#then.call(state);
+      return this.#then.call(state, count);
     }
-    return this.#else.call(state);
+    return this.#else.call(state, count);
   }
 }
 
-export function descision<T>(options: {
+export function decision<T>(options: {
   condition: (state: T) => Promise<boolean> | boolean;
   then: Callable<T>;
   else: Callable<T>;
-}): Descision<T> {
-  return new Descision(options);
+}): Decision<T> {
+  return new Decision(options);
 }
