@@ -43,6 +43,7 @@ export type ToolCallContent<T = JSONSchema> = {
     name: string;
     props: T;
   };
+  reasoning?: string;
 };
 
 export type ToolResultContent<T = unknown> = {
@@ -55,9 +56,3 @@ export type ToolResultContent<T = unknown> = {
     };
   };
 };
-
-export interface Tool {
-  name: string;
-  description: string;
-  input: JSONSchema;
-}

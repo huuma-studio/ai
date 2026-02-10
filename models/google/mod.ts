@@ -5,42 +5,39 @@ import {
   type GenerateContentResponse,
   GoogleGenAI,
   type Part,
-  type Schema,
+  type Schema as JSONSchema,
 } from "@google/genai";
 import type {
   Message,
   ModelMessage,
   TextContent,
-  Tool,
   ToolCallContent,
   ToolResultContent,
 } from "@/mod.ts";
 import type { BaseModel, ModelResult } from "@/model/mod.ts";
-import type { JSONSchema } from "@huuma/validate";
+import type { Schema } from "@huuma/validate";
+import type { Tool } from "@/tools/mod.ts";
 
-type Gemini_2_0_Flash_Light =
-  | "gemini-2.0-flash-lite"
-  // Discontinuation date: February 25, 2026
-  | "gemini-2.0-flash-lite-001";
-
-type Gemini_2_0_Flash =
-  | "gemini-2.0-flash"
-  // Discontinuation date: February 5, 2026
-  | "gemini-2.0-flash-001"
-  // Discontinuation date: April 9, 2026
-  | "gemini-2.0-flash-live-preview-04-09";
-
-type Gemini_2_5_Flash = "gemini-2.5-flash-preview-04-17";
-
-type Gemini_2_5_Pro =
-  | "gemini-2.5-pro-preview-05-06"
-  | "gemini-2.5-pro-exp-03-25";
+// Discontinuation date: April 9, 2026
+type Gemini_2_0_Flash_Light = "gemini-2.0-flash-lite";
+// Discontinuation date: April 9, 2026
+type Gemini_2_0_Flash = "gemini-2.0-flash";
+type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
+type Gemini_2_5_Flash = "gemini-2.5-flash";
+type Gemini_2_5_Pro = "gemini-2.5-pro";
+type Gemini_3_Flash = "gemini-3-flash-preview";
+type Gemini_3_Pro = "gemini-3-pro-preview";
 type GeminiModels =
   | Gemini_2_0_Flash_Light
   | Gemini_2_0_Flash
+  | Gemini_2_5_Flash_Light
   | Gemini_2_5_Flash
   | Gemini_2_5_Pro
-  | `custom-${string}`;
+  | Gemini_3_Flash
+  | Gemini_3_Pro
+  | string
+    // deno-lint-ignore ban-types
+    & {};
 
 interface GoogleGenAIOptions {
   apiKey: string;
@@ -50,7 +47,8 @@ interface GoogleGenAiGenerateOptions {
   modelId: GeminiModels;
   messages: Message[];
   system?: string;
-  tools?: Tool[];
+  // deno-lint-ignore no-explicit-any
+  tools?: Tool<any>[];
 }
 
 export class GoogleGenAIModel implements BaseModel {
@@ -65,7 +63,7 @@ export class GoogleGenAIModel implements BaseModel {
     { modelId, messages, tools, system }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
     const { candidates } = await this.#model.models.generateContent({
-      model: parseModelId(modelId),
+      model: modelId,
       contents: genAIContentsFrom(messages),
       config: {
         systemInstruction: system,
@@ -125,13 +123,6 @@ function modelResultFrom<T extends GeminiModels>(
   return { modelId, messages };
 }
 
-function parseModelId(modelId: GeminiModels): string {
-  if (modelId.startsWith("custom-")) {
-    return modelId.replace("custom-", "");
-  }
-  return modelId;
-}
-
 function genAIContentsFrom(messages: Message[]): ContentListUnion {
   return messages.map(genAIContentFrom);
 }
@@ -162,6 +153,7 @@ function genAIPartFrom(
   if ("toolCall" in content) {
     const { id, name, props } = content.toolCall;
     return {
+      thoughtSignature: content.reasoning,
       functionCall: { id, name, args: props },
     };
   }
@@ -187,7 +179,7 @@ function messagesFrom(
 
   const parts = candidate.content?.parts || [];
 
-  for (const { text, functionCall } of parts) {
+  for (const { text, functionCall, thoughtSignature } of parts) {
     if (text) {
       message.contents.push({ text });
     }
@@ -199,7 +191,7 @@ function messagesFrom(
           props: functionCall.args || {},
         };
         message.toolCalls.push(toolCall);
-        message.contents.push({ toolCall });
+        message.contents.push({ toolCall, reasoning: thoughtSignature });
       } else {
         console.info(
           "Tool call messages skipped because of missing tool call name",
@@ -211,7 +203,8 @@ function messagesFrom(
   return [message];
 }
 
-function parametersFrom(jsonSchema: JSONSchema): Schema {
+// deno-lint-ignore no-explicit-any
+function parametersFrom(schema: Schema<any>): JSONSchema {
   // TODO: apply logic to comply with googles OpenApi based schema
-  return jsonSchema as Schema;
+  return schema.jsonSchema() as JSONSchema;
 }
