@@ -88,6 +88,9 @@ export class Step<T> implements Callable<T> {
     return _state;
   }
   next(callable: Callable<T>): void {
+    if (this.#next) {
+      throw new Error("Step already has a next step");
+    }
     this.#next = callable;
   }
 }
