@@ -1,2 +1,4 @@
 .DS_Store
 deno.lock
+.zed/*
+node_modules/*
