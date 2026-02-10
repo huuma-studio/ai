@@ -7,7 +7,8 @@
     "./model": "./src/model/mod.ts",
     "./workflow": "./src/workflow/mod.ts",
     "./models": "./models/mod.ts",
-    "./models/google": "./models/google/mod.ts"
+    "./models/google": "./models/google/mod.ts",
+    "./tools": "./src/tools/mod.ts"
   },
   "imports": {
     "@deno/sandbox": "jsr:@deno/sandbox@^0.11.0",
