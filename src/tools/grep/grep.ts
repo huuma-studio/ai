@@ -181,8 +181,7 @@ function parseSingleFileResults(
     ...(truncated && {
       truncated: true,
       totalMatches: lines.length,
-      message:
-        `Results truncated to ${maxTotal} of ${lines.length} matches`,
+      message: `Results truncated to ${maxTotal} of ${lines.length} matches`,
     }),
   };
 }
