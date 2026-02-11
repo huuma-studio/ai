@@ -1,9 +1,13 @@
-import { object } from "@huuma/validate/object";
-import { tool } from "../mod.ts";
-import { string } from "@huuma/validate/string";
+import { object, type ObjectSchema } from "@huuma/validate/object";
+import { type Tool, tool } from "../mod.ts";
+import { string, type StringSchema } from "@huuma/validate/string";
 import { dirname } from "@std/path/dirname";
 
-export function readFile() {
+export function readFile(): Tool<
+  ObjectSchema<{
+    path: StringSchema<string>;
+  }>
+> {
   return tool({
     name: "read_file",
     description:
@@ -33,7 +37,16 @@ export function readFile() {
   });
 }
 
-export function writeFile() {
+export function writeFile(): Tool<
+  ObjectSchema<{
+    path: StringSchema<string>;
+    content: StringSchema<string>;
+  }>,
+  {
+    success: boolean;
+    path: string;
+  }
+> {
   return tool({
     name: "write_file",
     description:
@@ -63,7 +76,15 @@ export function writeFile() {
   });
 }
 
-export function createDirectory() {
+export function createDirectory(): Tool<
+  ObjectSchema<{
+    path: StringSchema<string>;
+  }>,
+  {
+    success: boolean;
+    path: string;
+  }
+> {
   return tool({
     name: "create_directory",
     description:
@@ -92,7 +113,15 @@ export function createDirectory() {
   });
 }
 
-export function deleteFile() {
+export function deleteFile(): Tool<
+  ObjectSchema<{
+    path: StringSchema<string>;
+  }>,
+  {
+    success: boolean;
+    path: string;
+  }
+> {
   return tool({
     name: "delete_file",
     description:
@@ -119,7 +148,24 @@ export function deleteFile() {
   });
 }
 
-export function files() {
+export function files(): (
+  | Tool<
+    ObjectSchema<{
+      path: StringSchema<string>;
+    }>,
+    unknown
+  >
+  | Tool<
+    ObjectSchema<{
+      path: StringSchema<string>;
+      content: StringSchema<string>;
+    }>,
+    {
+      success: boolean;
+      path: string;
+    }
+  >
+)[] {
   return [
     readFile(),
     writeFile(),

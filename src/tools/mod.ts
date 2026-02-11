@@ -28,15 +28,15 @@ export class Tool<T extends Schema<any>, R = unknown> {
   #input: T;
   #fn: (props: T["infer"]) => (Promise<R>) | R;
 
-  get name() {
+  get name(): string {
     return this.#name;
   }
 
-  get description() {
+  get description(): string {
     return this.#description;
   }
 
-  get input() {
+  get input(): T {
     return this.#input;
   }
 

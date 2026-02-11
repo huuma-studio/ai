@@ -1,11 +1,23 @@
-import { array, object, string } from "@huuma/validate";
+import {
+  array,
+  type ArraySchema,
+  object,
+  type ObjectSchema,
+  string,
+  type StringSchema,
+} from "@huuma/validate";
 import { Tool } from "@/tools/mod.ts";
 
 export interface CliToolOptions {
   allowedCommands: string[];
 }
 
-export function cli({ allowedCommands }: CliToolOptions) {
+export function cli({ allowedCommands }: CliToolOptions): Tool<
+  ObjectSchema<{
+    command: StringSchema<string>;
+    args: ArraySchema<StringSchema<string>>;
+  }>
+> {
   return new Tool({
     name: "cli",
     description: `Execute CLI commands. Allowed commands: ${

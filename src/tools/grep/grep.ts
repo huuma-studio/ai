@@ -1,4 +1,11 @@
-import { boolean, object, string } from "@huuma/validate";
+import {
+  boolean,
+  type BooleanSchema,
+  object,
+  type ObjectSchema,
+  string,
+  type StringSchema,
+} from "@huuma/validate";
 import { Tool } from "@/tools/mod.ts";
 
 export interface GrepMatch {
@@ -11,7 +18,21 @@ export interface GrepFileResult {
   matches: GrepMatch[];
 }
 
-export function grep() {
+export function grep(): Tool<
+  ObjectSchema<{
+    pattern: StringSchema<string>;
+    path: StringSchema<string>;
+    glob: StringSchema<string | undefined>;
+    caseSensitive: BooleanSchema<boolean | undefined>;
+  }>,
+  {
+    path: string;
+    results: GrepFileResult[];
+    truncated?: boolean;
+    totalMatches?: number;
+    message?: string;
+  }
+> {
   return new Tool({
     name: "grep",
     description:
