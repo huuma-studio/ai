@@ -16,7 +16,8 @@ export function cli({ allowedCommands }: CliToolOptions): Tool<
   ObjectSchema<{
     command: StringSchema<string>;
     args: ArraySchema<StringSchema<string>>;
-  }>
+  }>,
+  string
 > {
   return new Tool({
     name: "cli",
