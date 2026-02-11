@@ -1,9 +1,17 @@
-
 import type { SearchOptions, SearchProvider, SearchResponse } from "./types.ts";
 
 export class BraveSearchProvider implements SearchProvider {
-  async search(query: string, options?: SearchOptions): Promise<SearchResponse> {
-    const apiKey = options?.apiKey ?? Deno.env.get("BRAVE_API_KEY");
+  #apiKey?: string;
+
+  constructor(apiKey?: string) {
+    this.#apiKey = apiKey;
+  }
+
+  async search(
+    query: string,
+    options?: SearchOptions,
+  ): Promise<SearchResponse> {
+    const apiKey = this.#apiKey ?? Deno.env.get("BRAVE_API_KEY");
 
     if (!apiKey) {
       throw new Error("Brave API Key is required");
@@ -23,7 +31,9 @@ export class BraveSearchProvider implements SearchProvider {
     });
 
     if (!response.ok) {
-      throw new Error(`Brave Search failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Brave Search failed: ${response.status} ${response.statusText}`,
+      );
     }
 
     const data = await response.json();

@@ -9,7 +9,6 @@ export interface SearchResponse {
 }
 
 export interface SearchOptions {
-  apiKey?: string;
   count?: number;
 }
 
