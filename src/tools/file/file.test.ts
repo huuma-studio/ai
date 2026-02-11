@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
-import { createDirectory, readFile, writeFile } from "@/tools/file/file.ts";
+import {
+  createDirectory,
+  deleteFile,
+  readFile,
+  writeFile,
+} from "@/tools/file/file.ts";
 
 Deno.test("createDirectory - creates a new directory", async () => {
   const tempDir = await Deno.makeTempDir();
@@ -117,7 +122,7 @@ Deno.test("readFile - throws error if file not found", async () => {
     await assertRejects(
       async () => await tool.call({ path: filePath }),
       Error,
-      `File not found: ${filePath}`
+      `File not found: ${filePath}`,
     );
   } finally {
     await Deno.remove(tempDir, { recursive: true });
@@ -134,7 +139,69 @@ Deno.test("readFile - throws error if path is a directory", async () => {
     await assertRejects(
       async () => await tool.call({ path: dirPath }),
       Error,
-      `Path is a directory, not a file: ${dirPath}`
+      `Path is a directory, not a file: ${dirPath}`,
+    );
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
+Deno.test("removeFile - removes a file", async () => {
+  const tempDir = await Deno.makeTempDir();
+  const filePath = join(tempDir, "test.txt");
+  const tool = deleteFile();
+
+  try {
+    await Deno.writeTextFile(filePath, "content");
+    const result = await tool.call({ path: filePath });
+    assertEquals(result, { success: true, path: filePath });
+    await assertRejects(
+      async () => await Deno.readTextFile(filePath),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+    } catch {
+      // ignore if already removed (though it shouldn't be for tempDir itself unless recursive remove inside removed it?)
+    }
+  }
+});
+
+Deno.test("removeFile - removes a directory recursively", async () => {
+  const tempDir = await Deno.makeTempDir();
+  const dirPath = join(tempDir, "subdir");
+  const filePath = join(dirPath, "test.txt");
+  const tool = deleteFile();
+
+  try {
+    await Deno.mkdir(dirPath);
+    await Deno.writeTextFile(filePath, "content");
+    const result = await tool.call({ path: dirPath });
+    assertEquals(result, { success: true, path: dirPath });
+    await assertRejects(
+      async () => await Deno.stat(dirPath),
+      Deno.errors.NotFound,
+    );
+  } finally {
+    try {
+      await Deno.remove(tempDir, { recursive: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
+Deno.test("removeFile - throws error if not found", async () => {
+  const tempDir = await Deno.makeTempDir();
+  const filePath = join(tempDir, "non_existent.txt");
+  const tool = deleteFile();
+
+  try {
+    await assertRejects(
+      async () => await tool.call({ path: filePath }),
+      Error,
+      `File or directory not found: ${filePath}`,
     );
   } finally {
     await Deno.remove(tempDir, { recursive: true });

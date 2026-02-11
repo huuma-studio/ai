@@ -82,10 +82,48 @@ export function createDirectory() {
           );
         }
         if (error instanceof Deno.errors.AlreadyExists) {
-          throw new Error(`Path already exists and is not a directory: ${path}`);
+          throw new Error(
+            `Path already exists and is not a directory: ${path}`,
+          );
         }
         throw error;
       }
     },
   });
+}
+
+export function deleteFile() {
+  return tool({
+    name: "delete_file",
+    description:
+      "Delete a file or directory at the given path. Deletes directories recursively.",
+    input: object({
+      path: string(),
+    }),
+    fn: async ({ path }) => {
+      try {
+        await Deno.remove(path, { recursive: true });
+        return { success: true, path };
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) {
+          throw new Error(`File or directory not found: ${path}`);
+        }
+        if (error instanceof Deno.errors.PermissionDenied) {
+          throw new Error(
+            `Permission denied: ${path}. Make sure to run with --allow-write.`,
+          );
+        }
+        throw error;
+      }
+    },
+  });
+}
+
+export function files() {
+  return [
+    readFile(),
+    writeFile(),
+    createDirectory(),
+    deleteFile(),
+  ];
 }
