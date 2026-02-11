@@ -62,22 +62,26 @@ export class GoogleGenAIModel implements BaseModel {
   async generate(
     { modelId, messages, tools, system }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
-    const { candidates } = await this.#model.models.generateContent({
-      model: modelId,
-      contents: genAIContentsFrom(messages),
-      config: {
-        systemInstruction: system,
-        tools: tools?.length
-          ? [{
-            functionDeclarations: tools.map(({ name, description, input }) => ({
-              name,
-              description,
-              parameters: parametersFrom(input),
-            })),
-          }]
-          : undefined,
-      },
-    });
+    const { candidates, usageMetadata } = await this.#model.models
+      .generateContent({
+        model: modelId,
+        contents: genAIContentsFrom(messages),
+        config: {
+          systemInstruction: system,
+          tools: tools?.length
+            ? [{
+              functionDeclarations: tools.map((
+                { name, description, input },
+              ) => ({
+                name,
+                description,
+                parameters: parametersFrom(input),
+              })),
+            }]
+            : undefined,
+        },
+      });
+    console.log(usageMetadata);
     return modelResultFrom(modelId, messagesFrom(candidates));
   }
 
