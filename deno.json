@@ -17,6 +17,7 @@
     "@std/front-matter": "jsr:@std/front-matter@^1.0.9",
     "@/": "./src/",
     "@std/path": "jsr:@std/path@^1.1.4",
-    "@std/assert": "jsr:@std/assert"
+    "@std/assert": "jsr:@std/assert",
+    "node-html-markdown": "npm:node-html-markdown@^2.0.0"
   }
 }
