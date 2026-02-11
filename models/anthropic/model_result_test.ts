@@ -7,7 +7,7 @@ Deno.test("modelResultFrom - text only", () => {
     id: "msg_123",
     type: "message",
     role: "assistant",
-    model: "claude-3-5-sonnet-latest",
+    model: "claude-sonnet-4-5-20250929",
     content: [
       { type: "text", text: "Hello there!", citations: null },
     ],
@@ -27,7 +27,7 @@ Deno.test("modelResultFrom - text only", () => {
 
   const result = modelResultFrom(mockResponse);
 
-  assertEquals(result.modelId, "claude-3-5-sonnet-latest");
+  assertEquals(result.modelId, "claude-sonnet-4-5-20250929");
   assertEquals(result.messages.length, 1);
   const message = result.messages[0];
   assertEquals(message.role, "model");
@@ -43,7 +43,7 @@ Deno.test("modelResultFrom - text and tool use", () => {
     id: "msg_123",
     type: "message",
     role: "assistant",
-    model: "claude-3-5-sonnet-latest",
+    model: "claude-sonnet-4-5-20250929",
     content: [
       { type: "text", text: "I will check the weather.", citations: null },
       {
@@ -69,7 +69,7 @@ Deno.test("modelResultFrom - text and tool use", () => {
 
   const result = modelResultFrom(mockResponse);
 
-  assertEquals(result.modelId, "claude-3-5-sonnet-latest");
+  assertEquals(result.modelId, "claude-sonnet-4-5-20250929");
   const message = result.messages[0];
 
   if (message.role !== "model") throw new Error("Expected model role");

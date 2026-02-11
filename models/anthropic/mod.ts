@@ -9,39 +9,34 @@ import type {
 import type { Tool } from "@/tools/mod.ts";
 
 /**
- * Anthropic models available.
+ * Anthropic models currently available (non-deprecated, non-retired).
  *
- * Includes aliases (latest) and specific versions.
+ * Based on https://docs.anthropic.com/en/docs/about-claude/models and
+ * https://docs.anthropic.com/en/docs/about-claude/model-deprecations
+ *
  * @see https://docs.anthropic.com/en/docs/about-claude/models
  */
 export type AnthropicModels =
-  // Claude Opus 4.6 (Latest 2026)
+  // Claude Opus 4.6
   | "claude-opus-4-6-latest"
   | "claude-opus-4-6"
+  // Claude Opus 4.5
+  | "claude-opus-4-5-20251101"
+  // Claude Opus 4.1
+  | "claude-opus-4-1-20250805"
+  // Claude Opus 4
+  | "claude-opus-4-20250514"
   // Claude Sonnet 4.5
   | "claude-sonnet-4-5-latest"
   | "claude-sonnet-4-5"
   | "claude-sonnet-4-5-20250929"
+  // Claude Sonnet 4
+  | "claude-sonnet-4-20250514"
   // Claude Haiku 4.5
   | "claude-haiku-4-5-latest"
   | "claude-haiku-4-5"
   | "claude-haiku-4-5-20251001"
-  // Claude 3.7 Sonnet
-  | "claude-3-7-sonnet-latest"
-  | "claude-3-7-sonnet-20250219"
-  // Claude 3.5 Sonnet
-  | "claude-3-5-sonnet-latest"
-  | "claude-3-5-sonnet-20241022"
-  | "claude-3-5-sonnet-20240620"
-  // Claude 3.5 Haiku
-  | "claude-3-5-haiku-latest"
-  | "claude-3-5-haiku-20241022"
-  // Claude 3 Opus
-  | "claude-3-opus-latest"
-  | "claude-3-opus-20240229"
-  // Claude 3 Sonnet
-  | "claude-3-sonnet-20240229"
-  // Claude 3 Haiku
+  // Claude 3 Haiku (still active)
   | "claude-3-haiku-20240307";
 
 /**
