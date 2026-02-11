@@ -18,6 +18,10 @@ Deno.test("modelResultFrom - text only", () => {
       output_tokens: 20,
       cache_creation_input_tokens: null,
       cache_read_input_tokens: null,
+      cache_creation: null,
+      inference_geo: null,
+      server_tool_use: null,
+      service_tier: null,
     },
   };
 
@@ -56,6 +60,10 @@ Deno.test("modelResultFrom - text and tool use", () => {
       output_tokens: 30,
       cache_creation_input_tokens: null,
       cache_read_input_tokens: null,
+      cache_creation: null,
+      inference_geo: null,
+      server_tool_use: null,
+      service_tier: null,
     },
   };
 
