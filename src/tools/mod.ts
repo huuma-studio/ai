@@ -2,12 +2,24 @@ import { type Schema, ValidationException } from "@huuma/validate";
 import type { Message, ModelMessage, ToolResultContent } from "@huuma/ai";
 
 export { cli, type CliToolOptions } from "@/tools/cli/cli.ts";
+
 export {
   grep,
   type GrepFileResult,
   type GrepMatch,
 } from "@/tools/grep/grep.ts";
-export { fetchUrl } from "@/tools/fetch/fetch.ts";
+
+export {
+  createDirectory,
+  deleteFile,
+  files,
+  readFile,
+  writeFile,
+} from "@/tools/file/file.ts";
+
+export { fetchWebsite } from "@/tools/browser/browser.ts";
+
+export { search } from "@/tools/search/search.ts";
 
 // deno-lint-ignore no-explicit-any
 export class Tool<T extends Schema<any>, R = unknown> {
