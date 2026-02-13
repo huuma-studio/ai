@@ -1,28 +1,17 @@
-import { literal, number, object, string, union } from "@huuma/validate";
+import {
+  literal,
+  type LiteralSchema,
+  number,
+  type NumberSchema,
+  object,
+  type ObjectSchema,
+  string,
+  type StringSchema,
+  union,
+  type UnionSchema,
+} from "@huuma/validate";
 import { type Tool, tool } from "../mod.ts";
 import { EOL } from "@std/fs";
-
-const inputSchema = union([
-  object({
-    path: string(),
-    operation: literal("search_replace"),
-    search: string(),
-    replace: string(),
-  }),
-  object({
-    path: string(),
-    operation: literal("insert_lines"),
-    content: string(),
-    line: number(),
-  }),
-  object({
-    path: string(),
-    operation: literal("delete_lines"),
-    content: string(),
-    lineStart: number(),
-    lineEnd: number().optional(),
-  }),
-]);
 
 /**
  * Input schema for the edit_file tool.
@@ -32,7 +21,29 @@ const inputSchema = union([
  * - delete_lines: Delete a range of lines
  */
 export function editFile(): Tool<
-  typeof inputSchema,
+  UnionSchema<
+    [
+      ObjectSchema<{
+        path: StringSchema;
+        operation: LiteralSchema<"search_replace">;
+        search: StringSchema;
+        replace: StringSchema;
+      }>,
+      ObjectSchema<{
+        path: StringSchema;
+        operation: LiteralSchema<"insert_lines">;
+        content: StringSchema;
+        line: NumberSchema;
+      }>,
+      ObjectSchema<{
+        path: StringSchema<string>;
+        operation: LiteralSchema<"delete_lines">;
+        content: StringSchema;
+        lineStart: NumberSchema;
+        lineEnd: NumberSchema<number | undefined>;
+      }>,
+    ]
+  >,
   {
     success: boolean;
     path: string;
@@ -54,7 +65,27 @@ export function editFile(): Tool<
     name: "edit_file",
     description:
       'Edit a file with targeted operations. Supports: 1) search_replace - "search" a unique text snippet and "replace" it (exact match required), 2) insert - insert content at a specific line number, 3) delete_lines - delete a range of lines. Use this for small targeted edits instead of rewriting entire files.',
-    input: inputSchema,
+    input: union([
+      object({
+        path: string(),
+        operation: literal("search_replace"),
+        search: string(),
+        replace: string(),
+      }),
+      object({
+        path: string(),
+        operation: literal("insert_lines"),
+        content: string(),
+        line: number(),
+      }),
+      object({
+        path: string(),
+        operation: literal("delete_lines"),
+        content: string(),
+        lineStart: number(),
+        lineEnd: number().optional(),
+      }),
+    ]),
     fn: async (
       props,
     ) => {

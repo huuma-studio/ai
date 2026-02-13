@@ -2,3 +2,6 @@
 deno.lock
 .zed/*
 node_modules/*
+main.tsx
+progress.txt
+tasks.json
