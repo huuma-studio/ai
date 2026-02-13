@@ -6,6 +6,7 @@ import {
   GoogleGenAI,
   type Part,
   type Schema as JSONSchema,
+  type ThinkingConfig,
 } from "@google/genai";
 import type {
   Message,
@@ -49,6 +50,9 @@ interface GoogleGenAiGenerateOptions {
   system?: string;
   // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
+  options?: {
+    thinkingConfig?: ThinkingConfig;
+  };
 }
 
 export class GoogleGenAIModel implements BaseModel {
@@ -60,13 +64,14 @@ export class GoogleGenAIModel implements BaseModel {
   }
 
   async generate(
-    { modelId, messages, tools, system }: GoogleGenAiGenerateOptions,
+    { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
     const { candidates, usageMetadata } = await this.#model.models
       .generateContent({
         model: modelId,
         contents: genAIContentsFrom(messages),
         config: {
+          thinkingConfig: options?.thinkingConfig,
           systemInstruction: system,
           tools: tools?.length
             ? [{
@@ -86,12 +91,14 @@ export class GoogleGenAIModel implements BaseModel {
   }
 
   async stream(
-    { modelId, messages, tools }: GoogleGenAiGenerateOptions,
+    { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
     const stream = await this.#model.models.generateContentStream({
       model: modelId,
       contents: genAIContentsFrom(messages),
       config: {
+        systemInstruction: system,
+        thinkingConfig: options?.thinkingConfig,
         tools: tools?.length
           ? [{
             functionDeclarations: tools.map(({ name, description, input }) => ({
@@ -137,14 +144,16 @@ function genAIContentFrom(message: Message): Content {
 
 function genAIPartsFrom(
   contents: (TextContent | ToolCallContent | ToolResultContent)[] | string,
+  thoughtSignature?: string,
 ): Part[] {
   return typeof contents === "string"
-    ? [genAIPartFrom(contents)]
-    : contents.map(genAIPartFrom);
+    ? [genAIPartFrom(contents, thoughtSignature)]
+    : contents.map((content) => genAIPartFrom(content, thoughtSignature));
 }
 
 function genAIPartFrom(
   content: TextContent | ToolCallContent | ToolResultContent | string,
+  thoughtSignature?: string,
 ): Part {
   if (typeof content === "string") {
     return { text: content };
@@ -157,7 +166,7 @@ function genAIPartFrom(
   if ("toolCall" in content) {
     const { id, name, props } = content.toolCall;
     return {
-      thoughtSignature: content.reasoning,
+      thoughtSignature,
       functionCall: { id, name, args: props },
     };
   }
@@ -179,11 +188,26 @@ function messagesFrom(
 
   const candidate = candidates[0];
 
-  const message: ModelMessage = { role: "model", contents: [], toolCalls: [] };
+  const message: ModelMessage = {
+    role: "model",
+    contents: [],
+    toolCalls: [],
+  };
 
   const parts = candidate.content?.parts || [];
 
-  for (const { text, functionCall, thoughtSignature } of parts) {
+  for (
+    const { text, functionCall, thoughtSignature, thought } of parts
+  ) {
+    if (thoughtSignature) {
+      message.thinkingMeta = {
+        thoughtSignature,
+      };
+    }
+
+    if (thought && text) {
+      message.thinking = text;
+    }
     if (text) {
       message.contents.push({ text });
     }
@@ -195,7 +219,7 @@ function messagesFrom(
           props: functionCall.args || {},
         };
         message.toolCalls.push(toolCall);
-        message.contents.push({ toolCall, reasoning: thoughtSignature });
+        message.contents.push({ toolCall });
       } else {
         console.info(
           "Tool call messages skipped because of missing tool call name",

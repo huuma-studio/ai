@@ -2,10 +2,13 @@ import { object, type ObjectSchema } from "@huuma/validate/object";
 import { type Tool, tool } from "../mod.ts";
 import { string, type StringSchema } from "@huuma/validate/string";
 import { dirname } from "@std/path/dirname";
+import { editFile } from "./edit_file.ts";
+
+export { editFile } from "./edit_file.ts";
 
 export function readFile(): Tool<
   ObjectSchema<{
-    path: StringSchema<string>;
+    path: StringSchema;
   }>
 > {
   return tool({
@@ -39,8 +42,8 @@ export function readFile(): Tool<
 
 export function writeFile(): Tool<
   ObjectSchema<{
-    path: StringSchema<string>;
-    content: StringSchema<string>;
+    path: StringSchema;
+    content: StringSchema;
   }>,
   {
     success: boolean;
@@ -148,28 +151,13 @@ export function deleteFile(): Tool<
   });
 }
 
-export function files(): (
-  | Tool<
-    ObjectSchema<{
-      path: StringSchema<string>;
-    }>,
-    unknown
-  >
-  | Tool<
-    ObjectSchema<{
-      path: StringSchema<string>;
-      content: StringSchema<string>;
-    }>,
-    {
-      success: boolean;
-      path: string;
-    }
-  >
-)[] {
+// deno-lint-ignore no-explicit-any
+export function files(): Tool<any, any>[] {
   return [
     readFile(),
     writeFile(),
     createDirectory(),
     deleteFile(),
+    editFile(),
   ];
 }

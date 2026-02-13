@@ -23,6 +23,8 @@ export interface ModelMessage extends MessageWithRole {
   role: "model";
   contents: (TextContent | ToolCallContent)[];
   toolCalls: ToolCallContent["toolCall"][];
+  thinking?: string;
+  thinkingMeta?: Record<string, unknown | string | null | undefined>;
 }
 
 export interface UserMessage extends MessageWithRole {
@@ -43,7 +45,6 @@ export type ToolCallContent<T = JSONSchema> = {
     name: string;
     props: T;
   };
-  reasoning?: string;
 };
 
 export type ToolResultContent<T = unknown> = {

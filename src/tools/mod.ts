@@ -12,6 +12,7 @@ export {
 export {
   createDirectory,
   deleteFile,
+  editFile,
   files,
   readFile,
   writeFile,
@@ -111,12 +112,10 @@ export function callTool(
     const results: ToolResultContent[] = [];
     for (const toolCall of (<ModelMessage> message).toolCalls) {
       console.log("TOOL_CALL:", toolCall.name, toolCall);
-
-      const tool = tools.get(toolCall.name);
-
       let result: unknown;
 
       try {
+        const tool = tools.get(toolCall.name);
         result = await tool.call(toolCall.props);
       } catch (error) {
         console.error(`Error calling tool ${toolCall.name}:`, error);
