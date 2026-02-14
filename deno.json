@@ -1,7 +1,7 @@
 {
   "nodeModulesDir": "auto",
   "name": "@huuma/ai",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "exports": {
     ".": "./src/mod.ts",
     "./model": "./src/model/mod.ts",
