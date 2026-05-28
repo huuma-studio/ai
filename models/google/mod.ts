@@ -139,7 +139,18 @@ function genAIContentsFrom(messages: Message[]): ContentListUnion {
 }
 
 function genAIContentFrom(message: Message): Content {
-  return { role: message.role, parts: genAIPartsFrom(message.contents) };
+  let thoughtSignature: string | undefined;
+  if (
+    message.role === "model" &&
+    typeof message.thinkingMeta?.thoughtSignature === "string"
+  ) {
+    thoughtSignature = message.thinkingMeta?.thoughtSignature;
+  }
+
+  return {
+    role: message.role,
+    parts: genAIPartsFrom(message.contents, thoughtSignature),
+  };
 }
 
 function genAIPartsFrom(

@@ -1,7 +1,7 @@
 import type { JSONSchema } from "@huuma/validate";
 
 export type Message =
-  | SytemMessage
+  | SystemMessage
   | ModelMessage
   | UserMessage
   | ToolMessage;
@@ -14,7 +14,7 @@ export interface MessageWithRole {
   role: MessageRole;
 }
 
-export interface SytemMessage extends MessageWithRole {
+export interface SystemMessage extends MessageWithRole {
   role: "system";
   contents: string | TextContent[];
 }

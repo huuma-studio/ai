@@ -1,14 +1,10 @@
 import {
-  literal,
-  type LiteralSchema,
   number,
   type NumberSchema,
   object,
   type ObjectSchema,
   string,
   type StringSchema,
-  union,
-  type UnionSchema,
 } from "@huuma/validate";
 import { type Tool, tool } from "../mod.ts";
 import { EOL } from "@std/fs";
@@ -17,78 +13,62 @@ import { EOL } from "@std/fs";
  * Input schema for the edit_file tool.
  * Supports three operations:
  * - search_replace: Find a unique text snippet and replace it
- * - insert: Insert content at a specific line number
+ * - insert_lines: Insert content at a specific line number
  * - delete_lines: Delete a range of lines
+ *
+ * The schema is intentionally a single flat object (rather than a union of
+ * objects) because some model providers (e.g. Ollama) require tool parameters
+ * to be a top-level object with `properties`. Per-operation field requirements
+ * are validated at runtime in the function body.
  */
 export function editFile(): Tool<
-  UnionSchema<
-    [
-      ObjectSchema<{
-        path: StringSchema;
-        operation: LiteralSchema<"search_replace">;
-        search: StringSchema;
-        replace: StringSchema;
-      }>,
-      ObjectSchema<{
-        path: StringSchema;
-        operation: LiteralSchema<"insert_lines">;
-        content: StringSchema;
-        line: NumberSchema;
-      }>,
-      ObjectSchema<{
-        path: StringSchema<string>;
-        operation: LiteralSchema<"delete_lines">;
-        content: StringSchema;
-        lineStart: NumberSchema;
-        lineEnd: NumberSchema<number | undefined>;
-      }>,
-    ]
-  >,
+  ObjectSchema<{
+    path: StringSchema<string>;
+    operation: StringSchema<string>;
+    search: StringSchema<string | undefined>;
+    replace: StringSchema<string | undefined>;
+    content: StringSchema<string | undefined>;
+    line: NumberSchema<number | undefined>;
+    lineStart: NumberSchema<number | undefined>;
+    lineEnd: NumberSchema<number | undefined>;
+  }>,
   {
     success: boolean;
     path: string;
-    operation: "search_replace";
-    message: string;
-  } | {
-    success: boolean;
-    path: string;
-    operation: "insert_lines";
-    message: string;
-  } | {
-    success: boolean;
-    path: string;
-    operation: "delete_lines";
+    operation: "search_replace" | "insert_lines" | "delete_lines";
     message: string;
   }
 > {
   return tool({
     name: "edit_file",
     description:
-      'Edit a file with targeted operations. Supports: 1) search_replace - "search" a unique text snippet and "replace" it (exact match required), 2) insert - insert content at a specific line number, 3) delete_lines - delete a range of lines. Use this for small targeted edits instead of rewriting entire files.',
-    input: union([
-      object({
-        path: string(),
-        operation: literal("search_replace"),
-        search: string(),
-        replace: string(),
-      }),
-      object({
-        path: string(),
-        operation: literal("insert_lines"),
-        content: string(),
-        line: number(),
-      }),
-      object({
-        path: string(),
-        operation: literal("delete_lines"),
-        content: string(),
-        lineStart: number(),
-        lineEnd: number().optional(),
-      }),
-    ]),
+      'Edit a file with targeted operations. The "operation" field selects the operation; required fields per operation are: ' +
+      '1) search_replace - requires "search" (unique text snippet, exact match) and "replace". ' +
+      '2) insert_lines - requires "content" and "line" (1-indexed; use lines.length+1 to append). ' +
+      '3) delete_lines - requires "lineStart" and optional "lineEnd" (defaults to lineStart). ' +
+      "Use this for small targeted edits instead of rewriting entire files.",
+    input: object({
+      path: string(),
+      operation: string(),
+      search: string().optional(),
+      replace: string().optional(),
+      content: string().optional(),
+      line: number().optional(),
+      lineStart: number().optional(),
+      lineEnd: number().optional(),
+    }),
     fn: async (
       props,
     ) => {
+      if (
+        props.operation !== "search_replace" &&
+        props.operation !== "insert_lines" &&
+        props.operation !== "delete_lines"
+      ) {
+        throw new Error(
+          `Unknown operation "${props.operation}". Must be one of: search_replace, insert_lines, delete_lines.`,
+        );
+      }
       try {
         // Read the current file content
         let fileContent = await Deno.readTextFile(props.path);
@@ -96,13 +76,21 @@ export function editFile(): Tool<
 
         switch (props.operation) {
           case "search_replace": {
+            const search = props.search;
+            const replace = props.replace;
+            if (search === undefined || replace === undefined) {
+              throw new Error(
+                'search_replace requires both "search" and "replace" fields.',
+              );
+            }
+
             // Count occurrences to ensure uniqueness
-            const occurrences = countOccurrences(fileContent, props.search);
+            const occurrences = countOccurrences(fileContent, search);
 
             if (occurrences === 0) {
               throw new Error(
                 `Text not found in file: "${
-                  truncate(props.search, 50)
+                  truncate(search, 50)
                 }". Make sure the search text matches exactly including whitespace.`,
               );
             }
@@ -114,7 +102,7 @@ export function editFile(): Tool<
             }
 
             // Perform the replacement
-            fileContent = fileContent.replace(props.search, props.replace);
+            fileContent = fileContent.replace(search, replace);
             await Deno.writeTextFile(props.path, fileContent);
 
             return {
@@ -126,12 +114,20 @@ export function editFile(): Tool<
           }
 
           case "insert_lines": {
-            if (props.line < 1) {
+            const content = props.content;
+            const line = props.line;
+            if (content === undefined || line === undefined) {
+              throw new Error(
+                'insert_lines requires both "content" and "line" fields.',
+              );
+            }
+
+            if (line < 1) {
               throw new Error("line must be 1 or greater");
             }
-            if (props.line > lines.length + 1) {
+            if (line > lines.length + 1) {
               throw new Error(
-                `line ${props.line} is beyond end of file (file has ${lines.length} lines). Use line ${
+                `line ${line} is beyond end of file (file has ${lines.length} lines). Use line ${
                   lines.length + 1
                 } to append at end.`,
               );
@@ -139,12 +135,12 @@ export function editFile(): Tool<
 
             // Insert content at the specified line (1-indexed)
             // line=1 means insert at beginning, line=lines.length+1 means append at end
-            const insertIndex = props.line - 1;
+            const insertIndex = line - 1;
 
             // Handle multi-line content
-            const contentLines = props.content.endsWith(EOL)
-              ? props.content.slice(0, -1).split(EOL)
-              : props.content.split(EOL);
+            const contentLines = content.endsWith(EOL)
+              ? content.slice(0, -1).split(EOL)
+              : content.split(EOL);
 
             lines.splice(insertIndex, 0, ...contentLines);
 
@@ -155,12 +151,15 @@ export function editFile(): Tool<
               path: props.path,
               operation: props.operation,
               message:
-                `Successfully inserted content at line ${props.line} in ${props.path}`,
+                `Successfully inserted content at line ${line} in ${props.path}`,
             };
           }
 
           case "delete_lines": {
             const start = props.lineStart;
+            if (start === undefined) {
+              throw new Error('delete_lines requires "lineStart" field.');
+            }
             const end = props.lineEnd ?? start;
 
             if (start < 1) {
