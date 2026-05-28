@@ -19,23 +19,30 @@ import type { BaseModel, ModelResult } from "@/model/mod.ts";
 import type { Schema } from "@huuma/validate";
 import type { Tool } from "@/tools/mod.ts";
 
-// Discontinuation date: April 9, 2026
-type Gemini_2_0_Flash_Light = "gemini-2.0-flash-lite";
-// Discontinuation date: April 9, 2026
-type Gemini_2_0_Flash = "gemini-2.0-flash";
+// Shutdown date: October 16, 2026
 type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
+// Shutdown date: October 16, 2026
 type Gemini_2_5_Flash = "gemini-2.5-flash";
+// Shutdown date: October 16, 2026
 type Gemini_2_5_Pro = "gemini-2.5-pro";
-type Gemini_3_Flash = "gemini-3-flash-preview";
-type Gemini_3_Pro = "gemini-3-pro-preview";
+
+// No shutdown date announced
+type Gemini_3_Flash_Preview = "gemini-3-flash-preview";
+// No shutdown date announced
+type Gemini_3_1_Pro_Preview = "gemini-3-1-pro-preview";
+// Shutdown date: May 7, 2027
+type Gemini_3_1_Flash_Lite = "gemini-3.1-flash-lite";
+// No shutdown date announced
+type Gemini_3_5_Flash = "gemini-3.5-flash";
+
 type GeminiModels =
-  | Gemini_2_0_Flash_Light
-  | Gemini_2_0_Flash
   | Gemini_2_5_Flash_Light
   | Gemini_2_5_Flash
   | Gemini_2_5_Pro
-  | Gemini_3_Flash
-  | Gemini_3_Pro
+  | Gemini_3_Flash_Preview
+  | Gemini_3_1_Pro_Preview
+  | Gemini_3_1_Flash_Lite
+  | Gemini_3_5_Flash
   | string
     // deno-lint-ignore ban-types
     & {};
