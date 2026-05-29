@@ -63,3 +63,79 @@ Deno.test("ollamaMessagesFrom converts tool message", () => {
   // @ts-ignore: tool_name check
   assertEquals(result[0].tool_name, "tool1");
 });
+
+Deno.test("ollamaMessagesFrom serializes object output as JSON", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "tool1",
+          result: { output: { ok: true, items: [1, 2] } },
+        },
+      },
+    ],
+  };
+
+  const result = ollamaMessagesFrom([msg]);
+  assertEquals(result[0].content, '{"ok":true,"items":[1,2]}');
+});
+
+Deno.test("ollamaMessagesFrom serializes error output and prefers it over output", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "tool1",
+          result: { output: "ignored", error: { message: "boom" } },
+        },
+      },
+    ],
+  };
+
+  const result = ollamaMessagesFrom([msg]);
+  assertEquals(result[0].content, '{"message":"boom"}');
+});
+
+Deno.test("ollamaMessagesFrom round-trips assistant thinking", () => {
+  const msg: Message = {
+    role: "model",
+    contents: [{ text: "Answer" }],
+    toolCalls: [],
+    thinking: "deliberating...",
+  };
+
+  const result = ollamaMessagesFrom([msg]);
+  assertEquals(result.length, 1);
+  assertEquals(result[0].role, "assistant");
+  assertEquals(result[0].content, "Answer");
+  assertEquals(result[0].thinking, "deliberating...");
+});
+
+Deno.test("ollamaMessagesFrom keeps a thinking-only assistant message", () => {
+  const msg: Message = {
+    role: "model",
+    contents: [],
+    toolCalls: [],
+    thinking: "reasoning trace",
+  };
+
+  const result = ollamaMessagesFrom([msg]);
+  assertEquals(result.length, 1);
+  assertEquals(result[0].content, "");
+  assertEquals(result[0].thinking, "reasoning trace");
+});
+
+Deno.test("ollamaMessagesFrom drops fully empty assistant messages", () => {
+  const msg: Message = {
+    role: "model",
+    contents: [],
+    toolCalls: [],
+  };
+
+  const result = ollamaMessagesFrom([msg]);
+  assertEquals(result.length, 0);
+});

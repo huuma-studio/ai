@@ -73,7 +73,7 @@ export class GoogleGenAIModel implements BaseModel {
   async generate(
     { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
-    const { candidates, usageMetadata } = await this.#model.models
+    const { candidates } = await this.#model.models
       .generateContent({
         model: modelId,
         contents: genAIContentsFrom(messages),
@@ -93,7 +93,6 @@ export class GoogleGenAIModel implements BaseModel {
             : undefined,
         },
       });
-    console.log(usageMetadata);
     return modelResultFrom(modelId, messagesFrom(candidates));
   }
 

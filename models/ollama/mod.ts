@@ -226,6 +226,19 @@ function modelResultFrom(response: ChatResponse): ModelResult<OllamaModels> {
   };
 }
 
+/**
+ * Serializes a tool execution result into the single string Ollama's
+ * `role: "tool"` message requires. Errors take precedence over output,
+ * and non-string payloads are JSON-encoded.
+ */
+function toolOutputString(
+  result: { output?: unknown; error?: unknown },
+): string {
+  const value = result.error ?? result.output;
+  if (value === undefined || value === null) return "";
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 // deno-lint-ignore no-explicit-any
 export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
   return tools.map((tool) => ({
@@ -271,9 +284,23 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
         }
       }
 
+      const content = contentParts.join("");
+
+      // Skip fully empty assistant messages (no text, no tool calls, no
+      // thinking). Mirrors Google's behavior of only emitting populated
+      // Content entries and avoids sending malformed payloads to Ollama.
+      if (!content && toolCalls.length === 0 && !message.thinking) {
+        continue;
+      }
+
+      // Round-trip the `thinking` field so thinking-capable models
+      // (deepseek-r1, qwen3, gpt-oss, ...) can carry reasoning state
+      // across tool-call iterations. This is the Ollama analog to
+      // Google's `thoughtSignature` round-tripping.
       result.push({
         role: "assistant",
-        content: contentParts.join(""),
+        content,
+        thinking: message.thinking,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     } else if (message.role === "tool") {
@@ -281,20 +308,9 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
         if ("toolResult" in c) {
           const { name, result: r } = c.toolResult;
 
-          let content = "";
-          if (r.error) {
-            content = typeof r.error === "string"
-              ? r.error
-              : JSON.stringify(r.error);
-          } else {
-            content = typeof r.output === "string"
-              ? r.output
-              : JSON.stringify(r.output);
-          }
-
           result.push({
             role: "tool",
-            content,
+            content: toolOutputString(r),
             tool_name: name,
           } as OllamaMessage);
         }
