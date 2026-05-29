@@ -23,7 +23,7 @@ class Agent<T extends string> {
     tools?.forEach((tool) => this.#tools.add(tool));
   }
 
-  async run(prompt: string) {
+  async run(prompt: string): Promise<Message[]> {
     const askAction = async (messages: Message[]) => {
       const result = await this.#model.generate({
         modelId: this.#modelId,
@@ -64,6 +64,6 @@ class Agent<T extends string> {
   }
 }
 
-export function agent<T extends string>(options: AgentOptions<T>) {
+export function agent<T extends string>(options: AgentOptions<T>): Agent<T> {
   return new Agent<T>({ ...options });
 }
