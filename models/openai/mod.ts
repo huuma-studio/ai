@@ -1,3 +1,19 @@
+/**
+ * OpenAI chat-completions model adapter for the Huuma AI model interface.
+ *
+ * @example
+ * ```typescript
+ * import { openai } from "jsr:@huuma/ai/models/openai";
+ *
+ * const model = openai({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+ * const result = await model.generate({
+ *   modelId: "gpt-4o-mini",
+ *   messages: [{ role: "user", contents: "Hello!" }],
+ * });
+ * ```
+ *
+ * @module
+ */
 import type { BaseModel, ModelResult } from "@/model/mod.ts";
 import type {
   Message,
@@ -54,15 +70,27 @@ export interface OpenAIGenerateOptions {
  * Wrapper around the official OpenAI SDK providing a unified
  * {@link BaseModel} interface.
  */
+/**
+ * Wrapper around the official OpenAI SDK providing a unified
+ * {@link BaseModel} interface.
+ */
 export class OpenAIModel implements BaseModel<OpenAIModels> {
   #client: OpenAI;
 
+  /**
+   * Create a new OpenAI model adapter.
+   *
+   * @param options Optional OpenAI client configuration.
+   */
   constructor(options: ClientOptions = {}) {
     this.#client = new OpenAI(options);
   }
 
   /**
    * Sends a single non-streaming chat completion request.
+   *
+   * @param options Generation options including model ID, messages, and optional tools.
+   * @returns A normalized {@link ModelResult}.
    */
   async generate(
     { modelId, messages, tools, system, options }: OpenAIGenerateOptions,
@@ -88,6 +116,9 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
 
   /**
    * Sends a streaming chat completion request.
+   *
+   * @param options Generation options including model ID, messages, and optional tools.
+   * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
     { modelId, messages, tools, system, options }: OpenAIGenerateOptions,
@@ -365,6 +396,9 @@ export function openAIToolsFrom(
 
 /**
  * Factory function that creates an {@link OpenAIModel}.
+ *
+ * @param options Optional OpenAI client options, including `apiKey`.
+ * @returns A configured {@link OpenAIModel} instance.
  *
  * @example
  * ```typescript

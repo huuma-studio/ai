@@ -3,6 +3,10 @@ import { type Tool, tool } from "@/tools/mod.ts";
 import { string } from "@huuma/validate/string";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 
+/** Create a tool that fetches a website and converts HTML to Markdown.
+ *
+ * @returns A {@link Tool} that downloads the given URL and returns Markdown text.
+ */
 // deno-lint-ignore no-explicit-any
 export function fetchWebsite(): Tool<any, string> {
   return tool({

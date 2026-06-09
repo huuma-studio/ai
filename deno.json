@@ -1,16 +1,35 @@
 {
   "nodeModulesDir": "auto",
   "name": "@huuma/ai",
-  "version": "0.0.4",
+  "version": "0.0.5",
+  "description": "Composable AI primitives for Deno and TypeScript: model adapters, agents, workflows, and tool factories.",
+  "license": "MIT",
   "exports": {
     ".": "./src/mod.ts",
     "./model": "./src/model/mod.ts",
     "./workflow": "./src/workflow/mod.ts",
     "./models": "./models/mod.ts",
     "./models/google": "./models/google/mod.ts",
+    "./models/ollama": "./models/ollama/mod.ts",
     "./models/openai": "./models/openai/mod.ts",
     "./agent": "./src/agent/mod.ts",
     "./tools": "./src/tools/mod.ts"
+  },
+  "tasks": {
+    "check": "deno check",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net",
+    "lint": "deno lint",
+    "publish:dry-run": "deno publish --dry-run --allow-dirty"
+  },
+  "publish": {
+    "exclude": [
+      ".github/",
+      "main.ts",
+      "tasks.json",
+      "progress.txt",
+      "**/*_test.ts",
+      "**/*.test.ts"
+    ]
   },
   "imports": {
     "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2",

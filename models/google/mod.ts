@@ -1,3 +1,19 @@
+/**
+ * Google Gemini model adapter for the Huuma AI model interface.
+ *
+ * @example
+ * ```typescript
+ * import { google } from "jsr:@huuma/ai/models/google";
+ *
+ * const model = google({ apiKey: Deno.env.get("GOOGLE_API_KEY") });
+ * const result = await model.generate({
+ *   modelId: "gemini-2.5-flash",
+ *   messages: [{ role: "user", contents: "Hello!" }],
+ * });
+ * ```
+ *
+ * @module
+ */
 import {
   type Candidate,
   type Content,
@@ -47,11 +63,14 @@ type GeminiModels =
     // deno-lint-ignore ban-types
     & {};
 
-interface GoogleGenAIOptions {
+/** Options for configuring the Google GenAI client. */
+export interface GoogleGenAIOptions {
+  /** Google API key. */
   apiKey: string;
 }
 
-interface GoogleGenAiGenerateOptions {
+/** Options for generating content with Gemini. */
+export interface GoogleGenAiGenerateOptions {
   modelId: GeminiModels;
   messages: Message[];
   system?: string;
@@ -62,14 +81,21 @@ interface GoogleGenAiGenerateOptions {
   };
 }
 
+/** Google Gemini adapter implementing the common model interface. */
 export class GoogleGenAIModel implements BaseModel {
   #model: GoogleGenAI;
 
+  /**
+   * Create a new Google GenAI model adapter.
+   *
+   * @param options Configuration including the Google API key.
+   */
   constructor(options: GoogleGenAIOptions) {
     const { apiKey } = options;
     this.#model = new GoogleGenAI({ apiKey });
   }
 
+  /** Generate a complete Gemini response. */
   async generate(
     { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
@@ -96,6 +122,7 @@ export class GoogleGenAIModel implements BaseModel {
     return modelResultFrom(modelId, messagesFrom(candidates));
   }
 
+  /** Stream Gemini responses as normalized model results. */
   async stream(
     { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
@@ -129,6 +156,11 @@ async function* streamMessages(
   }
 }
 
+/** Create a Google Gemini model adapter.
+ *
+ * @param options Google API key and other client options.
+ * @returns A {@link GoogleGenAIModel} instance.
+ */
 export function google(options: GoogleGenAIOptions): GoogleGenAIModel {
   return new GoogleGenAIModel(options);
 }

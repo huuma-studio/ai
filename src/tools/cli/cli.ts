@@ -1,24 +1,19 @@
-import {
-  array,
-  type ArraySchema,
-  object,
-  type ObjectSchema,
-  string,
-  type StringSchema,
-} from "@huuma/validate";
+import { array, object, string } from "@huuma/validate";
 import { Tool } from "@/tools/mod.ts";
 
+/** Options for configuring the CLI tool. */
 export interface CliToolOptions {
+  /** Commands the tool is allowed to execute. */
   allowedCommands: string[];
 }
 
-export function cli({ allowedCommands }: CliToolOptions): Tool<
-  ObjectSchema<{
-    command: StringSchema<string>;
-    args: ArraySchema<StringSchema<string>>;
-  }>,
-  string
-> {
+/** Create a tool that executes allow-listed CLI commands.
+ *
+ * @param options Configuration including the list of permitted commands.
+ * @returns A {@link Tool} that runs CLI commands and returns stdout.
+ */
+// deno-lint-ignore no-explicit-any
+export function cli({ allowedCommands }: CliToolOptions): Tool<any, string> {
   return new Tool({
     name: "cli",
     description: `Execute CLI commands. Allowed commands: ${
@@ -44,7 +39,6 @@ export function cli({ allowedCommands }: CliToolOptions): Tool<
       const error = new TextDecoder().decode(stderr);
 
       if (code !== 0) {
-        console.log(code, error, output);
         throw new Error(error || `Command exited with code ${code}`);
       }
 

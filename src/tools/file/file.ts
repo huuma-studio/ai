@@ -1,16 +1,25 @@
-import { object, type ObjectSchema } from "@huuma/validate/object";
+import { object } from "@huuma/validate/object";
 import { type Tool, tool } from "../mod.ts";
-import { string, type StringSchema } from "@huuma/validate/string";
+import { string } from "@huuma/validate/string";
 import { dirname } from "@std/path/dirname";
 import { editFile } from "./edit_file.ts";
 
 export { editFile } from "./edit_file.ts";
 
-export function readFile(): Tool<
-  ObjectSchema<{
-    path: StringSchema;
-  }>
-> {
+/** Result returned by mutating file-system tools. */
+export interface FileOperationResult {
+  /** Whether the operation succeeded. */
+  success: boolean;
+  /** Path that was operated on. */
+  path: string;
+}
+
+/** Create a tool that reads a text file.
+ *
+ * @returns A {@link Tool} that returns the contents of the requested file path.
+ */
+// deno-lint-ignore no-explicit-any
+export function readFile(): Tool<any, string> {
   return tool({
     name: "read_file",
     description:
@@ -40,16 +49,12 @@ export function readFile(): Tool<
   });
 }
 
-export function writeFile(): Tool<
-  ObjectSchema<{
-    path: StringSchema;
-    content: StringSchema;
-  }>,
-  {
-    success: boolean;
-    path: string;
-  }
-> {
+/** Create a tool that writes text to a file.
+ *
+ * @returns A {@link Tool} that overwrites the given file path with the supplied content.
+ */
+// deno-lint-ignore no-explicit-any
+export function writeFile(): Tool<any, FileOperationResult> {
   return tool({
     name: "write_file",
     description:
@@ -79,15 +84,12 @@ export function writeFile(): Tool<
   });
 }
 
-export function createDirectory(): Tool<
-  ObjectSchema<{
-    path: StringSchema<string>;
-  }>,
-  {
-    success: boolean;
-    path: string;
-  }
-> {
+/** Create a tool that creates a directory recursively.
+ *
+ * @returns A {@link Tool} that creates directories (and parents) on demand.
+ */
+// deno-lint-ignore no-explicit-any
+export function createDirectory(): Tool<any, FileOperationResult> {
   return tool({
     name: "create_directory",
     description:
@@ -116,15 +118,12 @@ export function createDirectory(): Tool<
   });
 }
 
-export function deleteFile(): Tool<
-  ObjectSchema<{
-    path: StringSchema<string>;
-  }>,
-  {
-    success: boolean;
-    path: string;
-  }
-> {
+/** Create a tool that deletes a file or directory recursively.
+ *
+ * @returns A {@link Tool} that removes files or directories.
+ */
+// deno-lint-ignore no-explicit-any
+export function deleteFile(): Tool<any, FileOperationResult> {
   return tool({
     name: "delete_file",
     description:
@@ -151,8 +150,12 @@ export function deleteFile(): Tool<
   });
 }
 
+/** Create all bundled file-system tools.
+ *
+ * @returns An array containing read, write, create-directory, delete, and edit-file tools.
+ */
 // deno-lint-ignore no-explicit-any
-export function files(): Tool<any, any>[] {
+export function files(): Tool<any, unknown>[] {
   return [
     readFile(),
     writeFile(),

@@ -1,3 +1,19 @@
+/**
+ * Ollama model adapter for the Huuma AI model interface.
+ *
+ * @example
+ * ```typescript
+ * import { ollama } from "jsr:@huuma/ai/models/ollama";
+ *
+ * const model = ollama({ host: "http://localhost:11434" });
+ * const result = await model.generate({
+ *   modelId: "llama3.2",
+ *   messages: [{ role: "user", contents: "Hello!" }],
+ * });
+ * ```
+ *
+ * @module
+ */
 import { type ChatResponse, Ollama } from "ollama";
 import type { BaseModel, ModelResult } from "@/model/mod.ts";
 import type {
@@ -84,6 +100,9 @@ export interface OllamaGenerateOptions {
   keep_alive?: string | number;
 }
 
+/**
+ * Ollama adapter implementing the common {@link BaseModel} interface.
+ */
 export class OllamaModel implements BaseModel<OllamaModels> {
   private client: Ollama;
   private host?: string;
@@ -105,6 +124,12 @@ export class OllamaModel implements BaseModel<OllamaModels> {
     });
   }
 
+  /**
+   * Generate a complete chat response via Ollama.
+   *
+   * @param options Generation options including model ID, messages, and optional tools.
+   * @returns A normalized {@link ModelResult}.
+   */
   async generate(
     options: OllamaGenerateOptions,
   ): Promise<ModelResult<OllamaModels>> {
@@ -129,6 +154,12 @@ export class OllamaModel implements BaseModel<OllamaModels> {
     return modelResultFrom(response);
   }
 
+  /**
+   * Stream incremental chat responses via Ollama.
+   *
+   * @param options Generation options including model ID, messages, and optional tools.
+   * @returns An async generator yielding normalized {@link ModelResult} chunks.
+   */
   async stream(
     options: OllamaGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<OllamaModels>>> {

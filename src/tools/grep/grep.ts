@@ -1,38 +1,42 @@
-import {
-  boolean,
-  type BooleanSchema,
-  object,
-  type ObjectSchema,
-  string,
-  type StringSchema,
-} from "@huuma/validate";
+import { boolean, object, string } from "@huuma/validate";
 import { Tool } from "@/tools/mod.ts";
 
+/** A single grep match with line number and content. */
 export interface GrepMatch {
+  /** 1-indexed line number where the match occurred. */
   line: number;
+  /** Matching line content, possibly truncated. */
   content: string;
 }
 
+/** Grouped grep matches for one file. */
 export interface GrepFileResult {
+  /** Path to the matched file. */
   file: string;
+  /** Matches found in the file. */
   matches: GrepMatch[];
 }
 
-export function grep(): Tool<
-  ObjectSchema<{
-    pattern: StringSchema<string>;
-    path: StringSchema<string>;
-    glob: StringSchema<string | undefined>;
-    caseSensitive: BooleanSchema<boolean | undefined>;
-  }>,
-  {
-    path: string;
-    results: GrepFileResult[];
-    truncated?: boolean;
-    totalMatches?: number;
-    message?: string;
-  }
-> {
+/** Result returned by the grep tool. */
+export interface GrepResult {
+  /** Searched path. */
+  path: string;
+  /** Matching files and lines. */
+  results: GrepFileResult[];
+  /** Whether results were truncated to keep output concise. */
+  truncated?: boolean;
+  /** Total number of raw matches before truncation, when known. */
+  totalMatches?: number;
+  /** Optional informational message. */
+  message?: string;
+}
+
+/** Create a tool that searches files with grep.
+ *
+ * @returns A {@link Tool} that performs recursive regex searches and returns grouped matches.
+ */
+// deno-lint-ignore no-explicit-any
+export function grep(): Tool<any, GrepResult> {
   return new Tool({
     name: "grep",
     description:
@@ -117,13 +121,7 @@ function parseDirectoryResults(
   maxTotal: number,
   maxPerFile: number,
   maxLineLength: number,
-): {
-  path: string;
-  results: GrepFileResult[];
-  truncated?: boolean;
-  totalMatches?: number;
-  message?: string;
-} {
+): GrepResult {
   const fileMap = new Map<string, GrepMatch[]>();
   let total = 0;
   let stopped = false;
@@ -177,13 +175,7 @@ function parseSingleFileResults(
   path: string,
   maxTotal: number,
   maxLineLength: number,
-): {
-  path: string;
-  results: GrepFileResult[];
-  truncated?: boolean;
-  totalMatches?: number;
-  message?: string;
-} {
+): GrepResult {
   const truncated = lines.length > maxTotal;
   const matches: GrepMatch[] = lines
     .slice(0, maxTotal)

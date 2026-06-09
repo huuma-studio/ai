@@ -1,11 +1,4 @@
-import {
-  number,
-  type NumberSchema,
-  object,
-  type ObjectSchema,
-  string,
-  type StringSchema,
-} from "@huuma/validate";
+import { number, object, string } from "@huuma/validate";
 import { type Tool, tool } from "../mod.ts";
 import { EOL } from "@std/fs";
 
@@ -21,24 +14,24 @@ import { EOL } from "@std/fs";
  * to be a top-level object with `properties`. Per-operation field requirements
  * are validated at runtime in the function body.
  */
-export function editFile(): Tool<
-  ObjectSchema<{
-    path: StringSchema<string>;
-    operation: StringSchema<string>;
-    search: StringSchema<string | undefined>;
-    replace: StringSchema<string | undefined>;
-    content: StringSchema<string | undefined>;
-    line: NumberSchema<number | undefined>;
-    lineStart: NumberSchema<number | undefined>;
-    lineEnd: NumberSchema<number | undefined>;
-  }>,
-  {
-    success: boolean;
-    path: string;
-    operation: "search_replace" | "insert_lines" | "delete_lines";
-    message: string;
-  }
-> {
+/** Result returned by the edit_file tool. */
+export interface EditFileResult {
+  /** Whether the edit succeeded. */
+  success: boolean;
+  /** Path that was edited. */
+  path: string;
+  /** Edit operation that was applied. */
+  operation: "search_replace" | "insert_lines" | "delete_lines";
+  /** Human-readable edit summary. */
+  message: string;
+}
+
+/** Create a tool that performs targeted file edits (search/replace, insert, delete).
+ *
+ * @returns A {@link Tool} that edits files in place and returns an {@link EditFileResult}.
+ */
+// deno-lint-ignore no-explicit-any
+export function editFile(): Tool<any, EditFileResult> {
   return tool({
     name: "edit_file",
     description:
