@@ -3,7 +3,8 @@ import { assertEquals } from "@std/assert";
 import type { Message, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
 import { string } from "@huuma/validate";
-import { ollamaMessagesFrom, ollamaToolsFrom } from "./mod.ts";
+import type { ChatResponse } from "ollama";
+import { ollamaMessagesFrom, ollamaToolsFrom, ollamaUsageFrom } from "./mod.ts";
 
 Deno.test("ollamaToolsFrom converts tools correctly", () => {
   const testTool = tool({
@@ -138,4 +139,26 @@ Deno.test("ollamaMessagesFrom drops fully empty assistant messages", () => {
 
   const result = ollamaMessagesFrom([msg]);
   assertEquals(result.length, 0);
+});
+
+Deno.test("ollamaUsageFrom maps token counts from a done response", () => {
+  const usage = ollamaUsageFrom(
+    {
+      done: true,
+      prompt_eval_count: 9,
+      eval_count: 12,
+    } as ChatResponse,
+  );
+
+  assertEquals(usage, { inputTokens: 9, outputTokens: 12, totalTokens: 21 });
+});
+
+Deno.test("ollamaUsageFrom returns undefined for intermediate chunks", () => {
+  const usage = ollamaUsageFrom({ done: false } as ChatResponse);
+  assertEquals(usage, undefined);
+});
+
+Deno.test("ollamaUsageFrom returns undefined when no counts are reported", () => {
+  const usage = ollamaUsageFrom({ done: true } as ChatResponse);
+  assertEquals(usage, undefined);
 });

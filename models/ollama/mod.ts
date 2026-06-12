@@ -15,7 +15,7 @@
  * @module
  */
 import { type ChatResponse, Ollama } from "ollama";
-import type { BaseModel, ModelResult } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type {
   Message,
   ModelMessage,
@@ -251,10 +251,40 @@ function modelResultFrom(response: ChatResponse): ModelResult<OllamaModels> {
     thinking: response.message.thinking,
   };
 
+  const usage = ollamaUsageFrom(response);
   return {
     modelId: response.model as OllamaModels,
     messages: [message],
+    ...(usage ? { usage } : {}),
   };
+}
+
+/**
+ * Maps Ollama token counts to the normalized {@link ModelUsage}.
+ *
+ * Ollama only reports `prompt_eval_count` and `eval_count` on the final
+ * (`done`) response, so streamed intermediate chunks carry no usage.
+ */
+export function ollamaUsageFrom(
+  response: ChatResponse,
+): ModelUsage | undefined {
+  if (!response.done) {
+    return undefined;
+  }
+
+  const usage: ModelUsage = {};
+  if (typeof response.prompt_eval_count === "number") {
+    usage.inputTokens = response.prompt_eval_count;
+  }
+  if (typeof response.eval_count === "number") {
+    usage.outputTokens = response.eval_count;
+  }
+  if (usage.inputTokens === undefined && usage.outputTokens === undefined) {
+    return undefined;
+  }
+
+  usage.totalTokens = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  return usage;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   type ContentListUnion,
   FinishReason,
   type GenerateContentResponse,
+  type GenerateContentResponseUsageMetadata,
   GoogleGenAI,
   type Part,
   type Schema as JSONSchema,
@@ -32,7 +33,7 @@ import type {
   ToolCallContent,
   ToolResultContent,
 } from "@/mod.ts";
-import type { BaseModel, ModelResult } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type { Schema } from "@huuma/validate";
 import type { Tool } from "@/tools/mod.ts";
 
@@ -132,10 +133,19 @@ export class GoogleGenAIModel implements BaseModel {
             : undefined,
         },
       });
-    return modelResultFrom(modelId, modelMessagesFrom(response));
+    return modelResultFrom(
+      modelId,
+      modelMessagesFrom(response),
+      googleUsageFrom(response.usageMetadata),
+    );
   }
 
-  /** Stream Gemini responses as normalized model results. */
+  /** Stream Gemini responses as normalized model results.
+   *
+   * The stream ends with a usage-only {@link ModelResult} (empty `messages`)
+   * carrying the token usage of the whole call, taken from the last chunk
+   * that reported usage metadata.
+   */
   async stream(
     { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
@@ -164,12 +174,50 @@ async function* streamMessages(
   stream: AsyncGenerator<GenerateContentResponse>,
   modelId: GeminiModels,
 ) {
+  // Gemini reports cumulative usage on chunks as the stream progresses;
+  // the last reported metadata covers the whole call.
+  let usage: ModelUsage | undefined;
+
   for await (const chunk of stream) {
+    usage = googleUsageFrom(chunk.usageMetadata) ?? usage;
+
     const messages = messagesFrom(chunk.candidates);
     if (messages.length) {
       yield modelResultFrom(modelId, messages);
     }
   }
+
+  if (usage) {
+    yield modelResultFrom(modelId, [], usage);
+  }
+}
+
+/** Maps Gemini usage metadata to the normalized {@link ModelUsage}. */
+export function googleUsageFrom(
+  metadata: GenerateContentResponseUsageMetadata | undefined,
+): ModelUsage | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const result: ModelUsage = {};
+  if (metadata.promptTokenCount !== undefined) {
+    result.inputTokens = metadata.promptTokenCount;
+  }
+  if (metadata.candidatesTokenCount !== undefined) {
+    result.outputTokens = metadata.candidatesTokenCount;
+  }
+  if (metadata.totalTokenCount !== undefined) {
+    result.totalTokens = metadata.totalTokenCount;
+  }
+  if (metadata.cachedContentTokenCount !== undefined) {
+    result.cacheReadInputTokens = metadata.cachedContentTokenCount;
+  }
+  if (metadata.thoughtsTokenCount !== undefined) {
+    result.thinkingTokens = metadata.thoughtsTokenCount;
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /** Create a Google Gemini model adapter.
@@ -184,8 +232,9 @@ export function google(options: GoogleGenAIOptions): GoogleGenAIModel {
 function modelResultFrom<T extends GeminiModels>(
   modelId: T,
   messages: Message[],
+  usage?: ModelUsage,
 ): ModelResult<T> {
-  return { modelId, messages };
+  return usage ? { modelId, messages, usage } : { modelId, messages };
 }
 
 /** Convert shared messages into Gemini request contents.

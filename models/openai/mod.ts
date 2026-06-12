@@ -14,7 +14,7 @@
  *
  * @module
  */
-import type { BaseModel, ModelResult } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type {
   Message,
   ModelMessage,
@@ -114,11 +114,16 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
     return {
       modelId,
       messages: [modelMessageFrom(choice.message)],
+      usage: usageFrom(response.usage),
     };
   }
 
   /**
    * Sends a streaming chat completion request.
+   *
+   * The request opts into `stream_options.include_usage`, so the stream ends
+   * with a usage-only {@link ModelResult} (empty `messages`) carrying the
+   * token usage of the whole call.
    *
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
@@ -132,6 +137,7 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
       messages: openAIMessagesFrom(messages, system),
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: true,
+      stream_options: { include_usage: true },
     });
 
     return streamCompletions(stream, modelId);
@@ -273,8 +279,15 @@ async function* streamCompletions(
   modelId: OpenAIModels,
 ): AsyncGenerator<ModelResult<OpenAIModels>> {
   const pendingToolCalls: Record<number, PendingToolCall> = {};
+  let usage: ModelUsage | undefined;
 
   for await (const chunk of stream) {
+    // With `stream_options.include_usage` the usage arrives on a final
+    // chunk that carries no choices.
+    if (chunk.usage) {
+      usage = usageFrom(chunk.usage);
+    }
+
     const choice = chunk.choices[0];
     if (!choice) {
       continue;
@@ -313,6 +326,37 @@ async function* streamCompletions(
   }
 
   yield* flushPendingToolCalls(pendingToolCalls, modelId);
+
+  if (usage) {
+    yield { modelId, messages: [], usage };
+  }
+}
+
+/** Maps OpenAI completion usage to the normalized {@link ModelUsage}. */
+function usageFrom(
+  usage: OpenAI.CompletionUsage | null | undefined,
+): ModelUsage | undefined {
+  if (!usage) {
+    return undefined;
+  }
+
+  const result: ModelUsage = {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    totalTokens: usage.total_tokens,
+  };
+
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens;
+  if (cachedTokens !== undefined) {
+    result.cacheReadInputTokens = cachedTokens;
+  }
+
+  const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens;
+  if (reasoningTokens !== undefined) {
+    result.thinkingTokens = reasoningTokens;
+  }
+
+  return result;
 }
 
 function* flushPendingToolCalls(
@@ -375,7 +419,9 @@ function isPopulatedModelMessage(message: ModelMessage): boolean {
     message.toolCalls.length > 0;
 }
 
-function modelToolCallsFrom(message: ModelMessage): ToolCallContent["toolCall"][] {
+function modelToolCallsFrom(
+  message: ModelMessage,
+): ToolCallContent["toolCall"][] {
   if (message.toolCalls.length > 0) {
     return message.toolCalls;
   }
