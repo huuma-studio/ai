@@ -5,15 +5,20 @@ import type {
   JSONSchema,
   Message,
   ModelResult,
+  ModelUsage,
 } from "@/agent/mod.ts";
 import { tool } from "@/tools/mod.ts";
 import { object, string } from "@huuma/validate";
 
+type ScriptedResponse =
+  | Message[]
+  | { messages: Message[]; usage?: ModelUsage };
+
 class StubModel implements BaseModel<string> {
   calls: { messages: Message[]; system?: string }[] = [];
-  #responses: Message[][];
+  #responses: ScriptedResponse[];
 
-  constructor(responses: Message[][]) {
+  constructor(responses: ScriptedResponse[]) {
     this.#responses = responses;
   }
 
@@ -24,11 +29,18 @@ class StubModel implements BaseModel<string> {
     };
     this.calls.push({ messages, system });
 
-    const messagesToReturn = this.#responses.shift();
-    if (!messagesToReturn) {
+    const response = this.#responses.shift();
+    if (!response) {
       return Promise.reject(new Error("No scripted response left"));
     }
-    return Promise.resolve({ modelId: "stub", messages: messagesToReturn });
+    const { messages: messagesToReturn, usage } = Array.isArray(response)
+      ? { messages: response, usage: undefined }
+      : response;
+    return Promise.resolve({
+      modelId: "stub",
+      messages: messagesToReturn,
+      ...(usage ? { usage } : {}),
+    });
   }
 
   stream(): Promise<AsyncGenerator<ModelResult>> {
@@ -284,6 +296,146 @@ Deno.test("agent - onMessage errors warn but do not abort the run", async () => 
   } finally {
     console.warn = originalWarn;
   }
+});
+
+Deno.test("agent - onMessage receives accumulated usage across model calls", async () => {
+  const toolCall = {
+    id: "call-1",
+    name: "greet",
+    props: { name: "Huuma" } as unknown as JSONSchema,
+  };
+  const model = new StubModel([
+    {
+      messages: [{
+        role: "model",
+        contents: [{ toolCall }],
+        toolCalls: [toolCall],
+      }],
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    },
+    {
+      messages: [modelMessage("Greeted Huuma.")],
+      usage: { inputTokens: 20, outputTokens: 7, totalTokens: 27 },
+    },
+  ]);
+
+  const greet = tool({
+    name: "greet",
+    description: "Greet someone by name.",
+    input: object({ name: string() }),
+    fn: ({ name }) => `Hello, ${name}!`,
+  });
+
+  const reported: (ModelUsage | undefined)[] = [];
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [greet],
+    onMessage: (_message, usage) => {
+      reported.push(usage);
+    },
+  });
+
+  await assistant.run("Greet Huuma");
+
+  // Each message carries the run total at the time it is emitted: the
+  // user prompt precedes any model call, the first model message and
+  // the tool result reflect the first call, and the final model
+  // message covers the whole run.
+  assertEquals(reported, [
+    undefined,
+    { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    { inputTokens: 30, outputTokens: 12, totalTokens: 42 },
+  ]);
+});
+
+Deno.test("agent - onMessage usage stays undefined without model usage", async () => {
+  const model = new StubModel([[modelMessage("Hello!")]]);
+
+  const reported: (ModelUsage | undefined)[] = [];
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    onMessage: (_message, usage) => {
+      reported.push(usage);
+    },
+  });
+
+  await assistant.run("Hi");
+
+  assertEquals(reported, [undefined, undefined]);
+});
+
+Deno.test("agent - onMessage usage stays undefined for empty usage objects", async () => {
+  const model = new StubModel([
+    { messages: [modelMessage("Hello!")], usage: {} },
+  ]);
+
+  const reported: (ModelUsage | undefined)[] = [];
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    onMessage: (_message, usage) => {
+      reported.push(usage);
+    },
+  });
+
+  await assistant.run("Hi");
+
+  assertEquals(reported, [undefined, undefined]);
+});
+
+Deno.test("agent - onMessage usage snapshots are mutation-safe", async () => {
+  const toolCall = {
+    id: "call-1",
+    name: "greet",
+    props: { name: "Huuma" } as unknown as JSONSchema,
+  };
+  const model = new StubModel([
+    {
+      messages: [{
+        role: "model",
+        contents: [{ toolCall }],
+        toolCalls: [toolCall],
+      }],
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+    },
+    {
+      messages: [modelMessage("Greeted Huuma.")],
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    },
+  ]);
+
+  const greet = tool({
+    name: "greet",
+    description: "Greet someone by name.",
+    input: object({ name: string() }),
+    fn: ({ name }) => `Hello, ${name}!`,
+  });
+
+  const totals: (number | undefined)[] = [];
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [greet],
+  });
+
+  await assistant.run("Greet Huuma", [], {
+    onMessage: (_message, usage) => {
+      totals.push(usage?.totalTokens);
+      if (usage) {
+        // Mutating the snapshot must not corrupt the run's accumulator.
+        usage.totalTokens = 0;
+      }
+    },
+  });
+
+  assertEquals(totals, [undefined, 7, 7, 9]);
 });
 
 Deno.test("agent - run surfaces model errors", async () => {
