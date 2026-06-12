@@ -27,7 +27,7 @@
  */
 import { callTool, type Tool, Tools } from "@/tools/mod.ts";
 import type { BaseModel } from "@/model/mod.ts";
-export type { BaseModel, ModelResult } from "@/model/mod.ts";
+export type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 export type { JSONSchema, Schema, Tool } from "@/tools/mod.ts";
 export type {
   Message,
@@ -46,11 +46,22 @@ import { decision, step, workflow } from "@/workflow/mod.ts";
 
 /** Callback invoked for each message emitted during an agent run.
  *
- * The callback is awaited before the run continues, so messages are
- * delivered sequentially and in order. Errors thrown by the callback
- * are caught and logged as a warning; they do not abort the run.
+ * The callback is awaited before the run continues, so within a single
+ * run messages are delivered sequentially and in order. Concurrent
+ * {@link Agent.run} calls on the same agent share the agent-level
+ * callback, and their messages interleave without attribution; pass a
+ * per-run callback via {@link RunOptions} to tell runs apart. Errors
+ * thrown by the callback are caught and logged as a warning; they do
+ * not abort the run.
  */
 export type OnMessage = (message: Message) => void | Promise<void>;
+
+/** Options for a single agent run. */
+export interface RunOptions {
+  /** Called for each message emitted during this run. Overrides the
+   * agent-level {@link AgentOptions.onMessage} callback. */
+  onMessage?: OnMessage;
+}
 
 /** Options used to create an agent. */
 export interface AgentOptions<T extends string> {
@@ -65,7 +76,8 @@ export interface AgentOptions<T extends string> {
   systemPrompt: string;
   /** Called for each message emitted during a run: the user prompt,
    * every model message, and every tool result. Messages passed in as
-   * history are not emitted. */
+   * history are not emitted. Shared by all runs of this agent — for
+   * concurrent runs, prefer the per-run {@link RunOptions.onMessage}. */
   onMessage?: OnMessage;
 }
 
@@ -91,13 +103,19 @@ export class Agent<T extends string> {
    *
    * @param prompt User message to send to the model.
    * @param history Prior conversation messages to continue from.
+   * @param options Per-run options such as an {@link OnMessage} callback.
    * @returns The full conversation history including tool results.
    */
-  async run(prompt: string, history: Message[] = []): Promise<Message[]> {
+  async run(
+    prompt: string,
+    history: Message[] = [],
+    options?: RunOptions,
+  ): Promise<Message[]> {
+    const onMessage = options?.onMessage ?? this.#onMessage;
     const emit = async (...messages: Message[]) => {
       for (const message of messages) {
         try {
-          await this.#onMessage?.(message);
+          await onMessage?.(message);
         } catch (error) {
           console.warn("[Huuma Agent] onMessage callback failed:", error);
         }

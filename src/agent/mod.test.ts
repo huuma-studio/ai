@@ -199,6 +199,61 @@ Deno.test("agent - onMessage does not receive prior history", async () => {
   ]);
 });
 
+Deno.test("agent - per-run onMessage overrides the agent-level callback", async () => {
+  const model = new StubModel([[modelMessage("Hello!")]]);
+
+  const agentLevel: Message[] = [];
+  const runLevel: Message[] = [];
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    onMessage: (message) => {
+      agentLevel.push(message);
+    },
+  });
+
+  const messages = await assistant.run("Hi", [], {
+    onMessage: (message) => {
+      runLevel.push(message);
+    },
+  });
+
+  assertEquals(agentLevel, []);
+  assertEquals(runLevel, messages);
+});
+
+Deno.test("agent - per-run onMessage attributes messages of concurrent runs", async () => {
+  const model = new StubModel([
+    [modelMessage("First answer.")],
+    [modelMessage("Second answer.")],
+  ]);
+
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+  });
+
+  const emittedA: Message[] = [];
+  const emittedB: Message[] = [];
+  const [messagesA, messagesB] = await Promise.all([
+    assistant.run("First?", [], {
+      onMessage: (message) => {
+        emittedA.push(message);
+      },
+    }),
+    assistant.run("Second?", [], {
+      onMessage: (message) => {
+        emittedB.push(message);
+      },
+    }),
+  ]);
+
+  assertEquals(emittedA, messagesA);
+  assertEquals(emittedB, messagesB);
+});
+
 Deno.test("agent - onMessage errors warn but do not abort the run", async () => {
   const model = new StubModel([[modelMessage("Hello!")]]);
 
