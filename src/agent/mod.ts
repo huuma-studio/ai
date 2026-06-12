@@ -12,8 +12,9 @@
  *   modelId: "gpt-4o-mini",
  *   systemPrompt: "You are a helpful assistant.",
  *   tools: [cli({ allowedCommands: ["deno"] })],
- *   // Optionally observe each emitted message as the run progresses.
- *   onMessage: (message) => console.log(message),
+ *   // Optionally observe each emitted message as the run progresses,
+ *   // along with the run's accumulated token usage.
+ *   onMessage: (message, usage) => console.log(message, usage?.totalTokens),
  * });
  *
  * const messages = await assistant.run("What is the current Deno version?");
@@ -26,8 +27,9 @@
  * @module
  */
 import { callTool, type Tool, Tools } from "@/tools/mod.ts";
-import type { BaseModel } from "@/model/mod.ts";
+import { type BaseModel, type ModelUsage, sumModelUsage } from "@/model/mod.ts";
 export type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+export { sumModelUsage } from "@/model/mod.ts";
 export type { JSONSchema, Schema, Tool } from "@/tools/mod.ts";
 export type {
   Message,
@@ -53,8 +55,17 @@ import { decision, step, workflow } from "@/workflow/mod.ts";
  * per-run callback via {@link RunOptions} to tell runs apart. Errors
  * thrown by the callback are caught and logged as a warning; they do
  * not abort the run.
+ *
+ * The second argument is a snapshot of the run's token usage: the
+ * {@link ModelUsage} of all model calls of the run summed so far, not
+ * the usage of an individual message. It is `undefined` until the first
+ * model call reports usage, and the value passed with the last emitted
+ * message covers the whole run.
  */
-export type OnMessage = (message: Message) => void | Promise<void>;
+export type OnMessage = (
+  message: Message,
+  usage?: ModelUsage,
+) => void | Promise<void>;
 
 /** Options for a single agent run. */
 export interface RunOptions {
@@ -112,10 +123,12 @@ export class Agent<T extends string> {
     options?: RunOptions,
   ): Promise<Message[]> {
     const onMessage = options?.onMessage ?? this.#onMessage;
+    let runUsage: ModelUsage | undefined;
     const emit = async (...messages: Message[]) => {
       for (const message of messages) {
         try {
-          await onMessage?.(message);
+          // A copy keeps the accumulated usage safe from consumer mutation.
+          await onMessage?.(message, runUsage ? { ...runUsage } : undefined);
         } catch (error) {
           console.warn("[Huuma Agent] onMessage callback failed:", error);
         }
@@ -129,6 +142,7 @@ export class Agent<T extends string> {
         messages,
         tools: this.#tools.all(),
       });
+      runUsage = sumModelUsage(runUsage, result.usage);
       await emit(...result.messages);
       return [...messages, ...result.messages];
     };

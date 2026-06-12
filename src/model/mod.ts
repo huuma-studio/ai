@@ -76,3 +76,44 @@ export interface ModelUsage {
   /** Output tokens spent on reasoning/thinking, when reported separately. */
   thinkingTokens?: number;
 }
+
+const MODEL_USAGE_KEYS = [
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "cacheReadInputTokens",
+  "cacheWriteInputTokens",
+  "thinkingTokens",
+] as const;
+
+/** Sums usage reports of multiple model calls into one.
+ *
+ * Each field is summed across the inputs that report it; fields no input
+ * reports stay absent, preserving the "absent means not reported"
+ * convention of {@link ModelUsage}.
+ *
+ * @param usages Usage reports to sum; `undefined` entries are skipped.
+ * @returns The summed usage, or `undefined` when no input carries usage.
+ */
+export function sumModelUsage(
+  ...usages: (ModelUsage | undefined)[]
+): ModelUsage | undefined {
+  let result: ModelUsage | undefined;
+
+  for (const usage of usages) {
+    if (!usage) {
+      continue;
+    }
+    for (const key of MODEL_USAGE_KEYS) {
+      const value = usage[key];
+      if (value !== undefined) {
+        // Allocated on the first written field, so usage objects without
+        // any reported field collapse to `undefined` instead of `{}`.
+        result ??= {};
+        result[key] = (result[key] ?? 0) + value;
+      }
+    }
+  }
+
+  return result;
+}
