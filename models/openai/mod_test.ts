@@ -752,24 +752,272 @@ Deno.test("OpenAIModel.stream streams tool calls correctly", async () => {
     results.push(chunk);
   }
 
-  assertEquals(results.length, 3);
-
-  // First chunk has tool call metadata but no arguments parsed yet
-  const chunk1 = results[0].messages[0] as ModelMessage;
-  assertEquals(chunk1.toolCalls.length, 1);
-  assertEquals(chunk1.toolCalls[0].id, "call_123");
-  assertEquals(chunk1.toolCalls[0].name, "get_weather");
-  assertEquals(chunk1.toolCalls[0].props, {});
-
-  // Second chunk has partial arguments which fail JSON parsing, so props remains empty object
-  const chunk2 = results[1].messages[0] as ModelMessage;
-  assertEquals(chunk2.toolCalls[0].props, {});
-
-  // Third chunk has complete arguments which parse successfully
-  const chunk3 = results[2].messages[0] as ModelMessage;
+  // The tool call is emitted once, after its arguments are complete,
+  // instead of partially on every delta.
+  assertEquals(results.length, 1);
+  const msg = results[0].messages[0] as ModelMessage;
+  assertEquals(msg.toolCalls.length, 1);
+  assertEquals(msg.toolCalls[0].id, "call_123");
+  assertEquals(msg.toolCalls[0].name, "get_weather");
   // deno-lint-ignore no-explicit-any
-  const expectedProps = { location: "SF" } as any;
-  assertEquals(chunk3.toolCalls[0].props, expectedProps);
+  assertEquals(msg.toolCalls[0].props, { location: "SF" } as any);
+  assertEquals(msg.contents, [{ toolCall: msg.toolCalls[0] }]);
+});
+
+Deno.test("OpenAIModel.stream flushes tool calls on finish_reason", async () => {
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (input: string | URL | Request, _init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url.includes("/v1/chat/completions")) {
+        const encoder = new TextEncoder();
+        const chunks = [
+          {
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_1",
+                  type: "function",
+                  function: { name: "get_weather", arguments: '{"a":1}' },
+                }],
+              },
+            }],
+          },
+          {
+            choices: [{
+              index: 0,
+              delta: { content: "Done" },
+              finish_reason: "tool_calls",
+            }],
+          },
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+              );
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    },
+  });
+
+  const stream = await model.stream({
+    modelId: "gpt-4o",
+    messages: [{ role: "user", contents: "Hi" }],
+  });
+
+  const results = [];
+  for await (const chunk of stream) {
+    results.push(chunk);
+  }
+
+  assertEquals(results.length, 2);
+  assertEquals(results[0].messages[0].contents, [{ text: "Done" }]);
+  const toolMsg = results[1].messages[0] as ModelMessage;
+  assertEquals(toolMsg.toolCalls, [
+    // deno-lint-ignore no-explicit-any
+    { id: "call_1", name: "get_weather", props: { a: 1 } as any },
+  ]);
+});
+
+Deno.test("OpenAIModel.stream emits earlier tool call when a new index starts", async () => {
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (input: string | URL | Request, _init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url.includes("/v1/chat/completions")) {
+        const encoder = new TextEncoder();
+        const chunks = [
+          {
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_1",
+                  type: "function",
+                  function: { name: "tool_a", arguments: "{}" },
+                }],
+              },
+            }],
+          },
+          {
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index: 1,
+                  id: "call_2",
+                  type: "function",
+                  function: { name: "tool_b", arguments: '{"b":2}' },
+                }],
+              },
+            }],
+          },
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+              );
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    },
+  });
+
+  const stream = await model.stream({
+    modelId: "gpt-4o",
+    messages: [{ role: "user", contents: "Hi" }],
+  });
+
+  const results = [];
+  for await (const chunk of stream) {
+    results.push(chunk);
+  }
+
+  assertEquals(results.length, 2);
+  const first = results[0].messages[0] as ModelMessage;
+  assertEquals(first.toolCalls[0].id, "call_1");
+  assertEquals(first.toolCalls[0].name, "tool_a");
+  const second = results[1].messages[0] as ModelMessage;
+  assertEquals(second.toolCalls[0].id, "call_2");
+  assertEquals(second.toolCalls[0].name, "tool_b");
+  // deno-lint-ignore no-explicit-any
+  assertEquals(second.toolCalls[0].props, { b: 2 } as any);
+});
+
+Deno.test("OpenAIModel.generate maps refusal to text content", async () => {
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (input: string | URL | Request, _init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url.includes("/v1/chat/completions")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "chatcmpl-123",
+              choices: [{
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: null,
+                  refusal: "I can't help with that.",
+                },
+                finish_reason: "stop",
+              }],
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    },
+  });
+
+  const result = await model.generate({
+    modelId: "gpt-4o",
+    messages: [{ role: "user", contents: "Hi" }],
+  });
+
+  assertEquals(result.messages.length, 1);
+  assertEquals(result.messages[0].contents, [{
+    text: "I can't help with that.",
+  }]);
+});
+
+Deno.test("OpenAIModel.stream maps refusal deltas to text content", async () => {
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (input: string | URL | Request, _init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url.includes("/v1/chat/completions")) {
+        const encoder = new TextEncoder();
+        const chunks = [
+          { choices: [{ index: 0, delta: { refusal: "I can't" } }] },
+          { choices: [{ index: 0, delta: { refusal: " help with that." } }] },
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+              );
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    },
+  });
+
+  const stream = await model.stream({
+    modelId: "gpt-4o",
+    messages: [{ role: "user", contents: "Hi" }],
+  });
+
+  const results = [];
+  for await (const chunk of stream) {
+    results.push(chunk);
+  }
+
+  assertEquals(results.length, 2);
+  assertEquals(results[0].messages[0].contents, [{ text: "I can't" }]);
+  assertEquals(results[1].messages[0].contents, [{
+    text: " help with that.",
+  }]);
 });
 
 Deno.test("openai factory returns OpenAIModel instance", () => {
