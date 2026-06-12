@@ -16,6 +16,9 @@
  *
  * const messages = await assistant.run("What is the current Deno version?");
  * console.log(messages.at(-1));
+ *
+ * // Continue the conversation by passing the previous messages as history.
+ * const followUp = await assistant.run("And the previous version?", messages);
  * ```
  *
  * @module
@@ -69,9 +72,10 @@ export class Agent<T extends string> {
   /** Run the agent with a user prompt and return the conversation messages.
    *
    * @param prompt User message to send to the model.
+   * @param history Prior conversation messages to continue from.
    * @returns The full conversation history including tool results.
    */
-  async run(prompt: string): Promise<Message[]> {
+  async run(prompt: string, history: Message[] = []): Promise<Message[]> {
     const askAction = async (messages: Message[]) => {
       const result = await this.#model.generate({
         modelId: this.#modelId,
@@ -101,7 +105,7 @@ export class Agent<T extends string> {
 
     const loop = workflow({
       name: "Huuma Agent",
-      state: [{
+      state: [...history, {
         role: "user",
         contents: prompt,
       }],

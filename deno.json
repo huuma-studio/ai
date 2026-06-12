@@ -33,7 +33,7 @@
   },
   "imports": {
     "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2",
-    "@google/genai": "npm:@google/genai@^2.7.0",
+    "@google/genai": "npm:@google/genai@^2.8.0",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.100.1",
     "@std/fs": "jsr:@std/fs@^1.0.24",
     "ollama": "npm:ollama@^0.6.3",
@@ -43,6 +43,6 @@
     "@std/path": "jsr:@std/path@^1.1.5",
     "@std/assert": "jsr:@std/assert@^1.0.19",
     "node-html-markdown": "npm:node-html-markdown@^2.0.0",
-    "openai": "npm:openai@^6.39.1"
+    "openai": "npm:openai@^6.42.0"
   }
 }
