@@ -1,7 +1,7 @@
 {
   "nodeModulesDir": "auto",
   "name": "@huuma/ai",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Composable AI primitives for Deno and TypeScript: model adapters, agents, workflows, and tool factories.",
   "license": "MIT",
   "exports": {
@@ -9,6 +9,7 @@
     "./model": "./src/model/mod.ts",
     "./workflow": "./src/workflow/mod.ts",
     "./models": "./models/mod.ts",
+    "./models/anthropic": "./models/anthropic/mod.ts",
     "./models/google": "./models/google/mod.ts",
     "./models/ollama": "./models/ollama/mod.ts",
     "./models/openai": "./models/openai/mod.ts",
@@ -33,7 +34,7 @@
   },
   "imports": {
     "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2",
-    "@google/genai": "npm:@google/genai@^2.7.0",
+    "@google/genai": "npm:@google/genai@^2.8.0",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.100.1",
     "@std/fs": "jsr:@std/fs@^1.0.24",
     "ollama": "npm:ollama@^0.6.3",
@@ -43,6 +44,6 @@
     "@std/path": "jsr:@std/path@^1.1.5",
     "@std/assert": "jsr:@std/assert@^1.0.19",
     "node-html-markdown": "npm:node-html-markdown@^2.0.0",
-    "openai": "npm:openai@^6.39.1"
+    "openai": "npm:openai@^6.42.0"
   }
 }

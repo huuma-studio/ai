@@ -39,9 +39,11 @@ interface ReasoningExtension {
 // deno-lint-ignore ban-types
 export type OpenAIModels = OpenAI.ChatModel | (string & {});
 
+// `n` is omitted because the adapter only maps the first choice; allowing
+// it would silently drop the additional completions.
 export type OpenAIRequestOptions = Omit<
   OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-  "messages" | "model" | "stream" | "tools"
+  "messages" | "model" | "stream" | "tools" | "n"
 >;
 
 /**
@@ -66,10 +68,6 @@ export interface OpenAIGenerateOptions {
   options?: OpenAIRequestOptions;
 }
 
-/**
- * Wrapper around the official OpenAI SDK providing a unified
- * {@link BaseModel} interface.
- */
 /**
  * Wrapper around the official OpenAI SDK providing a unified
  * {@link BaseModel} interface.
@@ -131,30 +129,7 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
       stream: true,
     });
 
-    const accumulatedToolCalls: Record<
-      number,
-      { id?: string; name?: string; arguments: string }
-    > = {};
-
-    return (async function* () {
-      for await (const chunk of stream) {
-        const choice = chunk.choices[0];
-        if (!choice) {
-          continue;
-        }
-
-        const message = modelMessageFromDelta(
-          choice.delta,
-          accumulatedToolCalls,
-        );
-        if (isPopulatedModelMessage(message)) {
-          yield {
-            modelId,
-            messages: [message],
-          };
-        }
-      }
-    })();
+    return streamCompletions(stream, modelId);
   }
 }
 
@@ -248,6 +223,12 @@ function modelMessageFrom(
     result.contents.push({ text: message.content });
   }
 
+  // Refusals carry the explanation text while `content` stays null; map
+  // them to text content so callers never receive a silently empty message.
+  if (message.refusal) {
+    result.contents.push({ text: message.refusal });
+  }
+
   const reasoningContent = (message as ReasoningExtension).reasoning_content;
   if (reasoningContent) {
     result.thinking = reasoningContent;
@@ -272,12 +253,95 @@ function modelMessageFrom(
   return result;
 }
 
+interface PendingToolCall {
+  id: string;
+  name: string;
+  argumentsJSON: string;
+}
+
+// Tool calls are buffered and emitted once their arguments JSON is
+// complete, instead of re-parsing partial JSON on every delta. A pending
+// call is complete when a fragment for a higher index arrives, when the
+// choice reports a finish reason, or when the stream ends.
+async function* streamCompletions(
+  stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
+  modelId: OpenAIModels,
+): AsyncGenerator<ModelResult<OpenAIModels>> {
+  const pendingToolCalls: Record<number, PendingToolCall> = {};
+
+  for await (const chunk of stream) {
+    const choice = chunk.choices[0];
+    if (!choice) {
+      continue;
+    }
+
+    const message = modelMessageFromDelta(choice.delta);
+    if (isPopulatedModelMessage(message)) {
+      yield { modelId, messages: [message] };
+    }
+
+    for (const toolCallDelta of choice.delta.tool_calls ?? []) {
+      if (toolCallDelta.type && toolCallDelta.type !== "function") {
+        continue;
+      }
+
+      const index = toolCallDelta.index;
+      yield* flushPendingToolCalls(pendingToolCalls, modelId, index);
+
+      pendingToolCalls[index] ??= { id: "", name: "", argumentsJSON: "" };
+      const pending = pendingToolCalls[index];
+
+      if (toolCallDelta.id) {
+        pending.id = toolCallDelta.id;
+      }
+      if (toolCallDelta.function?.name) {
+        pending.name = toolCallDelta.function.name;
+      }
+      if (toolCallDelta.function?.arguments) {
+        pending.argumentsJSON += toolCallDelta.function.arguments;
+      }
+    }
+
+    if (choice.finish_reason) {
+      yield* flushPendingToolCalls(pendingToolCalls, modelId);
+    }
+  }
+
+  yield* flushPendingToolCalls(pendingToolCalls, modelId);
+}
+
+function* flushPendingToolCalls(
+  pendingToolCalls: Record<number, PendingToolCall>,
+  modelId: OpenAIModels,
+  beforeIndex = Infinity,
+): Generator<ModelResult<OpenAIModels>> {
+  const indexes = Object.keys(pendingToolCalls)
+    .map(Number)
+    .filter((index) => index < beforeIndex)
+    .sort((a, b) => a - b);
+
+  for (const index of indexes) {
+    const pending = pendingToolCalls[index];
+    delete pendingToolCalls[index];
+
+    const toolCall: ToolCallContent["toolCall"] = {
+      id: pending.id,
+      name: pending.name,
+      props: parseToolArguments(pending.argumentsJSON),
+    };
+    yield {
+      modelId,
+      messages: [{
+        role: "model",
+        contents: [{ toolCall }],
+        toolCalls: [toolCall],
+      }],
+    };
+  }
+}
+
 function modelMessageFromDelta(
   delta: OpenAI.Chat.ChatCompletionChunk.Choice.Delta,
-  accumulatedToolCalls: Record<
-    number,
-    { id?: string; name?: string; arguments: string }
-  >,
 ): ModelMessage {
   const message: ModelMessage = {
     role: "model",
@@ -289,40 +353,13 @@ function modelMessageFromDelta(
     message.contents.push({ text: delta.content });
   }
 
+  if (delta.refusal) {
+    message.contents.push({ text: delta.refusal });
+  }
+
   const reasoningContent = (delta as ReasoningExtension).reasoning_content;
   if (reasoningContent) {
     message.thinking = reasoningContent;
-  }
-
-  if (delta.tool_calls) {
-    for (const toolCallDelta of delta.tool_calls) {
-      if (toolCallDelta.type && toolCallDelta.type !== "function") {
-        continue;
-      }
-
-      const index = toolCallDelta.index;
-      accumulatedToolCalls[index] ??= { arguments: "" };
-      const accumulatedToolCall = accumulatedToolCalls[index];
-
-      if (toolCallDelta.id) {
-        accumulatedToolCall.id = toolCallDelta.id;
-      }
-      if (toolCallDelta.function?.name) {
-        accumulatedToolCall.name = toolCallDelta.function.name;
-      }
-      if (toolCallDelta.function?.arguments) {
-        accumulatedToolCall.arguments += toolCallDelta.function.arguments;
-      }
-
-      const mappedToolCall: ToolCallContent["toolCall"] = {
-        id: accumulatedToolCall.id ?? "",
-        name: accumulatedToolCall.name ?? "",
-        props: parseToolArguments(accumulatedToolCall.arguments),
-      };
-
-      message.toolCalls.push(mappedToolCall);
-      message.contents.push({ toolCall: mappedToolCall });
-    }
   }
 
   return message;
