@@ -11,7 +11,7 @@ import { cli } from "jsr:@huuma/ai/tools";
 
 const assistant = agent({
   model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
-  modelId: "gpt-4o-mini",
+  modelId: "gpt-5.5",
   systemPrompt: "You are a concise TypeScript assistant.",
   tools: [cli({ allowedCommands: ["deno"] })],
 });
@@ -24,7 +24,7 @@ console.log(messages.at(-1));
 
 - Shared message and content types in `@huuma/ai`.
 - A common `BaseModel` interface in `@huuma/ai/model`.
-- Model adapters for OpenAI, Google Gemini, and Ollama in `@huuma/ai/models`.
+- Model adapters for Anthropic Claude, OpenAI, Google Gemini, and Ollama in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
 - Tool factories for CLI execution, file operations, grep, website fetching, web search, and skill loading in `@huuma/ai/tools`.
