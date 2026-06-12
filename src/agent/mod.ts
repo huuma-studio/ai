@@ -12,6 +12,8 @@
  *   modelId: "gpt-4o-mini",
  *   systemPrompt: "You are a helpful assistant.",
  *   tools: [cli({ allowedCommands: ["deno"] })],
+ *   // Optionally observe each emitted message as the run progresses.
+ *   onMessage: (message) => console.log(message),
  * });
  *
  * const messages = await assistant.run("What is the current Deno version?");
@@ -42,6 +44,14 @@ export type {
 import type { Message } from "@/mod.ts";
 import { decision, step, workflow } from "@/workflow/mod.ts";
 
+/** Callback invoked for each message emitted during an agent run.
+ *
+ * The callback is awaited before the run continues, so messages are
+ * delivered sequentially and in order. Errors thrown by the callback
+ * are caught and logged as a warning; they do not abort the run.
+ */
+export type OnMessage = (message: Message) => void | Promise<void>;
+
 /** Options used to create an agent. */
 export interface AgentOptions<T extends string> {
   /** Model adapter used to generate responses. */
@@ -53,6 +63,10 @@ export interface AgentOptions<T extends string> {
   tools?: Tool<any>[];
   /** System prompt sent with each model request. */
   systemPrompt: string;
+  /** Called for each message emitted during a run: the user prompt,
+   * every model message, and every tool result. Messages passed in as
+   * history are not emitted. */
+  onMessage?: OnMessage;
 }
 
 /** Agent that loops over model responses and tool calls. */
@@ -61,11 +75,15 @@ export class Agent<T extends string> {
   #model: BaseModel<T>;
   #modelId: T;
   #systemPrompt: string;
+  #onMessage?: OnMessage;
   /** Create an agent instance. */
-  constructor({ model, modelId, tools, systemPrompt }: AgentOptions<T>) {
+  constructor(
+    { model, modelId, tools, systemPrompt, onMessage }: AgentOptions<T>,
+  ) {
     this.#model = model;
     this.#modelId = modelId;
     this.#systemPrompt = systemPrompt ?? "";
+    this.#onMessage = onMessage;
     tools?.forEach((tool) => this.#tools.add(tool));
   }
 
@@ -76,6 +94,16 @@ export class Agent<T extends string> {
    * @returns The full conversation history including tool results.
    */
   async run(prompt: string, history: Message[] = []): Promise<Message[]> {
+    const emit = async (...messages: Message[]) => {
+      for (const message of messages) {
+        try {
+          await this.#onMessage?.(message);
+        } catch (error) {
+          console.warn("[Huuma Agent] onMessage callback failed:", error);
+        }
+      }
+    };
+
     const askAction = async (messages: Message[]) => {
       const result = await this.#model.generate({
         modelId: this.#modelId,
@@ -83,11 +111,17 @@ export class Agent<T extends string> {
         messages,
         tools: this.#tools.all(),
       });
+      await emit(...result.messages);
       return [...messages, ...result.messages];
     };
     const askStep = step(askAction);
 
-    const callToolStep = step(callTool(this.#tools));
+    const executeToolCalls = callTool(this.#tools);
+    const callToolStep = step(async (messages: Message[]) => {
+      const updated = await executeToolCalls(messages);
+      await emit(...updated.slice(messages.length));
+      return updated;
+    });
 
     callToolStep.next(askStep);
 
@@ -103,12 +137,12 @@ export class Agent<T extends string> {
     });
     askStep.next(toolCallCheck);
 
+    const userMessage: Message = { role: "user", contents: prompt };
+    await emit(userMessage);
+
     const loop = workflow({
       name: "Huuma Agent",
-      state: [...history, {
-        role: "user",
-        contents: prompt,
-      }],
+      state: [...history, userMessage],
       start: askStep,
     });
 
