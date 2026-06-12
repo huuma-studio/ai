@@ -31,7 +31,7 @@ export interface WorkflowOptions<T> {
   state?: T;
   /** First callable to execute. */
   start: Callable<T>;
-  /** Maximum number of steps to run. */
+  /** Maximum number of steps to run. The workflow fails once exceeded. */
   maxSteps?: number;
 }
 
@@ -61,15 +61,17 @@ export class Workflow<T> {
   #start: Callable<T>;
   #state?: T;
   #stepsCount = 0;
+  #maxSteps?: number;
 
   /** Create a workflow instance. */
   constructor(
-    { name, description, start, state }: WorkflowOptions<T>,
+    { name, description, start, state, maxSteps }: WorkflowOptions<T>,
   ) {
     this.#name = name;
     this.#description = description;
     this.#start = start;
     this.#state = state;
+    this.#maxSteps = maxSteps;
   }
 
   /** Current execution status. */
@@ -87,11 +89,12 @@ export class Workflow<T> {
    * @param state Optional override for the initial workflow state.
    * @returns The final state after the workflow completes.
    */
-  start(state?: T): Promise<T> {
-    if (!this.#state && !state) {
-      throw Error("State must be present");
+  async start(state?: T): Promise<T> {
+    const initialState = state ?? this.#state;
+    if (initialState === undefined) {
+      throw new Error("State must be present");
     }
-    return this.#call(this.#state || state!);
+    return await this.#call(initialState);
   }
 
   async #call(state: T): Promise<T> {
@@ -99,8 +102,12 @@ export class Workflow<T> {
       throw new Error("Workflow is currently running. Wait until finished.");
     }
     this.#status = WorkflowStatus.RUNNING;
+    this.#stepsCount = 0;
     try {
       const result = await this.#start.call(state, () => {
+        if (this.#maxSteps !== undefined && this.#stepsCount >= this.#maxSteps) {
+          throw new Error("Maximum number of steps exceeded");
+        }
         this.#stepsCount++;
       });
       this.#status = WorkflowStatus.COMPLETED;
@@ -135,17 +142,21 @@ export class Step<T> implements Callable<T> {
   async call(state: T, count: () => void): Promise<T> {
     count();
     const _state = await this.#fn(state);
-    if (this.#next && typeof this.#next.call === "function") {
+    if (this.#next) {
       return this.#next.call(_state, count);
     }
     return _state;
   }
-  /** Attach the next callable in the workflow chain. */
-  next(callable: Callable<T>): void {
+  /** Attach the next callable in the workflow chain.
+   *
+   * @returns The attached callable, enabling fluent chaining like `a.next(b).next(c)`.
+   */
+  next<C extends Callable<T>>(callable: C): C {
     if (this.#next) {
       throw new Error("Step already has a next step");
     }
     this.#next = callable;
+    return callable;
   }
 }
 
@@ -180,6 +191,7 @@ export class Decision<T> implements Callable<T> {
   }
   /** Evaluate the condition and execute the matching branch. */
   async call(state: T, count: () => void): Promise<T> {
+    count();
     if (await this.#condition(state)) {
       return this.#then.call(state, count);
     }
