@@ -270,6 +270,7 @@ function toolOutputString(
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+/** Converts Huuma {@link Tool}s into Ollama tool definitions. */
 // deno-lint-ignore no-explicit-any
 export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
   return tools.map((tool) => ({
@@ -282,6 +283,13 @@ export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
   }));
 }
 
+/**
+ * Converts shared messages into Ollama request messages.
+ *
+ * The `thinking` field is round-tripped so thinking-capable models can carry
+ * reasoning state across tool-call iterations, and fully empty assistant
+ * messages are skipped to avoid sending malformed payloads.
+ */
 export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
   const result: OllamaMessage[] = [];
 

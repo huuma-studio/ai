@@ -39,8 +39,13 @@ interface ReasoningExtension {
 // deno-lint-ignore ban-types
 export type OpenAIModels = OpenAI.ChatModel | (string & {});
 
-// `n` is omitted because the adapter only maps the first choice; allowing
-// it would silently drop the additional completions.
+/**
+ * Additional OpenAI chat completion request options.
+ *
+ * `messages`, `model`, `stream`, and `tools` are managed by the adapter. `n`
+ * is omitted because the adapter only maps the first choice; allowing it would
+ * silently drop the additional completions.
+ */
 export type OpenAIRequestOptions = Omit<
   OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
   "messages" | "model" | "stream" | "tools" | "n"
