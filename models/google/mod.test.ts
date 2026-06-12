@@ -5,7 +5,11 @@ import {
   FinishReason,
   type GenerateContentResponse,
 } from "@google/genai";
-import { genAIContentsFrom, modelMessagesFrom } from "./mod.ts";
+import {
+  genAIContentsFrom,
+  googleUsageFrom,
+  modelMessagesFrom,
+} from "./mod.ts";
 import type { Message } from "@/mod.ts";
 
 function responseFrom(
@@ -172,4 +176,35 @@ Deno.test("modelMessagesFrom returns no messages for an empty stop candidate", (
   }));
 
   assertEquals(messages, []);
+});
+
+Deno.test("googleUsageFrom maps usage metadata to normalized usage", () => {
+  assertEquals(
+    googleUsageFrom({
+      promptTokenCount: 9,
+      candidatesTokenCount: 12,
+      totalTokenCount: 30,
+      cachedContentTokenCount: 4,
+      thoughtsTokenCount: 9,
+    }),
+    {
+      inputTokens: 9,
+      outputTokens: 12,
+      totalTokens: 30,
+      cacheReadInputTokens: 4,
+      thinkingTokens: 9,
+    },
+  );
+});
+
+Deno.test("googleUsageFrom only maps reported fields", () => {
+  assertEquals(
+    googleUsageFrom({ promptTokenCount: 9, totalTokenCount: 9 }),
+    { inputTokens: 9, totalTokens: 9 },
+  );
+});
+
+Deno.test("googleUsageFrom returns undefined without usage metadata", () => {
+  assertEquals(googleUsageFrom(undefined), undefined);
+  assertEquals(googleUsageFrom({}), undefined);
 });

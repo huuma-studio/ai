@@ -15,7 +15,7 @@
  * @module
  */
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
-import type { BaseModel, ModelResult } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type {
   Message,
   ModelMessage,
@@ -132,7 +132,11 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
       stream: false,
     });
 
-    return modelResultFrom(modelId, modelMessagesFrom(response));
+    return modelResultFrom(
+      modelId,
+      modelMessagesFrom(response),
+      anthropicUsageFrom(response.usage),
+    );
   }
 
   /**
@@ -142,6 +146,10 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * display, plus complete tool calls and signed thinking blocks once their
    * content block finishes. Use {@link mergeAnthropicModelMessages} to fold
    * the chunks into a single message that can be replayed as history.
+   *
+   * The stream ends with a usage-only {@link ModelResult} (empty `messages`)
+   * carrying the token usage of the whole call, accumulated from Anthropic's
+   * `message_start` and `message_delta` events.
    *
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
@@ -175,8 +183,58 @@ export function anthropic(options: ClientOptions = {}): AnthropicModel {
 function modelResultFrom<T extends ClaudeModels>(
   modelId: T,
   messages: ModelMessage[],
+  usage?: ModelUsage,
 ): ModelResult<T> {
-  return { modelId, messages };
+  return usage ? { modelId, messages, usage } : { modelId, messages };
+}
+
+/** Partial usage shape shared by Anthropic's full and delta usage objects. */
+interface AnthropicUsageLike {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+}
+
+/**
+ * Maps Anthropic usage to the normalized {@link ModelUsage}.
+ *
+ * Anthropic's `input_tokens` excludes cache reads and writes, so the total
+ * is derived as the sum of all reported fields. Merging an existing usage
+ * (from `message_start`) with delta usage (from `message_delta`) keeps the
+ * latest value per field because Anthropic reports cumulative counts.
+ */
+function anthropicUsageFrom(
+  usage: AnthropicUsageLike | null | undefined,
+  base?: ModelUsage,
+): ModelUsage | undefined {
+  if (!usage) {
+    return base;
+  }
+
+  const result: ModelUsage = { ...base };
+  if (typeof usage.input_tokens === "number") {
+    result.inputTokens = usage.input_tokens;
+  }
+  if (typeof usage.output_tokens === "number") {
+    result.outputTokens = usage.output_tokens;
+  }
+  if (typeof usage.cache_read_input_tokens === "number") {
+    result.cacheReadInputTokens = usage.cache_read_input_tokens;
+  }
+  if (typeof usage.cache_creation_input_tokens === "number") {
+    result.cacheWriteInputTokens = usage.cache_creation_input_tokens;
+  }
+
+  if (Object.keys(result).length === 0) {
+    return base;
+  }
+
+  result.totalTokens = (result.inputTokens ?? 0) +
+    (result.outputTokens ?? 0) +
+    (result.cacheReadInputTokens ?? 0) +
+    (result.cacheWriteInputTokens ?? 0);
+  return result;
 }
 
 /**
@@ -416,10 +474,17 @@ async function* streamMessages(
   const state: StreamState = { toolCalls: {}, thinking: {}, redacted: {} };
   let yielded = false;
   let stopReason: Anthropic.StopReason | null = null;
+  let usage: ModelUsage | undefined;
 
   for await (const event of stream) {
+    if (event.type === "message_start") {
+      usage = anthropicUsageFrom(event.message.usage, usage);
+      continue;
+    }
+
     if (event.type === "message_delta") {
       stopReason = event.delta.stop_reason;
+      usage = anthropicUsageFrom(event.usage, usage);
       continue;
     }
 
@@ -434,6 +499,10 @@ async function* streamMessages(
     throw new Error(
       `Claude returned no content (stop reason: ${stopReason})`,
     );
+  }
+
+  if (usage) {
+    yield modelResultFrom(modelId, [], usage);
   }
 }
 

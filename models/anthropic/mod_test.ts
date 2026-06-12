@@ -4,8 +4,8 @@ import { tool } from "@/tools/mod.ts";
 import { object, string } from "@huuma/validate";
 import {
   anthropic,
-  AnthropicModel,
   anthropicMessagesFrom,
+  AnthropicModel,
   anthropicToolsFrom,
   mergeAnthropicModelMessages,
 } from "./mod.ts";
@@ -226,6 +226,11 @@ Deno.test("AnthropicModel.generate calls the API and returns mapped result", asy
     contents: [{ text: "Hello! How can I help?" }],
     toolCalls: [],
   }]);
+  assertEquals(result.usage, {
+    inputTokens: 9,
+    outputTokens: 12,
+    totalTokens: 21,
+  });
 });
 
 Deno.test("AnthropicModel.generate maps tool_use and thinking blocks", async () => {
@@ -386,11 +391,20 @@ Deno.test("AnthropicModel.stream maps text deltas and complete tool calls", asyn
     // deno-lint-ignore no-explicit-any
     props: { query: "deno" } as any,
   };
-  assertEquals(results.map((r) => r.messages[0]), [
+  assertEquals(results.length, 4);
+  assertEquals(results.slice(0, 3).map((r) => r.messages[0]), [
     { role: "model", contents: [{ text: "Hel" }], toolCalls: [] },
     { role: "model", contents: [{ text: "lo" }], toolCalls: [] },
     { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] },
   ]);
+
+  // The stream ends with a usage-only result accumulated from the
+  // message_start (input tokens) and message_delta (output tokens) events.
+  assertEquals(results[3], {
+    modelId: "claude-opus-4-8",
+    messages: [],
+    usage: { inputTokens: 9, outputTokens: 12, totalTokens: 21 },
+  });
 });
 
 Deno.test("AnthropicModel.stream emits replayable thinking blocks", async () => {

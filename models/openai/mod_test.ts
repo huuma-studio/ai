@@ -269,6 +269,11 @@ Deno.test("OpenAIModel.generate calls OpenAI API and returns mapped result", asy
   assertEquals(result.messages[0].contents, [{
     text: "Hello! how can I help you today?",
   }]);
+  assertEquals(result.usage, {
+    inputTokens: 9,
+    outputTokens: 12,
+    totalTokens: 21,
+  });
 });
 
 Deno.test("OpenAIModel.generate handles tool calls", async () => {
@@ -601,6 +606,87 @@ Deno.test("OpenAIModel.stream streams content and maps correctly", async () => {
   assertEquals(results[0].modelId, "gpt-4o");
   assertEquals(results[0].messages[0].contents, [{ text: "Hello" }]);
   assertEquals(results[1].messages[0].contents, [{ text: " world" }]);
+});
+
+Deno.test("OpenAIModel.stream requests usage and yields a final usage chunk", async () => {
+  // deno-lint-ignore no-explicit-any
+  let requestBody: any = null;
+
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (input: string | URL | Request, init) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      if (url.includes("/v1/chat/completions")) {
+        requestBody = JSON.parse((init as { body?: string })?.body ?? "{}");
+        const encoder = new TextEncoder();
+        const chunks = [
+          { choices: [{ index: 0, delta: { content: "Hi" } }] },
+          {
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          },
+          // Final usage-only chunk sent by OpenAI when
+          // stream_options.include_usage is set.
+          {
+            choices: [],
+            usage: {
+              prompt_tokens: 9,
+              completion_tokens: 12,
+              total_tokens: 21,
+              prompt_tokens_details: { cached_tokens: 4 },
+              completion_tokens_details: { reasoning_tokens: 3 },
+            },
+          },
+        ];
+        const stream = new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+              );
+            }
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    },
+  });
+
+  const stream = await model.stream({
+    modelId: "gpt-4o",
+    messages: [{ role: "user", contents: "Hi" }],
+  });
+
+  const results = [];
+  for await (const chunk of stream) {
+    results.push(chunk);
+  }
+
+  assertEquals(requestBody.stream_options, { include_usage: true });
+  assertEquals(results.length, 2);
+  assertEquals(results[0].messages[0].contents, [{ text: "Hi" }]);
+  assertEquals(results[1], {
+    modelId: "gpt-4o",
+    messages: [],
+    usage: {
+      inputTokens: 9,
+      outputTokens: 12,
+      totalTokens: 21,
+      cacheReadInputTokens: 4,
+      thinkingTokens: 3,
+    },
+  });
 });
 
 Deno.test("OpenAIModel.stream streams thinking/reasoning correctly", async () => {
