@@ -1,0 +1,175 @@
+import { assertEquals, assertThrows } from "@std/assert";
+import {
+  BlockedReason,
+  type Content,
+  FinishReason,
+  type GenerateContentResponse,
+} from "@google/genai";
+import { genAIContentsFrom, modelMessagesFrom } from "./mod.ts";
+import type { Message } from "@/mod.ts";
+
+function responseFrom(
+  partial: Partial<GenerateContentResponse>,
+): GenerateContentResponse {
+  return partial as GenerateContentResponse;
+}
+
+Deno.test("genAIContentsFrom maps user and model roles through", () => {
+  const messages: Message[] = [
+    { role: "user", contents: "Hello!" },
+    { role: "model", contents: [{ text: "Hi there." }], toolCalls: [] },
+  ];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents, [
+    { role: "user", parts: [{ text: "Hello!" }] },
+    { role: "model", parts: [{ text: "Hi there." }] },
+  ]);
+});
+
+Deno.test("genAIContentsFrom sends system messages as user content", () => {
+  const messages: Message[] = [
+    { role: "system", contents: "Be concise." },
+  ];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents, [
+    { role: "user", parts: [{ text: "Be concise." }] },
+  ]);
+});
+
+Deno.test("genAIContentsFrom maps tool messages to user functionResponse parts", () => {
+  const messages: Message[] = [
+    {
+      role: "tool",
+      contents: [{
+        toolResult: {
+          id: "call-1",
+          name: "lookup",
+          result: { output: "found" },
+        },
+      }],
+    },
+  ];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents[0], {
+    role: "user",
+    parts: [{
+      functionResponse: {
+        id: "call-1",
+        name: "lookup",
+        response: { output: "found" },
+      },
+    }],
+  });
+});
+
+Deno.test("modelMessagesFrom keeps thinking out of contents", () => {
+  const [message] = modelMessagesFrom(responseFrom({
+    candidates: [{
+      content: {
+        role: "model",
+        parts: [
+          { text: "Let me think. ", thought: true },
+          { text: "Still thinking.", thought: true },
+          { text: "The answer is 42." },
+        ],
+      },
+      finishReason: FinishReason.STOP,
+    }],
+  }));
+
+  assertEquals(message.thinking, "Let me think. Still thinking.");
+  assertEquals(message.contents, [{ text: "The answer is 42." }]);
+});
+
+Deno.test("thought signatures round-trip onto their own parts", () => {
+  const messages = modelMessagesFrom(responseFrom({
+    candidates: [{
+      content: {
+        role: "model",
+        parts: [
+          {
+            functionCall: { id: "call-1", name: "first", args: {} },
+            thoughtSignature: "sig-1",
+          },
+          {
+            functionCall: { id: "call-2", name: "second", args: {} },
+            thoughtSignature: "sig-2",
+          },
+        ],
+      },
+      finishReason: FinishReason.STOP,
+    }],
+  }));
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents[0].parts, [
+    {
+      thoughtSignature: "sig-1",
+      functionCall: { id: "call-1", name: "first", args: {} },
+    },
+    {
+      thoughtSignature: "sig-2",
+      functionCall: { id: "call-2", name: "second", args: {} },
+    },
+  ]);
+});
+
+Deno.test("thought signatures on thought parts carry over to the next part", () => {
+  const messages = modelMessagesFrom(responseFrom({
+    candidates: [{
+      content: {
+        role: "model",
+        parts: [
+          { text: "Thinking.", thought: true, thoughtSignature: "sig-text" },
+          { text: "The answer is 42." },
+        ],
+      },
+      finishReason: FinishReason.STOP,
+    }],
+  }));
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents[0].parts, [
+    { thoughtSignature: "sig-text", text: "The answer is 42." },
+  ]);
+});
+
+Deno.test("modelMessagesFrom throws when the prompt is blocked", () => {
+  const response = responseFrom({
+    promptFeedback: { blockReason: BlockedReason.SAFETY },
+  });
+
+  assertThrows(
+    () => modelMessagesFrom(response),
+    Error,
+    "block reason: SAFETY",
+  );
+});
+
+Deno.test("modelMessagesFrom throws on empty candidate with non-stop finish reason", () => {
+  const response = responseFrom({
+    candidates: [{ finishReason: FinishReason.MAX_TOKENS }],
+  });
+
+  assertThrows(
+    () => modelMessagesFrom(response),
+    Error,
+    "finish reason: MAX_TOKENS",
+  );
+});
+
+Deno.test("modelMessagesFrom returns no messages for an empty stop candidate", () => {
+  const messages = modelMessagesFrom(responseFrom({
+    candidates: [{ finishReason: FinishReason.STOP }],
+  }));
+
+  assertEquals(messages, []);
+});

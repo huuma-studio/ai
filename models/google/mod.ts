@@ -18,6 +18,7 @@ import {
   type Candidate,
   type Content,
   type ContentListUnion,
+  FinishReason,
   type GenerateContentResponse,
   GoogleGenAI,
   type Part,
@@ -99,7 +100,7 @@ export class GoogleGenAIModel implements BaseModel {
   async generate(
     { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
-    const { candidates } = await this.#model.models
+    const response = await this.#model.models
       .generateContent({
         model: modelId,
         contents: genAIContentsFrom(messages),
@@ -119,7 +120,7 @@ export class GoogleGenAIModel implements BaseModel {
             : undefined,
         },
       });
-    return modelResultFrom(modelId, messagesFrom(candidates));
+    return modelResultFrom(modelId, modelMessagesFrom(response));
   }
 
   /** Stream Gemini responses as normalized model results. */
@@ -152,7 +153,10 @@ async function* streamMessages(
   modelId: GeminiModels,
 ) {
   for await (const chunk of stream) {
-    yield modelResultFrom(modelId, messagesFrom(chunk.candidates));
+    const messages = messagesFrom(chunk.candidates);
+    if (messages.length) {
+      yield modelResultFrom(modelId, messages);
+    }
   }
 }
 
@@ -172,32 +176,56 @@ function modelResultFrom<T extends GeminiModels>(
   return { modelId, messages };
 }
 
-function genAIContentsFrom(messages: Message[]): ContentListUnion {
+/** Convert shared messages into Gemini request contents.
+ *
+ * Gemini only accepts the roles `"user"` and `"model"`: system messages in
+ * history are sent as user content, and tool messages become user content
+ * carrying `functionResponse` parts. Thought signatures captured in
+ * `thinkingMeta.thoughtSignatures` are re-attached to their matching parts.
+ */
+export function genAIContentsFrom(messages: Message[]): ContentListUnion {
   return messages.map(genAIContentFrom);
 }
 
 function genAIContentFrom(message: Message): Content {
-  let thoughtSignature: string | undefined;
-  if (
-    message.role === "model" &&
-    typeof message.thinkingMeta?.thoughtSignature === "string"
-  ) {
-    thoughtSignature = message.thinkingMeta?.thoughtSignature;
+  if (message.role === "tool") {
+    return {
+      role: "user",
+      parts: genAIPartsFrom(
+        message.contents.filter((content) => "toolResult" in content),
+      ),
+    };
+  }
+
+  if (message.role === "model") {
+    const thoughtSignatures = thoughtSignaturesFrom(message);
+    return {
+      role: "model",
+      parts: message.contents.map((content, index) =>
+        genAIPartFrom(content, thoughtSignatures?.[index])
+      ),
+    };
   }
 
   return {
-    role: message.role,
-    parts: genAIPartsFrom(message.contents, thoughtSignature),
+    role: "user",
+    parts: genAIPartsFrom(message.contents),
   };
+}
+
+function thoughtSignaturesFrom(
+  message: ModelMessage,
+): (string | undefined)[] | undefined {
+  const signatures = message.thinkingMeta?.thoughtSignatures;
+  return Array.isArray(signatures) ? signatures : undefined;
 }
 
 function genAIPartsFrom(
   contents: (TextContent | ToolCallContent | ToolResultContent)[] | string,
-  thoughtSignature?: string,
 ): Part[] {
   return typeof contents === "string"
-    ? [genAIPartFrom(contents, thoughtSignature)]
-    : contents.map((content) => genAIPartFrom(content, thoughtSignature));
+    ? [genAIPartFrom(contents)]
+    : contents.map((content) => genAIPartFrom(content));
 }
 
 function genAIPartFrom(
@@ -209,7 +237,9 @@ function genAIPartFrom(
   }
 
   if ("text" in content) {
-    return { text: content.text };
+    return thoughtSignature
+      ? { thoughtSignature, text: content.text }
+      : { text: content.text };
   }
 
   if ("toolCall" in content) {
@@ -225,12 +255,44 @@ function genAIPartFrom(
     return { functionResponse: { id, name, response: result } };
   }
 
-  throw RangeError();
+  throw new RangeError("Unsupported message content for Gemini part");
+}
+
+/** Convert a Gemini response into model messages.
+ *
+ * Throws when the prompt was blocked (no candidates returned) or when the
+ * candidate carries no content for a reason other than a normal stop, so
+ * blocked or truncated responses fail loudly instead of resolving empty.
+ */
+export function modelMessagesFrom(
+  response: GenerateContentResponse,
+): ModelMessage[] {
+  const candidate = response.candidates?.at(0);
+  if (!candidate) {
+    const blockReason = response.promptFeedback?.blockReason;
+    throw new Error(
+      `No candidates returned from Gemini${
+        blockReason ? ` (block reason: ${blockReason})` : ""
+      }`,
+    );
+  }
+
+  const messages = messagesFrom(response.candidates);
+  if (
+    !messages.length && candidate.finishReason &&
+    candidate.finishReason !== FinishReason.STOP
+  ) {
+    throw new Error(
+      `Gemini returned no content (finish reason: ${candidate.finishReason})`,
+    );
+  }
+
+  return messages;
 }
 
 function messagesFrom(
   candidates?: Candidate[],
-): Message[] {
+): ModelMessage[] {
   if (!candidates || candidates.length === 0) {
     return [];
   }
@@ -242,6 +304,10 @@ function messagesFrom(
     contents: [],
     toolCalls: [],
   };
+  const thoughtSignatures: (string | undefined)[] = [];
+  // Signatures can arrive on thought parts, which are not round-tripped
+  // themselves; carry them over to the next content-bearing part.
+  let pendingSignature: string | undefined;
 
   const parts = candidate.content?.parts || [];
 
@@ -249,16 +315,20 @@ function messagesFrom(
     const { text, functionCall, thoughtSignature, thought } of parts
   ) {
     if (thoughtSignature) {
-      message.thinkingMeta = {
-        thoughtSignature,
-      };
+      pendingSignature = thoughtSignature;
     }
 
-    if (thought && text) {
-      message.thinking = text;
+    if (thought) {
+      if (text) {
+        message.thinking = (message.thinking ?? "") + text;
+      }
+      continue;
     }
+
     if (text) {
       message.contents.push({ text });
+      thoughtSignatures.push(pendingSignature);
+      pendingSignature = undefined;
     }
     if (functionCall) {
       if (functionCall.name) {
@@ -269,12 +339,25 @@ function messagesFrom(
         };
         message.toolCalls.push(toolCall);
         message.contents.push({ toolCall });
+        thoughtSignatures.push(pendingSignature);
+        pendingSignature = undefined;
       } else {
         console.info(
           "Tool call messages skipped because of missing tool call name",
         );
       }
     }
+  }
+
+  if (thoughtSignatures.some((signature) => signature !== undefined)) {
+    message.thinkingMeta = { thoughtSignatures };
+  }
+
+  if (
+    message.contents.length === 0 && message.toolCalls.length === 0 &&
+    message.thinking === undefined
+  ) {
+    return [];
   }
 
   return [message];
