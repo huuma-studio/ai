@@ -25,9 +25,13 @@
   "publish": {
     "exclude": [
       ".github/",
+      ".claude/",
+      ".zed/",
+      ".env",
       "main.ts",
       "tasks.json",
       "progress.txt",
+      "prompt.md",
       "**/*_test.ts",
       "**/*.test.ts"
     ]

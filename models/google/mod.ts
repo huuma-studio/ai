@@ -52,7 +52,13 @@ type Gemini_3_1_Flash_Lite = "gemini-3.1-flash-lite";
 // No shutdown date announced
 type Gemini_3_5_Flash = "gemini-3.5-flash";
 
-type GeminiModels =
+/**
+ * Google Gemini model identifiers.
+ *
+ * Known aliases are listed for autocompletion, while the open string branch
+ * keeps the wrapper usable with newly released models.
+ */
+export type GeminiModels =
   | Gemini_2_5_Flash_Light
   | Gemini_2_5_Flash
   | Gemini_2_5_Pro
@@ -72,12 +78,18 @@ export interface GoogleGenAIOptions {
 
 /** Options for generating content with Gemini. */
 export interface GoogleGenAiGenerateOptions {
+  /** The model identifier to use. */
   modelId: GeminiModels;
+  /** Conversation history. */
   messages: Message[];
+  /** Optional system prompt sent as Gemini's `systemInstruction`. */
   system?: string;
+  /** Tools available to the model. */
   // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
+  /** Additional Gemini generation options. */
   options?: {
+    /** Thinking/reasoning configuration. */
     thinkingConfig?: ThinkingConfig;
   };
 }

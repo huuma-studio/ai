@@ -5,3 +5,6 @@ node_modules/*
 main.tsx
 progress.txt
 tasks.json
+main.ts
+.env
+prompt.md
