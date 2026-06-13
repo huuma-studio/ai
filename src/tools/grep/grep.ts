@@ -72,7 +72,10 @@ export function grep(): Tool<any, GrepResult> {
         if (glob) args.push(`--include=${glob}`);
       }
 
-      args.push(pattern, path);
+      // Terminate option processing so the user-supplied pattern and path
+      // are always treated as positional arguments, preventing option injection
+      // (e.g. a pattern starting with "-" from becoming a grep flag).
+      args.push("--", pattern, path);
 
       const cmd = new Deno.Command("grep", { args });
       const { code, stdout } = await cmd.output();

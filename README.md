@@ -20,11 +20,24 @@ const messages = await assistant.run("Check the current Deno version.");
 console.log(messages.at(-1));
 ```
 
+The same agent can be backed by Mistral:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { mistral } from "jsr:@huuma/ai/models/mistral";
+
+const assistant = agent({
+  model: mistral({ apiKey: Deno.env.get("MISTRAL_API_KEY") }),
+  modelId: "mistral-large-latest",
+  systemPrompt: "You are a concise TypeScript assistant.",
+});
+```
+
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.
 - A common `BaseModel` interface in `@huuma/ai/model`.
-- Model adapters for Anthropic Claude, OpenAI, Google Gemini, and Ollama in `@huuma/ai/models`.
+- Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, and Ollama in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
 - Tool factories for CLI execution, file operations, grep, website fetching, web search, and skill loading in `@huuma/ai/tools`.
