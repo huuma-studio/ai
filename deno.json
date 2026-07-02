@@ -1,7 +1,7 @@
 {
   "nodeModulesDir": "auto",
   "name": "@huuma/ai",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Composable AI primitives for Deno and TypeScript: model adapters, agents, workflows, and tool factories.",
   "license": "MIT",
   "exports": {
@@ -28,6 +28,7 @@
       ".github/",
       ".claude/",
       ".zed/",
+      "docs/",
       ".env",
       "main.ts",
       "tasks.json",
