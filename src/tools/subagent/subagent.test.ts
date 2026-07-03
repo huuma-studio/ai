@@ -127,8 +127,8 @@ Deno.test("subagent - ignores tool-call content in the final message", async () 
 
 Deno.test("subagent - concurrent delegations run independently", async () => {
   const model = new StubModel([
-    [modelMessage("Done.")],
-    [modelMessage("Done.")],
+    [modelMessage("Result A.")],
+    [modelMessage("Result B.")],
   ]);
   const delegate = subagent({
     name: "delegate",
@@ -141,7 +141,9 @@ Deno.test("subagent - concurrent delegations run independently", async () => {
     delegate.call({ prompt: "b" }),
   ]);
 
-  assertEquals(results, ["Done.", "Done."]);
+  // Concurrent runs consume the scripted responses in nondeterministic
+  // order, so assert set equality: each response arrives exactly once.
+  assertEquals(new Set(results), new Set(["Result A.", "Result B."]));
 });
 
 Deno.test("subagent - propagates sub-agent errors", async () => {
