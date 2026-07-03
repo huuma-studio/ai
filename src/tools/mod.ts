@@ -41,6 +41,11 @@ export { fetchWebsite } from "@/tools/browser/browser.ts";
 
 export { search } from "@/tools/search/search.ts";
 
+export {
+  subagent,
+  type SubagentToolOptions,
+} from "@/tools/subagent/subagent.ts";
+
 /** Executable tool with schema-validated input. */
 // deno-lint-ignore no-explicit-any
 export class Tool<T extends Schema<any>, R = unknown> {

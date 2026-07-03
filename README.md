@@ -33,6 +33,35 @@ const assistant = agent({
 });
 ```
 
+An agent can delegate tasks to another agent through the `subagent` tool. The sub-agent runs its own loop and only its final answer reaches the parent:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { openai } from "jsr:@huuma/ai/models/openai";
+import { cli, subagent } from "jsr:@huuma/ai/tools";
+
+const researcher = agent({
+  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  modelId: "gpt-5.5",
+  systemPrompt: "You research topics and answer concisely.",
+  tools: [cli({ allowedCommands: ["deno"] })],
+});
+
+const assistant = agent({
+  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  modelId: "gpt-5.5",
+  systemPrompt: "You are a concise TypeScript assistant.",
+  tools: [
+    subagent({
+      name: "research",
+      description:
+        "Delegate research tasks. Provide a self-contained prompt with all needed context.",
+      agent: researcher,
+    }),
+  ],
+});
+```
+
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.
@@ -40,7 +69,7 @@ const assistant = agent({
 - Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, and Ollama in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
-- Tool factories for CLI execution, file operations, grep, website fetching, web search, and skill loading in `@huuma/ai/tools`.
+- Tool factories for CLI execution, file operations, grep, website fetching, web search, skill loading, and sub-agent delegation in `@huuma/ai/tools`.
 
 ## Permissions
 
