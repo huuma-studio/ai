@@ -14,7 +14,9 @@
  * @module
  */
 import type { Message } from "../mod.ts";
+export { dataUrlFrom, type FileSource, fileSourceFrom } from "./file.ts";
 export type {
+  FileContent,
   Message,
   MessageRole,
   MessageWithRole,

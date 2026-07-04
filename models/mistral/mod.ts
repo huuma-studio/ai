@@ -22,6 +22,7 @@ import type {
   ChatCompletionStreamRequest,
   CompletionChunk,
   CompletionEvent,
+  ContentChunk,
   DeltaMessage,
   SystemMessage as MistralSystemMessage,
   Tool as MistralTool,
@@ -30,7 +31,9 @@ import type {
   UserMessage as MistralUserMessage,
 } from "@mistralai/mistralai/models/components";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom } from "@/model/mod.ts";
 import type {
+  FileContent,
   Message,
   ModelMessage,
   TextContent,
@@ -211,7 +214,7 @@ export function mistralMessagesFrom(
     } else if (message.role === "user") {
       result.push({
         role: "user",
-        content: textFrom(message.contents),
+        content: userContentFrom(message.contents),
       } as MistralUserMessage);
     } else if (message.role === "model") {
       const textParts = message.contents.filter((c): c is TextContent =>
@@ -531,6 +534,70 @@ function textFrom(contents: string | TextContent[]): string {
   return typeof contents === "string"
     ? contents
     : contents.map((content) => content.text).join("");
+}
+
+/**
+ * Converts user message contents into Mistral user content.
+ *
+ * Text-only messages keep today's plain-string wire shape; messages
+ * carrying file parts become a content chunk array.
+ */
+function userContentFrom(
+  contents: string | (TextContent | FileContent)[],
+): string | ContentChunk[] {
+  if (typeof contents === "string") {
+    return contents;
+  }
+
+  if (contents.every((content): content is TextContent => "text" in content)) {
+    return textFrom(contents);
+  }
+
+  return contents.map((content) =>
+    "file" in content
+      ? fileChunkFrom(content.file)
+      : { type: "text" as const, text: content.text }
+  );
+}
+
+/**
+ * Converts a file content part into a Mistral content chunk.
+ *
+ * Images map to `image_url` chunks (URLs pass through, base64 becomes a
+ * data URL), PDF URLs map to `document_url` chunks, and audio maps to
+ * `input_audio` chunks (base64 or URL in the same string field). Base64
+ * PDFs throw — `document_url` is URL-only and the Files-API signed-URL
+ * flow is out of scope. Any other media type throws.
+ */
+function fileChunkFrom(file: FileContent["file"]): ContentChunk {
+  const source = fileSourceFrom(file);
+
+  if (file.mimeType.startsWith("image/")) {
+    return {
+      type: "image_url",
+      imageUrl: source.kind === "url" ? source.url : dataUrlFrom(file),
+    };
+  }
+
+  if (file.mimeType === "application/pdf") {
+    if (source.kind === "data") {
+      throw new RangeError(
+        "Mistral adapter does not support base64 PDFs; pass a URL instead",
+      );
+    }
+    return { type: "document_url", documentUrl: source.url };
+  }
+
+  if (file.mimeType.startsWith("audio/")) {
+    return {
+      type: "input_audio",
+      inputAudio: source.kind === "data" ? source.data : source.url,
+    };
+  }
+
+  throw new RangeError(
+    `Mistral adapter does not support file content of type "${file.mimeType}"`,
+  );
 }
 
 /**

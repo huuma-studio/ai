@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 
 import type { Message, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
@@ -26,6 +26,74 @@ Deno.test("ollamaMessagesFrom converts user message", () => {
   const msg: Message = { role: "user", contents: "Hello" };
   const result = ollamaMessagesFrom([msg]);
   assertEquals(result, [{ role: "user", content: "Hello" }]);
+});
+
+Deno.test("ollamaMessagesFrom collects base64 images into images", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [
+      { text: "What is in this image?" },
+      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ],
+  };
+  assertEquals(ollamaMessagesFrom([msg]), [{
+    role: "user",
+    content: "What is in this image?",
+    images: ["aGVsbG8="],
+  }]);
+});
+
+Deno.test("ollamaMessagesFrom preserves image order alongside joined text", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [
+      { text: "Compare " },
+      { file: { mimeType: "image/png", data: "Zmlyc3Q=" } },
+      { text: "with" },
+      { file: { mimeType: "image/jpeg", data: "c2Vjb25k" } },
+    ],
+  };
+  assertEquals(ollamaMessagesFrom([msg]), [{
+    role: "user",
+    content: "Compare with",
+    images: ["Zmlyc3Q=", "c2Vjb25k"],
+  }]);
+});
+
+Deno.test("ollamaMessagesFrom throws on images by URL", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/png", url: "https://example.com/a.png" },
+    }],
+  };
+  assertThrows(
+    () => ollamaMessagesFrom([msg]),
+    RangeError,
+    "images by URL",
+  );
+});
+
+Deno.test("ollamaMessagesFrom throws on non-image file content", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => ollamaMessagesFrom([msg]),
+    RangeError,
+    'file content of type "application/pdf"',
+  );
+});
+
+Deno.test("ollamaMessagesFrom omits images for text-only messages", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ text: "Hello" }, { text: " world!" }],
+  };
+  assertEquals(ollamaMessagesFrom([msg]), [
+    { role: "user", content: "Hello world!" },
+  ]);
 });
 
 Deno.test("ollamaMessagesFrom converts model message with tool calls", () => {

@@ -44,6 +44,77 @@ Deno.test("genAIContentsFrom sends system messages as user content", () => {
   ]);
 });
 
+Deno.test("genAIContentsFrom maps file data to inlineData parts", () => {
+  const messages: Message[] = [{
+    role: "user",
+    contents: [
+      { text: "What is in this image?" },
+      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ],
+  }];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents, [{
+    role: "user",
+    parts: [
+      { text: "What is in this image?" },
+      { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ],
+  }]);
+});
+
+Deno.test("genAIContentsFrom maps file URLs to fileData parts", () => {
+  const messages: Message[] = [{
+    role: "user",
+    contents: [{
+      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+    }],
+  }];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents, [{
+    role: "user",
+    parts: [{
+      fileData: { fileUri: "https://example.com/a.pdf", mimeType: "application/pdf" },
+    }],
+  }]);
+});
+
+Deno.test("genAIContentsFrom passes video data through without filtering", () => {
+  const messages: Message[] = [{
+    role: "user",
+    contents: [{ file: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
+  }];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents, [{
+    role: "user",
+    parts: [{ inlineData: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
+  }]);
+});
+
+Deno.test("genAIContentsFrom throws when a file sets both data and url", () => {
+  const messages: Message[] = [{
+    role: "user",
+    contents: [{
+      file: {
+        mimeType: "image/png",
+        data: "aGVsbG8=",
+        url: "https://example.com/a.png",
+      },
+    }],
+  }];
+
+  assertThrows(
+    () => genAIContentsFrom(messages),
+    RangeError,
+    "exactly one of data or url",
+  );
+});
+
 Deno.test("genAIContentsFrom maps tool messages to user functionResponse parts", () => {
   const messages: Message[] = [
     {

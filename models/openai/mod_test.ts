@@ -1,4 +1,4 @@
-import { assertEquals, assertInstanceOf } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
 import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
 import { string } from "@huuma/validate";
@@ -41,6 +41,148 @@ Deno.test("openAIMessagesFrom converts user message with array contents", () => 
   };
   const result = openAIMessagesFrom([msg]);
   assertEquals(result, [{ role: "user", content: "Hello world!" }]);
+});
+
+Deno.test("openAIMessagesFrom maps base64 images to data URLs", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [
+      { text: "What is this?" },
+      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ],
+  };
+  assertEquals(openAIMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      { type: "text", text: "What is this?" },
+      {
+        type: "image_url",
+        image_url: { url: "data:image/png;base64,aGVsbG8=" },
+      },
+    ],
+  }]);
+});
+
+Deno.test("openAIMessagesFrom passes image URLs through", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/png", url: "https://example.com/a.png" },
+    }],
+  };
+  assertEquals(openAIMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "image_url",
+      image_url: { url: "https://example.com/a.png" },
+    }],
+  }]);
+});
+
+Deno.test("openAIMessagesFrom maps audio data to input_audio formats", () => {
+  const wav: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "audio/wav", data: "aGVsbG8=" } }],
+  };
+  assertEquals(openAIMessagesFrom([wav]), [{
+    role: "user",
+    content: [{
+      type: "input_audio",
+      input_audio: { data: "aGVsbG8=", format: "wav" },
+    }],
+  }]);
+
+  const mp3: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
+  };
+  assertEquals(openAIMessagesFrom([mp3]), [{
+    role: "user",
+    content: [{
+      type: "input_audio",
+      input_audio: { data: "aGVsbG8=", format: "mp3" },
+    }],
+  }]);
+});
+
+Deno.test("openAIMessagesFrom throws on audio by URL", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "audio/wav", url: "https://example.com/a.wav" },
+    }],
+  };
+  assertThrows(
+    () => openAIMessagesFrom([msg]),
+    RangeError,
+    "audio by URL",
+  );
+});
+
+Deno.test("openAIMessagesFrom maps base64 PDFs to file parts with default filename", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+  };
+  assertEquals(openAIMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "file",
+      file: {
+        filename: "file.pdf",
+        file_data: "data:application/pdf;base64,aGVsbG8=",
+      },
+    }],
+  }]);
+});
+
+Deno.test("openAIMessagesFrom keeps explicit PDF filenames", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: {
+        mimeType: "application/pdf",
+        data: "aGVsbG8=",
+        name: "report.pdf",
+      },
+    }],
+  };
+  assertEquals(openAIMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "file",
+      file: {
+        filename: "report.pdf",
+        file_data: "data:application/pdf;base64,aGVsbG8=",
+      },
+    }],
+  }]);
+});
+
+Deno.test("openAIMessagesFrom throws on PDFs by URL", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+    }],
+  };
+  assertThrows(
+    () => openAIMessagesFrom([msg]),
+    RangeError,
+    "PDFs by URL",
+  );
+});
+
+Deno.test("openAIMessagesFrom throws on unsupported file types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => openAIMessagesFrom([msg]),
+    RangeError,
+    'file content of type "video/mp4"',
+  );
 });
 
 Deno.test("openAIMessagesFrom converts system message with array contents", () => {

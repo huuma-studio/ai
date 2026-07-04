@@ -16,7 +16,9 @@
  */
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+import { fileSourceFrom } from "@/model/mod.ts";
 import type {
+  FileContent,
   Message,
   ModelMessage,
   TextContent,
@@ -253,8 +255,10 @@ export function anthropicMessagesFrom(
   const result: Anthropic.MessageParam[] = [];
 
   for (const message of messages) {
-    if (message.role === "system" || message.role === "user") {
+    if (message.role === "system") {
       result.push({ role: "user", content: textFrom(message.contents) });
+    } else if (message.role === "user") {
+      result.push({ role: "user", content: userContentFrom(message.contents) });
     } else if (message.role === "model") {
       const content = assistantContentFrom(message);
 
@@ -724,6 +728,87 @@ function textFrom(contents: string | TextContent[]): string {
   return typeof contents === "string"
     ? contents
     : contents.map((content) => content.text).join("");
+}
+
+/**
+ * Converts user message contents into Anthropic user content.
+ *
+ * Text-only messages keep today's plain-string wire shape; messages
+ * carrying file parts become a content block array.
+ */
+function userContentFrom(
+  contents: string | (TextContent | FileContent)[],
+): string | Anthropic.ContentBlockParam[] {
+  if (typeof contents === "string") {
+    return contents;
+  }
+
+  if (contents.every((content): content is TextContent => "text" in content)) {
+    return textFrom(contents);
+  }
+
+  return contents.map((content) =>
+    "file" in content
+      ? fileBlockFrom(content.file)
+      : { type: "text" as const, text: content.text }
+  );
+}
+
+/** Base64 image media types accepted by the Anthropic API. */
+const ANTHROPIC_IMAGE_MEDIA_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+] as const;
+
+/**
+ * Converts a file content part into an Anthropic image or document block.
+ *
+ * Images map to `image` blocks (base64 sources are limited to the four
+ * media types the API accepts) and PDFs map to `document` blocks; any
+ * other media type throws. URLs are passed through, never fetched.
+ */
+function fileBlockFrom(
+  file: FileContent["file"],
+): Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam {
+  const source = fileSourceFrom(file);
+
+  if (file.mimeType.startsWith("image/")) {
+    if (source.kind === "url") {
+      return { type: "image", source: { type: "url", url: source.url } };
+    }
+
+    const mediaType = ANTHROPIC_IMAGE_MEDIA_TYPES.find(
+      (type) => type === file.mimeType,
+    );
+    if (!mediaType) {
+      throw new RangeError(
+        `Anthropic adapter does not support base64 images of type "${file.mimeType}"`,
+      );
+    }
+    return {
+      type: "image",
+      source: { type: "base64", media_type: mediaType, data: source.data },
+    };
+  }
+
+  if (file.mimeType === "application/pdf") {
+    return source.kind === "data"
+      ? {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: source.data,
+        },
+      }
+      : { type: "document", source: { type: "url", url: source.url } };
+  }
+
+  throw new RangeError(
+    `Anthropic adapter does not support file content of type "${file.mimeType}"`,
+  );
 }
 
 /**
