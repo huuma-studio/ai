@@ -78,13 +78,15 @@ const assistant = agent({
   systemPrompt: "You describe images concisely.",
 });
 
+import { encodeBase64 } from "jsr:@std/encoding/base64";
+
 const image = await Deno.readFile("photo.png");
 const messages = await assistant.run([
   { text: "What is in this image?" },
   {
     file: {
       mimeType: "image/png",
-      data: btoa(String.fromCharCode(...image)),
+      data: encodeBase64(image),
     },
   },
 ]);
