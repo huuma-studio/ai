@@ -64,6 +64,16 @@ export {
   type SubagentToolOptions,
 } from "@/tools/subagent/subagent.ts";
 
+export {
+  mcp,
+  McpConnection,
+  type McpHttpTransportOptions,
+  type McpStdioTransportOptions,
+  type McpToolsOptions,
+  type McpTransport,
+  type McpTransportOptions,
+} from "@/tools/mcp/mcp.ts";
+
 /** Executable tool with schema-validated input. */
 // deno-lint-ignore no-explicit-any
 export class Tool<T extends Schema<any>, R = unknown> {

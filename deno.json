@@ -35,13 +35,15 @@
       "progress.txt",
       "prompt.md",
       "**/*_test.ts",
-      "**/*.test.ts"
+      "**/*.test.ts",
+      "**/testdata/"
     ]
   },
   "imports": {
     "@deno/sandbox": "jsr:@deno/sandbox@^0.13.2",
     "@google/genai": "npm:@google/genai@^2.8.0",
     "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.100.1",
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.29.0",
     "@mistralai/mistralai": "npm:@mistralai/mistralai@^2.2.1",
     "@std/fs": "jsr:@std/fs@^1.0.24",
     "ollama": "npm:ollama@^0.6.3",
