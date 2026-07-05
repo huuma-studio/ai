@@ -119,7 +119,21 @@ Deno.test("anthropicMessagesFrom throws on unsupported base64 image types", () =
   assertThrows(
     () => anthropicMessagesFrom([msg]),
     RangeError,
-    'base64 images of type "image/tiff"',
+    'images of type "image/tiff"',
+  );
+});
+
+Deno.test("anthropicMessagesFrom throws on unsupported image URL types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/tiff", url: "https://example.com/a.tiff" },
+    }],
+  };
+  assertThrows(
+    () => anthropicMessagesFrom([msg]),
+    RangeError,
+    'images of type "image/tiff"',
   );
 });
 

@@ -754,7 +754,7 @@ function userContentFrom(
   );
 }
 
-/** Base64 image media types accepted by the Anthropic API. */
+/** Image media types accepted by the Anthropic API (base64 and URL). */
 const ANTHROPIC_IMAGE_MEDIA_TYPES = [
   "image/jpeg",
   "image/png",
@@ -765,8 +765,8 @@ const ANTHROPIC_IMAGE_MEDIA_TYPES = [
 /**
  * Converts a file content part into an Anthropic image or document block.
  *
- * Images map to `image` blocks (base64 sources are limited to the four
- * media types the API accepts) and PDFs map to `document` blocks; any
+ * Images map to `image` blocks (limited to the four media types the API
+ * accepts, regardless of source) and PDFs map to `document` blocks; any
  * other media type throws. URLs are passed through, never fetched.
  */
 function fileBlockFrom(
@@ -775,17 +775,17 @@ function fileBlockFrom(
   const source = fileSourceFrom(file);
 
   if (file.mimeType.startsWith("image/")) {
-    if (source.kind === "url") {
-      return { type: "image", source: { type: "url", url: source.url } };
-    }
-
     const mediaType = ANTHROPIC_IMAGE_MEDIA_TYPES.find(
       (type) => type === file.mimeType,
     );
     if (!mediaType) {
       throw new RangeError(
-        `Anthropic adapter does not support base64 images of type "${file.mimeType}"`,
+        `Anthropic adapter does not support images of type "${file.mimeType}"`,
       );
+    }
+
+    if (source.kind === "url") {
+      return { type: "image", source: { type: "url", url: source.url } };
     }
     return {
       type: "image",
