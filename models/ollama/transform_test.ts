@@ -133,6 +133,113 @@ Deno.test("ollamaMessagesFrom converts tool message", () => {
   assertEquals(result[0].tool_name, "tool1");
 });
 
+Deno.test("ollamaMessagesFrom appends a synthetic user message for tool result files", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(ollamaMessagesFrom([msg]), [
+    { role: "tool", content: "captured", tool_name: "screenshot" },
+    {
+      role: "user",
+      content: 'Files returned by tool "screenshot" (call 1):',
+      images: ["aGVsbG8="],
+    },
+  ]);
+});
+
+Deno.test("ollamaMessagesFrom preserves file order across multiple tool results", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [
+            { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+            { file: { mimeType: "image/png", data: "c2Vjb25k" } },
+          ],
+        },
+      },
+      {
+        toolResult: {
+          id: "2",
+          name: "camera",
+          result: { output: "photographed" },
+          files: [{ file: { mimeType: "image/jpeg", data: "d29ybGQ=" } }],
+        },
+      },
+    ],
+  };
+
+  assertEquals(ollamaMessagesFrom([msg]), [
+    { role: "tool", content: "captured", tool_name: "screenshot" },
+    { role: "tool", content: "photographed", tool_name: "camera" },
+    {
+      role: "user",
+      content: 'Files returned by tool "screenshot" (call 1):',
+      images: ["aGVsbG8=", "c2Vjb25k"],
+    },
+    {
+      role: "user",
+      content: 'Files returned by tool "camera" (call 2):',
+      images: ["d29ybGQ="],
+    },
+  ]);
+});
+
+Deno.test("ollamaMessagesFrom throws on tool result images by URL", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{
+          file: { mimeType: "image/png", url: "https://example.com/a.png" },
+        }],
+      },
+    }],
+  };
+
+  assertThrows(
+    () => ollamaMessagesFrom([msg]),
+    RangeError,
+    "images by URL",
+  );
+});
+
+Deno.test("ollamaMessagesFrom throws on non-image tool result files", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "report",
+        result: { output: "generated" },
+        files: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertThrows(
+    () => ollamaMessagesFrom([msg]),
+    RangeError,
+    'file content of type "application/pdf"',
+  );
+});
+
 Deno.test("ollamaMessagesFrom serializes object output as JSON", () => {
   const msg: ToolMessage = {
     role: "tool",

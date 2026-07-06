@@ -31,7 +31,7 @@ import type {
   UserMessage as MistralUserMessage,
 } from "@mistralai/mistralai/models/components";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { dataUrlFrom, fileSourceFrom } from "@/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type {
   FileContent,
   Message,
@@ -205,17 +205,39 @@ export function mistralMessagesFrom(
     result.push({ role: "system", content: system });
   }
 
+  // Tool result files awaiting delivery via a synthetic user message
+  // (ADR 0004). Mistral chat templates enforce role alternation, so the
+  // chunks fold into a directly-following user message when one exists
+  // and only otherwise become their own message.
+  let pendingFileChunks: ContentChunk[] = [];
+
   for (const message of messages) {
+    if (pendingFileChunks.length > 0 && message.role !== "user") {
+      result.push({ role: "user", content: pendingFileChunks });
+      pendingFileChunks = [];
+    }
+
     if (message.role === "system") {
       result.push({
         role: "system",
         content: textFrom(message.contents),
       } as MistralSystemMessage);
     } else if (message.role === "user") {
-      result.push({
-        role: "user",
-        content: userContentFrom(message.contents),
-      } as MistralUserMessage);
+      const content = userContentFrom(message.contents);
+      if (pendingFileChunks.length > 0) {
+        result.push({
+          role: "user",
+          content: [
+            ...pendingFileChunks,
+            ...(typeof content === "string"
+              ? [{ type: "text" as const, text: content }]
+              : content),
+          ],
+        });
+        pendingFileChunks = [];
+      } else {
+        result.push({ role: "user", content } as MistralUserMessage);
+      }
     } else if (message.role === "model") {
       const textParts = message.contents.filter((c): c is TextContent =>
         "text" in c
@@ -249,17 +271,32 @@ export function mistralMessagesFrom(
       }
       result.push(assistantMessage as AssistantMessage & { role: "assistant" });
     } else if (message.role === "tool") {
+      // `ToolMessage.content` is typed to accept chunks, but model support
+      // is unverified — typed-but-ignored content would be silent data
+      // loss, so files ride a synthetic user message after the tool
+      // messages instead, wire-only (ADR 0004).
       for (const content of message.contents) {
         if ("toolResult" in content) {
+          const { id, name, result: toolResult, files } = content.toolResult;
           result.push({
             role: "tool",
-            content: toolOutputString(content.toolResult.result),
-            toolCallId: content.toolResult.id,
-            name: content.toolResult.name,
+            content: toolOutputString(toolResult),
+            toolCallId: id,
+            name,
           } as MistralToolMessage);
+          if (files?.length) {
+            pendingFileChunks.push(
+              { type: "text", text: toolFilesLabel(name, id) },
+              ...files.map((file) => fileChunkFrom(file.file)),
+            );
+          }
         }
       }
     }
+  }
+
+  if (pendingFileChunks.length > 0) {
+    result.push({ role: "user", content: pendingFileChunks });
   }
 
   return result;

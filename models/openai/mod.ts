@@ -15,7 +15,7 @@
  * @module
  */
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { dataUrlFrom, fileSourceFrom } from "@/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type {
   FileContent,
   Message,
@@ -209,14 +209,28 @@ export function openAIMessagesFrom(
       }
       result.push(assistantMessage);
     } else if (message.role === "tool") {
+      // Chat completions tool messages are text-only, so files ride one
+      // synthetic user message after the tool messages — wire-only, never
+      // part of shared history (ADR 0004).
+      const fileParts: OpenAI.Chat.ChatCompletionContentPart[] = [];
       for (const content of message.contents) {
         if ("toolResult" in content) {
+          const { id, name, result: toolResult, files } = content.toolResult;
           result.push({
             role: "tool",
-            tool_call_id: content.toolResult.id,
-            content: toolOutputString(content.toolResult.result),
+            tool_call_id: id,
+            content: toolOutputString(toolResult),
           });
+          if (files?.length) {
+            fileParts.push(
+              { type: "text", text: toolFilesLabel(name, id) },
+              ...files.map((file) => filePartFrom(file.file)),
+            );
+          }
         }
+      }
+      if (fileParts.length > 0) {
+        result.push({ role: "user", content: fileParts });
       }
     }
   }

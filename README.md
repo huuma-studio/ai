@@ -107,6 +107,45 @@ Unsupported mimeType/source combinations throw a `RangeError` at request
 time — no part is ever dropped silently, and adapters never fetch URLs
 into bytes themselves.
 
+### Media from tools
+
+Tools can return media alongside their output by wrapping the return
+value with `toolOutput`:
+
+```typescript
+import { tool, toolOutput } from "jsr:@huuma/ai/tools";
+import { object, string } from "jsr:@huuma/validate";
+import { encodeBase64 } from "jsr:@std/encoding/base64";
+
+const screenshot = tool({
+  name: "screenshot",
+  description: "Take a screenshot of a page.",
+  input: object({ url: string() }),
+  fn: async ({ url }) => {
+    const png = await capture(url); // Uint8Array
+    return toolOutput("Screenshot captured.", [
+      { file: { mimeType: "image/png", data: encodeBase64(png) } },
+    ]);
+  },
+});
+```
+
+The files land on the tool result's `files` field and are delivered to
+the model in a provider-dependent way:
+
+| Provider | Delivery |
+| --- | --- |
+| Anthropic | native — content blocks inside `tool_result` |
+| Google Gemini | native — `FunctionResponse` parts |
+| OpenAI | synthetic user message after the tool messages |
+| Mistral | synthetic user message after the tool messages |
+| Ollama | synthetic user message (base64 images only) |
+
+The synthetic user message exists only on the wire — shared history keeps
+the canonical `files` shape, so the same history replayed against a
+native provider uses its native path. Per-file support and throw rules
+match the user-message table above; files are never silently dropped.
+
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.

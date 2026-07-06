@@ -23,7 +23,7 @@ import type {
   TextContent,
   ToolCallContent,
 } from "@/mod.ts";
-import { fileSourceFrom } from "@/model/mod.ts";
+import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
 /**
@@ -416,17 +416,31 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     } else if (message.role === "tool") {
+      // Ollama tool messages carry no images, so each tool result's files
+      // ride their own synthetic user message after the tool messages —
+      // wire-only, never part of shared history (ADR 0004). One message
+      // per result keeps every image structurally tied to its call's
+      // label; a shared flat `images` array could not express that.
+      const fileMessages: OllamaMessage[] = [];
       for (const c of message.contents) {
         if ("toolResult" in c) {
-          const { name, result: r } = c.toolResult;
+          const { id, name, result: r, files } = c.toolResult;
 
           result.push({
             role: "tool",
             content: toolOutputString(r),
             tool_name: name,
           } as OllamaMessage);
+          if (files?.length) {
+            fileMessages.push({
+              role: "user",
+              content: toolFilesLabel(name, id),
+              images: files.map((file) => ollamaImageFrom(file.file)),
+            });
+          }
         }
       }
+      result.push(...fileMessages);
     }
   }
 

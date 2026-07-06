@@ -305,6 +305,198 @@ Deno.test("anthropicMessagesFrom converts tool message to tool_result blocks", (
   }]);
 });
 
+Deno.test("anthropicMessagesFrom maps tool result files to content blocks", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "tool_result",
+      tool_use_id: "call-1",
+      content: [
+        { type: "text", text: "captured" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+        },
+      ],
+      is_error: false,
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom omits the text block for file-only tool results", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "screenshot",
+        result: {},
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "tool_result",
+      tool_use_id: "call-1",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+      }],
+      is_error: false,
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom maps tool result PDFs to document blocks", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "report",
+        result: { output: "generated" },
+        files: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "tool_result",
+      tool_use_id: "call-1",
+      content: [
+        { type: "text", text: "generated" },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: "aGVsbG8=",
+          },
+        },
+      ],
+      is_error: false,
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom keeps string content for results without files beside results with files", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "call-1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
+      },
+      {
+        toolResult: {
+          id: "call-2",
+          name: "lookup",
+          result: { output: "found" },
+        },
+      },
+    ],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "call-1",
+        content: [
+          { type: "text", text: "captured" },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "aGVsbG8=",
+            },
+          },
+        ],
+        is_error: false,
+      },
+      {
+        type: "tool_result",
+        tool_use_id: "call-2",
+        content: "found",
+        is_error: false,
+      },
+    ],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom throws on unsupported tool result file types", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "record",
+        result: { output: "recorded" },
+        files: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertThrows(
+    () => anthropicMessagesFrom([msg]),
+    RangeError,
+    'file content of type "audio/mpeg"',
+  );
+});
+
+Deno.test("anthropicMessagesFrom maps files on errored tool results", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "screenshot",
+        result: { error: "timeout" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "tool_result",
+      tool_use_id: "call-1",
+      content: [
+        { type: "text", text: "timeout" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+        },
+      ],
+      is_error: true,
+    }],
+  }]);
+});
+
 Deno.test("anthropicMessagesFrom drops tool messages without results", () => {
   const msg: Message = {
     role: "tool",

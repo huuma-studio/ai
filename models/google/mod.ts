@@ -321,23 +321,45 @@ function genAIPartFrom(
   }
 
   if ("toolResult" in content) {
-    const { id, name, result } = content.toolResult;
-    return { functionResponse: { id, name, response: result } };
+    const { id, name, result, files } = content.toolResult;
+    return {
+      functionResponse: {
+        id,
+        name,
+        response: result,
+        ...(files?.length
+          ? { parts: files.map((file) => genAIFilePartFrom(file.file)) }
+          : {}),
+      },
+    };
   }
 
   if ("file" in content) {
-    // Gemini takes any media type through the same part shapes; the API
-    // rejects what it doesn't support. `fileUri` is verified for
-    // Files-API URIs and YouTube URLs; arbitrary HTTP URLs are
-    // doc-ambiguous (docs/feature/media/CONTEXT.md §2).
-    const { mimeType } = content.file;
-    const source = fileSourceFrom(content.file);
-    return source.kind === "data"
-      ? { inlineData: { mimeType, data: source.data } }
-      : { fileData: { fileUri: source.url, mimeType } };
+    return genAIFilePartFrom(content.file);
   }
 
   throw new RangeError("Unsupported message content for Gemini part");
+}
+
+/**
+ * Converts a file content part into the blob/URI shape shared by Gemini
+ * `Part` and `FunctionResponsePart`.
+ *
+ * Gemini takes any media type through the same part shapes; the API
+ * rejects what it doesn't support. `fileUri` is verified for Files-API
+ * URIs and YouTube URLs; arbitrary HTTP URLs are doc-ambiguous
+ * (docs/feature/media/CONTEXT.md §2).
+ */
+function genAIFilePartFrom(
+  file: FileContent["file"],
+):
+  | { inlineData: { mimeType: string; data: string } }
+  | { fileData: { fileUri: string; mimeType: string } } {
+  const { mimeType } = file;
+  const source = fileSourceFrom(file);
+  return source.kind === "data"
+    ? { inlineData: { mimeType, data: source.data } }
+    : { fileData: { fileUri: source.url, mimeType } };
 }
 
 /** Convert a Gemini response into model messages.

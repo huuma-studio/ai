@@ -46,3 +46,18 @@ export function dataUrlFrom(file: FileContent["file"]): string {
   }
   return `data:${file.mimeType};base64,${file.data}`;
 }
+
+/**
+ * Labels tool-returned files in the synthetic user message emitted by
+ * adapters without native tool-result media support (ADR 0004).
+ *
+ * The wording is a presentation detail, not stable API — consumers must
+ * not parse it, and it may change without a version bump.
+ *
+ * @param name Tool name that produced the files.
+ * @param id Identifier of the tool call the files belong to.
+ * @returns The label text placed before the mapped file parts.
+ */
+export function toolFilesLabel(name: string, id: string): string {
+  return `Files returned by tool "${name}" (call ${id}):`;
+}

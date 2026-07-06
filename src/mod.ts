@@ -136,5 +136,13 @@ export type ToolResultContent<T = unknown> = {
       /** Tool execution error. */
       error?: unknown;
     };
+    /**
+     * Media attached to the result. Delivery is provider-dependent:
+     * native tool-result content blocks where the API supports them, a
+     * synthetic user message elsewhere (ADR 0004). Adapters throw
+     * {@linkcode RangeError} on unsupported mimeType/source combinations
+     * rather than silently dropping files.
+     */
+    files?: FileContent[];
   };
 };

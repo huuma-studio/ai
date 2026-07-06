@@ -248,6 +248,107 @@ Deno.test("openAIMessagesFrom converts tool message", () => {
   assertEquals((result[0] as any).tool_call_id, "1");
 });
 
+Deno.test("openAIMessagesFrom appends a synthetic user message for tool result files", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(openAIMessagesFrom([msg]), [
+    { role: "tool", tool_call_id: "1", content: "captured" },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,aGVsbG8=" },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("openAIMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
+      },
+      {
+        toolResult: {
+          id: "2",
+          name: "lookup",
+          result: { output: "found" },
+        },
+      },
+      {
+        toolResult: {
+          id: "3",
+          name: "camera",
+          result: { output: "photographed" },
+          files: [{ file: { mimeType: "image/jpeg", data: "d29ybGQ=" } }],
+        },
+      },
+    ],
+  };
+
+  assertEquals(openAIMessagesFrom([msg]), [
+    { role: "tool", tool_call_id: "1", content: "captured" },
+    { role: "tool", tool_call_id: "2", content: "found" },
+    { role: "tool", tool_call_id: "3", content: "photographed" },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,aGVsbG8=" },
+        },
+        { type: "text", text: 'Files returned by tool "camera" (call 3):' },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/jpeg;base64,d29ybGQ=" },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("openAIMessagesFrom throws on tool result PDFs by URL", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "report",
+        result: { output: "generated" },
+        files: [{
+          file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+        }],
+      },
+    }],
+  };
+
+  assertThrows(
+    () => openAIMessagesFrom([msg]),
+    RangeError,
+  );
+});
+
 Deno.test("openAIMessagesFrom converts tool message with non-string output object", () => {
   const msg: ToolMessage = {
     role: "tool",
