@@ -84,6 +84,12 @@ Consequences, each an explicit choice:
   `structuredContent` as JSON, else `text` blocks joined with `"\n"`;
   image/audio/resource blocks degrade to `[image image/png]`-style
   placeholders until message content types support binary parts.
+  *Amended 2026-07-06: ADR 0004 landed binary parts in tool results, so
+  `image`/`audio` blocks now map onto `FileContent` and the result
+  becomes a `ToolOutput` whose files `callTool` lifts onto
+  `toolResult.files`; only resource blocks keep the placeholder shape.
+  `isError: true` results still throw text-only — `callTool`'s
+  rejection path has no files channel (ADR 0004, resolved question 1).*
 - **`isError: true` throws.** MCP reports tool execution failures as
   successful responses with an error flag; the wrapper converts them to
   thrown errors so `callTool`'s existing `Promise.allSettled` path
@@ -101,7 +107,8 @@ Consequences, each an explicit choice:
 Out of scope, each addable without reshaping the API: OAuth beyond
 static `headers`, elicitation/sampling/roots, resources and prompts,
 `tools/list_changed` auto-refresh (manual `refresh()` instead), binary
-tool results as native message parts, the deprecated HTTP+SSE fallback
+tool results as native message parts (since landed — see the amended
+results bullet above and ADR 0004), the deprecated HTTP+SSE fallback
 transport, and exposing huuma tools *as* an MCP server.
 
 ## Alternatives considered

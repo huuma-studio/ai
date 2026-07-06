@@ -32,7 +32,7 @@
  *
  * @module
  */
-import { Tool } from "@/tools/mod.ts";
+import { Tool, type ToolOutput } from "@/tools/mod.ts";
 import { connect } from "@/tools/mcp/client.ts";
 import { flattenResult } from "@/tools/mcp/content.ts";
 import { modelToolName, validateServerName } from "@/tools/mcp/naming.ts";
@@ -75,7 +75,7 @@ export class McpConnection {
   #allowedTools?: string[];
   #timeout?: number;
   // deno-lint-ignore no-explicit-any
-  #tools: Tool<any, string>[];
+  #tools: Tool<any, string | ToolOutput<string>>[];
 
   /** @internal Use {@link mcp} to create instances. */
   constructor(options: {
@@ -94,7 +94,7 @@ export class McpConnection {
 
   /** The tools listed at connect time (or at the last `refresh()`). */
   // deno-lint-ignore no-explicit-any
-  tools(): Tool<any, string>[] {
+  tools(): Tool<any, string | ToolOutput<string>>[] {
     return [...this.#tools];
   }
 
@@ -105,7 +105,7 @@ export class McpConnection {
    * keeps its snapshot (agents freeze their toolset at construction).
    */
   // deno-lint-ignore no-explicit-any
-  async refresh(): Promise<Tool<any, string>[]> {
+  async refresh(): Promise<Tool<any, string | ToolOutput<string>>[]> {
     this.#tools = this.#wrap(await this.#client.listTools());
     return this.tools();
   }
@@ -116,7 +116,7 @@ export class McpConnection {
   }
 
   // deno-lint-ignore no-explicit-any
-  #wrap(defs: McpToolDef[]): Tool<any, string>[] {
+  #wrap(defs: McpToolDef[]): Tool<any, string | ToolOutput<string>>[] {
     const allowed = this.#allowedTools;
     return defs
       .filter((def) => !allowed || allowed.includes(def.name))

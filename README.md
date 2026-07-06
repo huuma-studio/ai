@@ -179,7 +179,9 @@ await deepwiki.close();
 ```
 
 Multi-server setups compose handles: `[...a.tools(), ...b.tools()]`. Tool
-results flatten to text (`structuredContent` preferred); execution failures
+results flatten to text (`structuredContent` preferred); `image` and `audio`
+content blocks land on the tool result's `files` field and are delivered
+per provider exactly like media from tools above; execution failures
 reported by the server surface as regular tool errors. stdio transports need
 `--allow-run --allow-read --allow-env`; HTTP transports need `--allow-net`.
 Design record: `docs/adr/0002-mcp-servers-as-a-tool-factory.md`.

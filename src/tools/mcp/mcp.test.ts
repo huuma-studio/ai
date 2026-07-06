@@ -13,7 +13,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { mcp, type McpTransport } from "@/tools/mcp/mcp.ts";
-import { callTool, tools } from "@/tools/mod.ts";
+import { callTool, ToolOutput, tools } from "@/tools/mod.ts";
 import { agent } from "@/agent/mod.ts";
 import type {
   BaseModel,
@@ -165,13 +165,36 @@ Deno.test("mcp - prefers structuredContent over duplicate text", async () => {
   }
 });
 
-Deno.test("mcp - flattens multi-content results with placeholders", async () => {
+Deno.test("mcp - image blocks become files on the tool result", async () => {
   const { connection } = await connectFixture();
   try {
     const picture = connection.tools().find((tool) =>
       tool.name === "fixture_picture"
     );
-    assertEquals(await picture?.call({}), "[image image/png]\na tiny png");
+    const output = await picture?.call({});
+    assert(output instanceof ToolOutput);
+    assertEquals(output.output, "a tiny png");
+    assertEquals(output.files, [
+      { file: { mimeType: "image/png", data: "aGk=" } },
+    ]);
+
+    // Through callTool, the wrapper unwraps into result.output + files.
+    const toolCall = {
+      id: "call-1",
+      name: "fixture_picture",
+      props: {} as unknown as JSONSchema,
+    };
+    const messages = await callTool(tools(connection.tools()))([
+      { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] },
+    ]);
+    const toolMessage = messages.at(-1);
+    assert(toolMessage?.role === "tool");
+    const content = toolMessage.contents[0];
+    assert("toolResult" in content);
+    assertEquals(content.toolResult.result.output, "a tiny png");
+    assertEquals(content.toolResult.files, [
+      { file: { mimeType: "image/png", data: "aGk=" } },
+    ]);
   } finally {
     await connection.close();
   }
