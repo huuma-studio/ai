@@ -23,7 +23,7 @@ import type {
   TextContent,
   ToolCallContent,
 } from "@/mod.ts";
-import { fileSourceFrom } from "@/model/mod.ts";
+import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
 /**
@@ -416,13 +416,12 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     } else if (message.role === "tool") {
-      // Ollama tool messages carry no images, so files ride one synthetic
-      // user message after the tool messages — wire-only, never part of
-      // shared history (ADR 0004). The flat `images` array cannot
-      // interleave with text, so each image gets its own indexed label
-      // line to keep attribution unambiguous.
-      const labels: string[] = [];
-      const images: string[] = [];
+      // Ollama tool messages carry no images, so each tool result's files
+      // ride their own synthetic user message after the tool messages —
+      // wire-only, never part of shared history (ADR 0004). One message
+      // per result keeps every image structurally tied to its call's
+      // label; a shared flat `images` array could not express that.
+      const fileMessages: OllamaMessage[] = [];
       for (const c of message.contents) {
         if ("toolResult" in c) {
           const { id, name, result: r, files } = c.toolResult;
@@ -432,17 +431,16 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
             content: toolOutputString(r),
             tool_name: name,
           } as OllamaMessage);
-          for (const file of files ?? []) {
-            images.push(ollamaImageFrom(file.file));
-            labels.push(
-              `Image ${images.length}: returned by tool "${name}" (call ${id})`,
-            );
+          if (files?.length) {
+            fileMessages.push({
+              role: "user",
+              content: toolFilesLabel(name, id),
+              images: files.map((file) => ollamaImageFrom(file.file)),
+            });
           }
         }
       }
-      if (images.length > 0) {
-        result.push({ role: "user", content: labels.join("\n"), images });
-      }
+      result.push(...fileMessages);
     }
   }
 

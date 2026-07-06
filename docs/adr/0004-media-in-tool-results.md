@@ -69,15 +69,23 @@ tools also need a *channel* to attach files to their result.
 4. **Fallback for OpenAI, Mistral, Ollama: a synthetic user message,
    constructed at transform time only.** When a tool message contains
    results with files, the adapter emits the tool message(s) exactly as
-   today, then appends **one** synthetic user message carrying, per
-   result with files: a text part labelling the origin
-   (`Files returned by tool "<name>" (call <id>):`) followed by the
-   mapped file parts (reusing each adapter's phase-1 user-content
-   mapping, including its throw rules). Ollama collects `image/*` base64
-   into `images` and throws on everything else; because its flat
-   `images` array cannot interleave with text, it labels per image
-   (indexed into the array) rather than per result, keeping attribution
-   unambiguous when one result returns several files.
+   today, then appends a synthetic user message carrying, per result
+   with files: a text part labelling the origin (the shared
+   `toolFilesLabel` helper, `Files returned by tool "<name>"
+   (call <id>):`) followed by the mapped file parts (reusing each
+   adapter's phase-1 user-content mapping, including its throw rules).
+   Per-adapter shape:
+   - *OpenAI:* one aggregated synthetic message per tool turn.
+   - *Mistral:* same aggregation, but when a user message directly
+     follows the tool message in history, the chunks fold into the
+     front of that message instead — Mistral chat templates enforce
+     role alternation, and two consecutive `user` messages risk
+     rejection.
+   - *Ollama:* one synthetic message **per result** with files (label
+     as `content`, that result's `image/*` base64 in `images`; throws
+     on everything else). Its flat `images` array cannot interleave
+     with text, so per-result messages are the only shape that keeps
+     every image structurally tied to its call id.
 
    The synthetic message exists **only on the wire**. Shared `Message[]`
    history keeps the canonical `ToolResultContent.files` shape, so

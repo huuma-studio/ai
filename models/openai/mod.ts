@@ -15,7 +15,7 @@
  * @module
  */
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { dataUrlFrom, fileSourceFrom } from "@/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type {
   FileContent,
   Message,
@@ -223,10 +223,7 @@ export function openAIMessagesFrom(
           });
           if (files?.length) {
             fileParts.push(
-              {
-                type: "text",
-                text: `Files returned by tool "${name}" (call ${id}):`,
-              },
+              { type: "text", text: toolFilesLabel(name, id) },
               ...files.map((file) => filePartFrom(file.file)),
             );
           }

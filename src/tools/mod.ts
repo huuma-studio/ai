@@ -239,21 +239,13 @@ export function callTool(
       toolCalls.map(async (toolCall) => {
         const tool = tools.get(toolCall.name);
         const output = await tool.call(toolCall.props);
-        if (output instanceof ToolOutput) {
-          return {
-            toolResult: {
-              id: toolCall.id,
-              name: toolCall.name,
-              result: { output: output.output },
-              files: output.files,
-            },
-          } satisfies ToolResultContent;
-        }
+        const wrapped = output instanceof ToolOutput;
         return {
           toolResult: {
             id: toolCall.id,
             name: toolCall.name,
-            result: { output },
+            result: { output: wrapped ? output.output : output },
+            ...(wrapped ? { files: output.files } : {}),
           },
         } satisfies ToolResultContent;
       }),

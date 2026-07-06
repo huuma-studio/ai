@@ -284,6 +284,40 @@ Deno.test("mistralMessagesFrom aggregates files of multiple tool results into on
   });
 });
 
+Deno.test("mistralMessagesFrom folds tool result files into a following user message", () => {
+  const messages: Message[] = [
+    {
+      role: "tool",
+      contents: [{
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
+      }],
+    },
+    { role: "user", contents: "What do you see?" },
+  ];
+
+  assertEquals(mistralMessagesFrom(messages), [
+    {
+      role: "tool",
+      content: "captured",
+      toolCallId: "1",
+      name: "screenshot",
+    },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
+        { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
+        { type: "text", text: "What do you see?" },
+      ],
+    },
+  ]);
+});
+
 Deno.test("mistralMessagesFrom throws on tool result base64 PDFs", () => {
   const msg: ToolMessage = {
     role: "tool",

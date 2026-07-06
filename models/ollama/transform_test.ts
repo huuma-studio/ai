@@ -150,7 +150,7 @@ Deno.test("ollamaMessagesFrom appends a synthetic user message for tool result f
     { role: "tool", content: "captured", tool_name: "screenshot" },
     {
       role: "user",
-      content: 'Image 1: returned by tool "screenshot" (call 1)',
+      content: 'Files returned by tool "screenshot" (call 1):',
       images: ["aGVsbG8="],
     },
   ]);
@@ -187,10 +187,13 @@ Deno.test("ollamaMessagesFrom preserves file order across multiple tool results"
     { role: "tool", content: "photographed", tool_name: "camera" },
     {
       role: "user",
-      content: 'Image 1: returned by tool "screenshot" (call 1)\n' +
-        'Image 2: returned by tool "screenshot" (call 1)\n' +
-        'Image 3: returned by tool "camera" (call 2)',
-      images: ["aGVsbG8=", "c2Vjb25k", "d29ybGQ="],
+      content: 'Files returned by tool "screenshot" (call 1):',
+      images: ["aGVsbG8=", "c2Vjb25k"],
+    },
+    {
+      role: "user",
+      content: 'Files returned by tool "camera" (call 2):',
+      images: ["d29ybGQ="],
     },
   ]);
 });

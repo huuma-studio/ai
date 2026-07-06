@@ -274,15 +274,18 @@ export function anthropicMessagesFrom(
       for (const part of message.contents) {
         if ("toolResult" in part) {
           const { id, result, files } = part.toolResult;
+          const text = toolOutputString(result);
           content.push({
             type: "tool_result",
             tool_use_id: id,
             content: files?.length
               ? [
-                { type: "text", text: toolOutputString(result) },
+                // Anthropic rejects empty text blocks, so file-only
+                // results carry file blocks alone.
+                ...(text ? [{ type: "text" as const, text }] : []),
                 ...files.map((file) => fileBlockFrom(file.file)),
               ]
-              : toolOutputString(result),
+              : text,
             is_error: result.error !== undefined,
           });
         }

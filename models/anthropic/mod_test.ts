@@ -335,6 +335,33 @@ Deno.test("anthropicMessagesFrom maps tool result files to content blocks", () =
   }]);
 });
 
+Deno.test("anthropicMessagesFrom omits the text block for file-only tool results", () => {
+  const msg: Message = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "call-1",
+        name: "screenshot",
+        result: {},
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "tool_result",
+      tool_use_id: "call-1",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+      }],
+      is_error: false,
+    }],
+  }]);
+});
+
 Deno.test("anthropicMessagesFrom maps tool result PDFs to document blocks", () => {
   const msg: Message = {
     role: "tool",
