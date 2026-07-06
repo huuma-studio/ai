@@ -32,6 +32,7 @@ export type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 export { sumModelUsage } from "@/model/mod.ts";
 export type { JSONSchema, Schema, Tool } from "@/tools/mod.ts";
 export type {
+  FileContent,
   Message,
   MessageRole,
   MessageWithRole,
@@ -43,7 +44,7 @@ export type {
   ToolResultContent,
   UserMessage,
 } from "@/mod.ts";
-import type { Message } from "@/mod.ts";
+import type { FileContent, Message, TextContent } from "@/mod.ts";
 import { decision, step, workflow } from "@/workflow/mod.ts";
 
 /** Callback invoked for each message emitted during an agent run.
@@ -112,13 +113,16 @@ export class Agent<T extends string> {
 
   /** Run the agent with a user prompt and return the conversation messages.
    *
-   * @param prompt User message to send to the model.
+   * @param prompt User message to send to the model, either as plain text
+   * or as text and file parts. Media support depends on the model adapter
+   * and provider; unsupported mimeType/source combinations throw at
+   * request time.
    * @param history Prior conversation messages to continue from.
    * @param options Per-run options such as an {@link OnMessage} callback.
    * @returns The full conversation history including tool results.
    */
   async run(
-    prompt: string,
+    prompt: string | (TextContent | FileContent)[],
     history: Message[] = [],
     options?: RunOptions,
   ): Promise<Message[]> {

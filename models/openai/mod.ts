@@ -15,7 +15,9 @@
  * @module
  */
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom } from "@/model/mod.ts";
 import type {
+  FileContent,
   Message,
   ModelMessage,
   TextContent,
@@ -171,7 +173,7 @@ export function openAIMessagesFrom(
     } else if (message.role === "user") {
       result.push({
         role: "user",
-        content: textFrom(message.contents),
+        content: userContentFrom(message.contents),
       });
     } else if (message.role === "model") {
       const textParts = message.contents.filter((c) =>
@@ -443,6 +445,93 @@ function textFrom(contents: string | TextContent[]): string {
   return typeof contents === "string"
     ? contents
     : contents.map((content) => content.text).join("");
+}
+
+/**
+ * Converts user message contents into OpenAI user content.
+ *
+ * Text-only messages keep today's plain-string wire shape; messages
+ * carrying file parts become a content part array.
+ */
+function userContentFrom(
+  contents: string | (TextContent | FileContent)[],
+): string | OpenAI.Chat.ChatCompletionContentPart[] {
+  if (typeof contents === "string") {
+    return contents;
+  }
+
+  if (contents.every((content): content is TextContent => "text" in content)) {
+    return textFrom(contents);
+  }
+
+  return contents.map((content) =>
+    "file" in content
+      ? filePartFrom(content.file)
+      : { type: "text" as const, text: content.text }
+  );
+}
+
+/** Audio formats accepted by OpenAI chat completions, keyed by mimeType. */
+const OPENAI_AUDIO_FORMATS = {
+  "audio/wav": "wav",
+  "audio/mpeg": "mp3",
+} as const;
+
+/**
+ * Converts a file content part into an OpenAI content part.
+ *
+ * Images map to `image_url` (URLs pass through, base64 becomes a data
+ * URL), wav/mp3 audio data maps to `input_audio`, and PDF data maps to a
+ * `file` part (chat completions requires a data URL and a filename at
+ * wire level). Audio and PDFs by URL throw — the API has no URL input
+ * for them and adapters never fetch. Any other media type throws.
+ */
+function filePartFrom(
+  file: FileContent["file"],
+): OpenAI.Chat.ChatCompletionContentPart {
+  const source = fileSourceFrom(file);
+
+  if (file.mimeType.startsWith("image/")) {
+    return {
+      type: "image_url",
+      image_url: {
+        url: source.kind === "url" ? source.url : dataUrlFrom(file),
+      },
+    };
+  }
+
+  const audioFormat =
+    OPENAI_AUDIO_FORMATS[file.mimeType as keyof typeof OPENAI_AUDIO_FORMATS];
+  if (audioFormat) {
+    if (source.kind === "url") {
+      throw new RangeError(
+        `OpenAI adapter does not support audio by URL ("${file.mimeType}")`,
+      );
+    }
+    return {
+      type: "input_audio",
+      input_audio: { data: source.data, format: audioFormat },
+    };
+  }
+
+  if (file.mimeType === "application/pdf") {
+    if (source.kind === "url") {
+      throw new RangeError(
+        "OpenAI adapter does not support PDFs by URL",
+      );
+    }
+    return {
+      type: "file",
+      file: {
+        filename: file.name ?? "file.pdf",
+        file_data: dataUrlFrom(file),
+      },
+    };
+  }
+
+  throw new RangeError(
+    `OpenAI adapter does not support file content of type "${file.mimeType}"`,
+  );
 }
 
 /**

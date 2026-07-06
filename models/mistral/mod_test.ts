@@ -3,7 +3,7 @@
  *
  * @module
  */
-import { assertEquals, assertInstanceOf } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
 import { HTTPClient } from "@mistralai/mistralai";
 import type { JSONSchema } from "@huuma/validate";
 import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
@@ -60,6 +60,101 @@ Deno.test("mistralMessagesFrom converts user message with array contents", () =>
   };
   const result = mistralMessagesFrom([msg]);
   assertEquals(result, [{ role: "user", content: "Hello world!" }]);
+});
+
+Deno.test("mistralMessagesFrom maps base64 images to data URL chunks", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [
+      { text: "What is this?" },
+      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ],
+  };
+  assertEquals(mistralMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      { type: "text", text: "What is this?" },
+      { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
+    ],
+  }]);
+});
+
+Deno.test("mistralMessagesFrom passes image URLs through", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/png", url: "https://example.com/a.png" },
+    }],
+  };
+  assertEquals(mistralMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      { type: "image_url", imageUrl: "https://example.com/a.png" },
+    ],
+  }]);
+});
+
+Deno.test("mistralMessagesFrom maps PDF URLs to document_url chunks", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+    }],
+  };
+  assertEquals(mistralMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      { type: "document_url", documentUrl: "https://example.com/a.pdf" },
+    ],
+  }]);
+});
+
+Deno.test("mistralMessagesFrom throws on base64 PDFs", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => mistralMessagesFrom([msg]),
+    RangeError,
+    "base64 PDFs",
+  );
+});
+
+Deno.test("mistralMessagesFrom maps audio data and URLs to input_audio chunks", () => {
+  const data: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
+  };
+  assertEquals(mistralMessagesFrom([data]), [{
+    role: "user",
+    content: [{ type: "input_audio", inputAudio: "aGVsbG8=" }],
+  }]);
+
+  const url: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "audio/mpeg", url: "https://example.com/a.mp3" },
+    }],
+  };
+  assertEquals(mistralMessagesFrom([url]), [{
+    role: "user",
+    content: [
+      { type: "input_audio", inputAudio: "https://example.com/a.mp3" },
+    ],
+  }]);
+});
+
+Deno.test("mistralMessagesFrom throws on unsupported file types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => mistralMessagesFrom([msg]),
+    RangeError,
+    'file content of type "video/mp4"',
+  );
 });
 
 Deno.test("mistralMessagesFrom converts system message with array contents", () => {

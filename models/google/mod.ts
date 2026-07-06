@@ -27,6 +27,7 @@ import {
   type ThinkingConfig,
 } from "@google/genai";
 import type {
+  FileContent,
   Message,
   ModelMessage,
   TextContent,
@@ -34,6 +35,7 @@ import type {
   ToolResultContent,
 } from "@/mod.ts";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+import { fileSourceFrom } from "@/model/mod.ts";
 import type { Schema } from "@huuma/validate";
 import type { Tool } from "@/tools/mod.ts";
 
@@ -282,7 +284,9 @@ function thoughtSignaturesFrom(
 }
 
 function genAIPartsFrom(
-  contents: (TextContent | ToolCallContent | ToolResultContent)[] | string,
+  contents:
+    | (TextContent | ToolCallContent | ToolResultContent | FileContent)[]
+    | string,
 ): Part[] {
   return typeof contents === "string"
     ? [genAIPartFrom(contents)]
@@ -290,7 +294,12 @@ function genAIPartsFrom(
 }
 
 function genAIPartFrom(
-  content: TextContent | ToolCallContent | ToolResultContent | string,
+  content:
+    | TextContent
+    | ToolCallContent
+    | ToolResultContent
+    | FileContent
+    | string,
   thoughtSignature?: string,
 ): Part {
   if (typeof content === "string") {
@@ -314,6 +323,18 @@ function genAIPartFrom(
   if ("toolResult" in content) {
     const { id, name, result } = content.toolResult;
     return { functionResponse: { id, name, response: result } };
+  }
+
+  if ("file" in content) {
+    // Gemini takes any media type through the same part shapes; the API
+    // rejects what it doesn't support. `fileUri` is verified for
+    // Files-API URIs and YouTube URLs; arbitrary HTTP URLs are
+    // doc-ambiguous (docs/feature/media/CONTEXT.md §2).
+    const { mimeType } = content.file;
+    const source = fileSourceFrom(content.file);
+    return source.kind === "data"
+      ? { inlineData: { mimeType, data: source.data } }
+      : { fileData: { fileUri: source.url, mimeType } };
   }
 
   throw new RangeError("Unsupported message content for Gemini part");

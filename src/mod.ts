@@ -14,6 +14,22 @@ import type { JSONSchema } from "@huuma/validate";
  * };
  * ```
  *
+ * @example User message carrying a file next to text. A file part holds
+ * an IANA MIME type plus either base64 `data` or a publicly reachable
+ * `url` (exactly one of the two); provider support depends on the model
+ * adapter, and unsupported combinations throw at request time.
+ * ```typescript
+ * import type { Message } from "jsr:@huuma/ai";
+ *
+ * const message: Message = {
+ *   role: "user",
+ *   contents: [
+ *     { text: "What is in this image?" },
+ *     { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+ *   ],
+ * };
+ * ```
+ *
  * @module
  */
 
@@ -59,8 +75,8 @@ export interface ModelMessage extends MessageWithRole {
 export interface UserMessage extends MessageWithRole {
   /** User message role. */
   role: "user";
-  /** User text, either as a string or text parts. */
-  contents: string | TextContent[];
+  /** User text, either as a string or text and file parts. */
+  contents: string | (TextContent | FileContent)[];
 }
 
 /** Tool response message. */
@@ -73,6 +89,24 @@ export interface ToolMessage extends MessageWithRole {
 
 /** Plain text content part. */
 export type TextContent = { text: string };
+
+/** Media/file content part. */
+export type FileContent = {
+  /** File payload. */
+  file: {
+    /** IANA MIME type, e.g. "image/png", "application/pdf". */
+    mimeType: string;
+    /**
+     * Base64-encoded bytes (no data-URL prefix). Exactly one of
+     * `data`/`url` must be set; adapters enforce this at runtime.
+     */
+    data?: string;
+    /** Publicly reachable URL. */
+    url?: string;
+    /** Optional file name (OpenAI requires one for PDF input). */
+    name?: string;
+  };
+};
 
 /** Tool call content part emitted by a model. */
 export type ToolCallContent<T = JSONSchema> = {

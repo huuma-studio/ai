@@ -70,6 +70,29 @@ Deno.test("agent - run sends the prompt and returns the conversation", async () 
   assertEquals(model.calls[0].messages, [{ role: "user", contents: "Hi" }]);
 });
 
+Deno.test("agent - run passes text and file prompt parts through verbatim", async () => {
+  const model = new StubModel([[modelMessage("A cat.")]]);
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+  });
+
+  const prompt = [
+    { text: "What is in this image?" },
+    { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+  ];
+  const messages = await assistant.run(prompt);
+
+  assertEquals(model.calls[0].messages, [
+    { role: "user", contents: prompt },
+  ]);
+  assertEquals(messages, [
+    { role: "user", contents: prompt },
+    modelMessage("A cat."),
+  ]);
+});
+
 Deno.test("agent - run continues from prior history", async () => {
   const history: Message[] = [
     { role: "user", contents: "What is Deno?" },

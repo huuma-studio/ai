@@ -62,6 +62,51 @@ const assistant = agent({
 });
 ```
 
+## Media input
+
+User messages and agent prompts can carry files next to text. A file part
+holds an IANA MIME type plus either base64 `data` (no data-URL prefix) or a
+publicly reachable `url` — exactly one of the two:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { anthropic } from "jsr:@huuma/ai/models/anthropic";
+
+const assistant = agent({
+  model: anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") }),
+  modelId: "claude-sonnet-4-6",
+  systemPrompt: "You describe images concisely.",
+});
+
+import { encodeBase64 } from "jsr:@std/encoding/base64";
+
+const image = await Deno.readFile("photo.png");
+const messages = await assistant.run([
+  { text: "What is in this image?" },
+  {
+    file: {
+      mimeType: "image/png",
+      data: encodeBase64(image),
+    },
+  },
+]);
+console.log(messages.at(-1));
+```
+
+What each adapter supports:
+
+| Provider | Image | PDF | Audio | By URL |
+| --- | --- | --- | --- | --- |
+| Anthropic | ✓ (jpeg/png/gif/webp as base64) | ✓ | ✗ | ✓ image + PDF |
+| OpenAI | ✓ | ✓ (base64 only) | ✓ wav/mp3 (base64 only) | ✓ images only |
+| Google Gemini | ✓ | ✓ | ✓ (+ video) | ✓ |
+| Mistral | ✓ | ✓ (URL only) | ✓ | ✓ |
+| Ollama | ✓ (base64 only) | ✗ | ✗ | ✗ |
+
+Unsupported mimeType/source combinations throw a `RangeError` at request
+time — no part is ever dropped silently, and adapters never fetch URLs
+into bytes themselves.
+
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.

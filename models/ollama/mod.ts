@@ -17,11 +17,13 @@
 import { type ChatResponse, Ollama } from "ollama";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type {
+  FileContent,
   Message,
   ModelMessage,
   TextContent,
   ToolCallContent,
 } from "@/mod.ts";
+import { fileSourceFrom } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
 /**
@@ -314,6 +316,29 @@ export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
 }
 
 /**
+ * Converts a file content part into an Ollama image entry.
+ *
+ * Ollama only takes base64 images on the message's `images` array: image
+ * URLs throw (there is no URL source and adapters never fetch), and any
+ * non-image media type throws.
+ */
+function ollamaImageFrom(file: FileContent["file"]): string {
+  if (!file.mimeType.startsWith("image/")) {
+    throw new RangeError(
+      `Ollama adapter does not support file content of type "${file.mimeType}"`,
+    );
+  }
+
+  const source = fileSourceFrom(file);
+  if (source.kind === "url") {
+    throw new RangeError(
+      "Ollama adapter does not support images by URL; pass base64 data instead",
+    );
+  }
+  return source.data;
+}
+
+/**
  * Converts shared messages into Ollama request messages.
  *
  * The `thinking` field is round-tripped so thinking-capable models can carry
@@ -331,11 +356,29 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
 
       result.push({ role: "system", content });
     } else if (message.role === "user") {
-      const content = typeof message.contents === "string"
-        ? message.contents
-        : message.contents.map((c) => c.text).join("");
+      if (typeof message.contents === "string") {
+        result.push({ role: "user", content: message.contents });
+        continue;
+      }
 
-      result.push({ role: "user", content });
+      const textParts: string[] = [];
+      const images: string[] = [];
+      for (const c of message.contents) {
+        if ("text" in c) {
+          textParts.push(c.text);
+        } else {
+          images.push(ollamaImageFrom(c.file));
+        }
+      }
+
+      const userMessage: OllamaMessage = {
+        role: "user",
+        content: textParts.join(""),
+      };
+      if (images.length > 0) {
+        userMessage.images = images;
+      }
+      result.push(userMessage);
     } else if (message.role === "model") {
       const contentParts: string[] = [];
       const toolCalls: NonNullable<OllamaMessage["tool_calls"]> = [];

@@ -1,4 +1,9 @@
-import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "@std/assert";
 import type { Message } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
 import { object, string } from "@huuma/validate";
@@ -40,6 +45,140 @@ Deno.test("anthropicMessagesFrom sends system messages as user content", () => {
   assertEquals(anthropicMessagesFrom([msg]), [
     { role: "user", content: "You are an AI." },
   ]);
+});
+
+Deno.test("anthropicMessagesFrom maps base64 images to image blocks", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" },
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom maps image URLs to url sources", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/png", url: "https://example.com/a.png" },
+    }],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "image",
+      source: { type: "url", url: "https://example.com/a.png" },
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom maps base64 PDFs to document blocks", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: "aGVsbG8=",
+      },
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom maps PDF URLs to document url sources", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+    }],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [{
+      type: "document",
+      source: { type: "url", url: "https://example.com/a.pdf" },
+    }],
+  }]);
+});
+
+Deno.test("anthropicMessagesFrom throws on unsupported base64 image types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "image/tiff", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => anthropicMessagesFrom([msg]),
+    RangeError,
+    'images of type "image/tiff"',
+  );
+});
+
+Deno.test("anthropicMessagesFrom throws on unsupported image URL types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{
+      file: { mimeType: "image/tiff", url: "https://example.com/a.tiff" },
+    }],
+  };
+  assertThrows(
+    () => anthropicMessagesFrom([msg]),
+    RangeError,
+    'images of type "image/tiff"',
+  );
+});
+
+Deno.test("anthropicMessagesFrom throws on unsupported file types", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
+  };
+  assertThrows(
+    () => anthropicMessagesFrom([msg]),
+    RangeError,
+    'file content of type "audio/mpeg"',
+  );
+});
+
+Deno.test("anthropicMessagesFrom keeps string content for text-only user parts", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ text: "Hello " }, { text: "there" }],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [
+    { role: "user", content: "Hello there" },
+  ]);
+});
+
+Deno.test("anthropicMessagesFrom preserves part order for mixed text and image", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [
+      { text: "What is in this image?" },
+      { file: { mimeType: "image/jpeg", data: "aGVsbG8=" } },
+      { text: "Answer briefly." },
+    ],
+  };
+  assertEquals(anthropicMessagesFrom([msg]), [{
+    role: "user",
+    content: [
+      { type: "text", text: "What is in this image?" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/jpeg", data: "aGVsbG8=" },
+      },
+      { type: "text", text: "Answer briefly." },
+    ],
+  }]);
 });
 
 Deno.test("anthropicMessagesFrom converts model message with tool calls", () => {
