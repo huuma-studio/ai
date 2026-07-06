@@ -73,8 +73,11 @@ tools also need a *channel* to attach files to their result.
    result with files: a text part labelling the origin
    (`Files returned by tool "<name>" (call <id>):`) followed by the
    mapped file parts (reusing each adapter's phase-1 user-content
-   mapping, including its throw rules; Ollama collects `image/*` base64
-   into `images` and throws on everything else).
+   mapping, including its throw rules). Ollama collects `image/*` base64
+   into `images` and throws on everything else; because its flat
+   `images` array cannot interleave with text, it labels per image
+   (indexed into the array) rather than per result, keeping attribution
+   unambiguous when one result returns several files.
 
    The synthetic message exists **only on the wire**. Shared `Message[]`
    history keeps the canonical `ToolResultContent.files` shape, so

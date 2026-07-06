@@ -418,7 +418,9 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
     } else if (message.role === "tool") {
       // Ollama tool messages carry no images, so files ride one synthetic
       // user message after the tool messages — wire-only, never part of
-      // shared history (ADR 0004).
+      // shared history (ADR 0004). The flat `images` array cannot
+      // interleave with text, so each image gets its own indexed label
+      // line to keep attribution unambiguous.
       const labels: string[] = [];
       const images: string[] = [];
       for (const c of message.contents) {
@@ -430,9 +432,11 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
             content: toolOutputString(r),
             tool_name: name,
           } as OllamaMessage);
-          if (files?.length) {
-            labels.push(`Files returned by tool "${name}" (call ${id}):`);
-            images.push(...files.map((file) => ollamaImageFrom(file.file)));
+          for (const file of files ?? []) {
+            images.push(ollamaImageFrom(file.file));
+            labels.push(
+              `Image ${images.length}: returned by tool "${name}" (call ${id})`,
+            );
           }
         }
       }
