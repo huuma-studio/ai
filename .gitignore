@@ -9,3 +9,4 @@ main.ts
 .env
 prompt.md
 todo.md
+.agents/*
