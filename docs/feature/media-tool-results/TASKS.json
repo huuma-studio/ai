@@ -1,0 +1,128 @@
+{
+  "feature": "media-tool-results",
+  "sources": [
+    "docs/feature/media/CONTEXT.md",
+    "docs/adr/0004-media-in-tool-results.md",
+    "docs/feature/media-tool-results/PLAN.md"
+  ],
+  "conventions": "Each task is independently implementable once its dependsOn tasks are done. Task ids prefixed media-* refer to docs/feature/media/TASKS.json (phase 1) and must be complete first. Every code task ends green on `deno task check` and `deno task lint`; tasks with tests also end green on `deno task test`. Sizes: S = well under an hour, M = an hour or two.",
+  "release": "Ship as 0.0.12. Additive and non-breaking: `files` is optional on ToolResultContent and `toolOutput` is a new export. Land before the MCP result-mapping task so MCP image blocks map to FileContent from day one.",
+  "tasks": [
+    {
+      "id": "mtr-01",
+      "title": "Finalize ADR 0004 (media in tool results)",
+      "size": "S",
+      "dependsOn": [],
+      "files": ["docs/adr/0004-media-in-tool-results.md"],
+      "description": "Resolve the three open questions in the Proposed draft: (1) files on errored results — proposal is to forward them regardless of output/error; (2) exact label wording for the synthetic user message and whether it is stable API or presentation detail; (3) verify the exact FunctionResponse parts field names against the installed @google/genai types in node_modules. Update the Decision section accordingly and flip Status to Accepted.",
+      "acceptance": [
+        "All three open questions answered in the ADR body, open-questions section removed or resolved inline",
+        "Status: Accepted"
+      ]
+    },
+    {
+      "id": "mtr-02",
+      "title": "files?: FileContent[] on ToolResultContent + fail-loud baseline",
+      "size": "S",
+      "dependsOn": ["mtr-01", "media-01"],
+      "files": [
+        "src/mod.ts",
+        "models/anthropic/mod.ts",
+        "models/openai/mod.ts",
+        "models/google/mod.ts",
+        "models/mistral/mod.ts",
+        "models/ollama/mod.ts"
+      ],
+      "description": "Add optional files?: FileContent[] to ToolResultContent.toolResult beside result, with JSDoc: media attached to the result; delivery is provider-dependent (native content blocks or a synthetic user message per ADR 0004); adapters throw on unsupported combinations. Because the field is optional there is no type break, so the no-silent-drop policy requires a runtime guard: in each adapter's tool-message branch, throw RangeError(`<provider> adapter does not support tool result files yet`) when a result carries non-empty files. Real delivery replaces these throws in mtr-04..08.",
+      "acceptance": [
+        "ToolResultContent with files compiles from @huuma/ai",
+        "Each adapter has a test asserting the baseline throw on a tool result with files",
+        "deno task check, lint, and test all green (existing tests unchanged)"
+      ]
+    },
+    {
+      "id": "mtr-03",
+      "title": "ToolOutput wrapper + callTool unwrapping",
+      "size": "S",
+      "dependsOn": ["mtr-02"],
+      "files": ["src/tools/mod.ts"],
+      "description": "Export class ToolOutput<T = unknown> { output: T; files: FileContent[] } and factory toolOutput<T>(output: T, files: FileContent[]): ToolOutput<T> from @huuma/ai/tools. In callTool's fulfilled branch, unwrap instanceof ToolOutput into { toolResult: { id, name, result: { output }, files } }; every other return value keeps today's path, rejections unchanged. instanceof, not shape-sniffing (ADR 0004): a tool legitimately returning a plain { output, files } object must NOT be unwrapped.",
+      "acceptance": [
+        "Tests: plain return unchanged; toolOutput populates files and unwraps output; plain object with output/files keys is not unwrapped; rejection path untouched",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-04",
+      "title": "Anthropic: native tool_result content blocks",
+      "size": "M",
+      "dependsOn": ["mtr-02", "media-03"],
+      "files": ["models/anthropic/mod.ts", "models/anthropic/mod_test.ts"],
+      "description": "In anthropicMessagesFrom's tool branch, when a result has files, send tool_result.content as a block array: one text block carrying toolOutputString(result) followed by file blocks via the phase-1 FileContent-to-block mapper (extract it to a shared local function if media-03 left it inline). Same rules as phase 1: image base64 validates against the four-literal media_type union, image/pdf by url use url sources, anything else throws RangeError. is_error handling unchanged; results without files keep string content.",
+      "acceptance": [
+        "Tests: image file yields text + image blocks; pdf yields document block; no-files result keeps string content; mixed tool message (one result with files, one without) maps both correctly; unsupported mime throws; files on an errored result behave per ADR resolution",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-05",
+      "title": "Google: FunctionResponse parts",
+      "size": "S",
+      "dependsOn": ["mtr-02", "media-05"],
+      "files": ["models/google/mod.ts", "models/google/mod.test.ts"],
+      "description": "In genAIPartFrom's toolResult branch, map files into the FunctionResponse parts shape confirmed by mtr-01: fileSourceFrom kind 'data' -> blob part with { mimeType, data }, kind 'url' -> file-data part with { fileUri, mimeType }. response stays as today. No mimeType filtering, matching the phase-1 Google stance — let the API reject unsupported types.",
+      "acceptance": [
+        "Tests: data -> blob part; url -> file-data part; no-files result unchanged; both-set/neither-set throws via shared helper",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-06",
+      "title": "OpenAI: synthetic user message fallback",
+      "size": "M",
+      "dependsOn": ["mtr-02", "media-04"],
+      "files": ["models/openai/mod.ts", "models/openai/mod_test.ts"],
+      "description": "After emitting the tool messages for a tool Message: if any result carries files, append ONE synthetic user message whose content parts are, per result with files and in call order, a label text part (wording per ADR 0004, containing tool name and call id) followed by that result's file parts via the phase-1 OpenAI mapper (image_url / input_audio / file — same throw rules, e.g. pdf-by-url throws). Constructed at transform time only; shared history is never mutated. Tool messages themselves are emitted exactly as today.",
+      "acceptance": [
+        "Tests: single result with image emits tool message + synthetic user message with label and image part; two results with files aggregate into one synthetic message in call order; no-files tool message emits no synthetic message (wire shape identical to today); label contains tool name and call id; pdf-by-url throws",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-07",
+      "title": "Mistral: synthetic user message fallback",
+      "size": "M",
+      "dependsOn": ["mtr-02", "media-06"],
+      "files": ["models/mistral/mod.ts", "models/mistral/mod_test.ts"],
+      "description": "Same construction as mtr-06 with ContentChunk[] parts from the phase-1 Mistral mapper (image_url / document_url / input_audio; pdf base64 throws). Per ADR 0004, do NOT use Mistral's typed ToolMessage.content chunks — model support is unverified and typed-but-ignored content is silent data loss; leave a code comment referencing the ADR so the native path is revisited deliberately.",
+      "acceptance": [
+        "Tests: mirror mtr-06 for Mistral chunk shapes; pdf base64 throws; no-files wire shape unchanged; tool message content remains a plain string",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-08",
+      "title": "Ollama: synthetic user message fallback",
+      "size": "S",
+      "dependsOn": ["mtr-02", "media-07"],
+      "files": ["models/ollama/mod.ts", "models/ollama/transform_test.ts"],
+      "description": "Same construction: one synthetic user message after the tool-derived messages, label text (per result with files, in order) joined into content, image/* base64 collected into images: string[] in order. Phase-1 rules apply: image-by-url throws (no fetching), any non-image mimeType throws RangeError naming provider and mimeType.",
+      "acceptance": [
+        "Tests: image lands in the synthetic message's images array; order preserved across two results; label text names both tools and call ids; no-files tool message emits no synthetic message; url and pdf throw",
+        "deno task test green"
+      ]
+    },
+    {
+      "id": "mtr-09",
+      "title": "Docs: toolOutput + delivery matrix; MCP note",
+      "size": "S",
+      "dependsOn": ["mtr-03", "mtr-04", "mtr-05", "mtr-06", "mtr-07", "mtr-08"],
+      "files": ["README.md", "src/tools/mod.ts", "docs/feature/mcp/CONTEXT.md"],
+      "description": "README: extend the 'Media input' section with a 'Media from tools' subsection — toolOutput example (e.g. a screenshot tool), a compact per-provider delivery table (native blocks: Anthropic, Google; synthetic user message: OpenAI, Mistral, Ollama), one sentence on the fail-loud policy. src/tools/mod.ts module JSDoc: toolOutput example beside the existing tool example. docs/feature/mcp/CONTEXT.md: annotate the result-mapping recommendation to target toolResult.files for image blocks instead of the placeholder-text stopgap.",
+      "acceptance": [
+        "README example type-checks when pasted into a scratch file (deno check against the local package)",
+        "deno task lint green"
+      ]
+    }
+  ]
+}

@@ -218,6 +218,92 @@ Deno.test("mistralMessagesFrom converts tool message", () => {
   assertEquals((result[0] as { name?: string }).name, "tool1");
 });
 
+Deno.test("mistralMessagesFrom appends a synthetic user message for tool result files", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertEquals(mistralMessagesFrom([msg]), [
+    {
+      role: "tool",
+      content: "captured",
+      toolCallId: "1",
+      name: "screenshot",
+    },
+    {
+      role: "user",
+      content: [
+        { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
+        { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
+      ],
+    },
+  ]);
+});
+
+Deno.test("mistralMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
+      },
+      {
+        toolResult: {
+          id: "2",
+          name: "camera",
+          result: { output: "photographed" },
+          files: [{ file: { mimeType: "image/jpeg", data: "d29ybGQ=" } }],
+        },
+      },
+    ],
+  };
+
+  const result = mistralMessagesFrom([msg]);
+  assertEquals(result.length, 3);
+  assertEquals(result[2], {
+    role: "user",
+    content: [
+      { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
+      { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
+      { type: "text", text: 'Files returned by tool "camera" (call 2):' },
+      { type: "image_url", imageUrl: "data:image/jpeg;base64,d29ybGQ=" },
+    ],
+  });
+});
+
+Deno.test("mistralMessagesFrom throws on tool result base64 PDFs", () => {
+  const msg: ToolMessage = {
+    role: "tool",
+    contents: [{
+      toolResult: {
+        id: "1",
+        name: "report",
+        result: { output: "generated" },
+        files: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+      },
+    }],
+  };
+
+  assertThrows(
+    () => mistralMessagesFrom([msg]),
+    RangeError,
+    "base64 PDFs",
+  );
+});
+
 Deno.test("mistralMessagesFrom converts tool message with non-string output object", () => {
   const msg: ToolMessage = {
     role: "tool",

@@ -273,11 +273,17 @@ export function anthropicMessagesFrom(
       const content: Anthropic.ToolResultBlockParam[] = [];
       for (const part of message.contents) {
         if ("toolResult" in part) {
+          const { id, result, files } = part.toolResult;
           content.push({
             type: "tool_result",
-            tool_use_id: part.toolResult.id,
-            content: toolOutputString(part.toolResult.result),
-            is_error: part.toolResult.result.error !== undefined,
+            tool_use_id: id,
+            content: files?.length
+              ? [
+                { type: "text", text: toolOutputString(result) },
+                ...files.map((file) => fileBlockFrom(file.file)),
+              ]
+              : toolOutputString(result),
+            is_error: result.error !== undefined,
           });
         }
       }

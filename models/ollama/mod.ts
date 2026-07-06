@@ -416,16 +416,28 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     } else if (message.role === "tool") {
+      // Ollama tool messages carry no images, so files ride one synthetic
+      // user message after the tool messages — wire-only, never part of
+      // shared history (ADR 0004).
+      const labels: string[] = [];
+      const images: string[] = [];
       for (const c of message.contents) {
         if ("toolResult" in c) {
-          const { name, result: r } = c.toolResult;
+          const { id, name, result: r, files } = c.toolResult;
 
           result.push({
             role: "tool",
             content: toolOutputString(r),
             tool_name: name,
           } as OllamaMessage);
+          if (files?.length) {
+            labels.push(`Files returned by tool "${name}" (call ${id}):`);
+            images.push(...files.map((file) => ollamaImageFrom(file.file)));
+          }
         }
+      }
+      if (images.length > 0) {
+        result.push({ role: "user", content: labels.join("\n"), images });
       }
     }
   }

@@ -249,15 +249,33 @@ export function mistralMessagesFrom(
       }
       result.push(assistantMessage as AssistantMessage & { role: "assistant" });
     } else if (message.role === "tool") {
+      // `ToolMessage.content` is typed to accept chunks, but model support
+      // is unverified — typed-but-ignored content would be silent data
+      // loss, so files ride one synthetic user message after the tool
+      // messages instead, wire-only (ADR 0004).
+      const fileChunks: ContentChunk[] = [];
       for (const content of message.contents) {
         if ("toolResult" in content) {
+          const { id, name, result: toolResult, files } = content.toolResult;
           result.push({
             role: "tool",
-            content: toolOutputString(content.toolResult.result),
-            toolCallId: content.toolResult.id,
-            name: content.toolResult.name,
+            content: toolOutputString(toolResult),
+            toolCallId: id,
+            name,
           } as MistralToolMessage);
+          if (files?.length) {
+            fileChunks.push(
+              {
+                type: "text",
+                text: `Files returned by tool "${name}" (call ${id}):`,
+              },
+              ...files.map((file) => fileChunkFrom(file.file)),
+            );
+          }
         }
+      }
+      if (fileChunks.length > 0) {
+        result.push({ role: "user", content: fileChunks });
       }
     }
   }

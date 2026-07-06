@@ -143,6 +143,101 @@ Deno.test("genAIContentsFrom maps tool messages to user functionResponse parts",
   });
 });
 
+Deno.test("genAIContentsFrom maps tool result file data to inlineData parts", () => {
+  const messages: Message[] = [
+    {
+      role: "tool",
+      contents: [{
+        toolResult: {
+          id: "call-1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
+      }],
+    },
+  ];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents[0], {
+    role: "user",
+    parts: [{
+      functionResponse: {
+        id: "call-1",
+        name: "screenshot",
+        response: { output: "captured" },
+        parts: [{ inlineData: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
+    }],
+  });
+});
+
+Deno.test("genAIContentsFrom maps tool result file URLs to fileData parts", () => {
+  const messages: Message[] = [
+    {
+      role: "tool",
+      contents: [{
+        toolResult: {
+          id: "call-1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{
+            file: { mimeType: "image/png", url: "https://example.com/a.png" },
+          }],
+        },
+      }],
+    },
+  ];
+
+  const contents = genAIContentsFrom(messages) as Content[];
+
+  assertEquals(contents[0], {
+    role: "user",
+    parts: [{
+      functionResponse: {
+        id: "call-1",
+        name: "screenshot",
+        response: { output: "captured" },
+        parts: [{
+          fileData: {
+            fileUri: "https://example.com/a.png",
+            mimeType: "image/png",
+          },
+        }],
+      },
+    }],
+  });
+});
+
+Deno.test("genAIContentsFrom throws on tool result files with both data and url", () => {
+  const messages: Message[] = [
+    {
+      role: "tool",
+      contents: [{
+        toolResult: {
+          id: "call-1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{
+            file: {
+              mimeType: "image/png",
+              data: "aGVsbG8=",
+              url: "https://example.com/a.png",
+            },
+          }],
+        },
+      }],
+    },
+  ];
+
+  assertThrows(
+    () => genAIContentsFrom(messages),
+    RangeError,
+    "exactly one of data or url",
+  );
+});
+
 Deno.test("modelMessagesFrom keeps thinking out of contents", () => {
   const [message] = modelMessagesFrom(responseFrom({
     candidates: [{

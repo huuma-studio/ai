@@ -14,11 +14,29 @@
  * });
  * ```
  *
+ * @example Returning media from a tool
+ * ```typescript
+ * import { tool, toolOutput } from "jsr:@huuma/ai/tools";
+ * import { object, string } from "jsr:@huuma/validate";
+ *
+ * const screenshot = tool({
+ *   name: "screenshot",
+ *   description: "Take a screenshot of a page.",
+ *   input: object({ url: string() }),
+ *   fn: async ({ url }) => {
+ *     const data = await captureAsBase64(url);
+ *     return toolOutput("Screenshot captured.", [
+ *       { file: { mimeType: "image/png", data } },
+ *     ]);
+ *   },
+ * });
+ * ```
+ *
  * @module
  */
 import { type Schema, ValidationException } from "@huuma/validate";
 export type { JSONSchema, Schema } from "@huuma/validate";
-import type { Message, ToolResultContent } from "@huuma/ai";
+import type { FileContent, Message, ToolResultContent } from "@huuma/ai";
 
 export { cli, type CliToolOptions } from "@/tools/cli/cli.ts";
 
@@ -155,6 +173,37 @@ export function tools(tools: Tool<Schema<unknown>, unknown>[]): Tools {
   return new Tools(tools);
 }
 
+/**
+ * Branded wrapper pairing a tool's output with media files.
+ *
+ * {@linkcode callTool} detects instances via `instanceof` and lifts the
+ * files onto the tool result's `files` field — a plain object with
+ * `output`/`files` keys is treated as ordinary output, never unwrapped.
+ */
+export class ToolOutput<T = unknown> {
+  /** Model-visible tool output. */
+  readonly output: T;
+  /** Media attached to the result. */
+  readonly files: FileContent[];
+
+  /** Create a wrapped tool output. */
+  constructor(output: T, files: FileContent[]) {
+    this.output = output;
+    this.files = files;
+  }
+}
+
+/** Attach media files to a tool's output.
+ *
+ * @param output Model-visible tool output.
+ * @param files Media attached to the result.
+ * @returns A {@link ToolOutput} that {@linkcode callTool} unwraps into the
+ * tool result.
+ */
+export function toolOutput<T>(output: T, files: FileContent[]): ToolOutput<T> {
+  return new ToolOutput(output, files);
+}
+
 function formatRejection(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason;
@@ -190,6 +239,16 @@ export function callTool(
       toolCalls.map(async (toolCall) => {
         const tool = tools.get(toolCall.name);
         const output = await tool.call(toolCall.props);
+        if (output instanceof ToolOutput) {
+          return {
+            toolResult: {
+              id: toolCall.id,
+              name: toolCall.name,
+              result: { output: output.output },
+              files: output.files,
+            },
+          } satisfies ToolResultContent;
+        }
         return {
           toolResult: {
             id: toolCall.id,
