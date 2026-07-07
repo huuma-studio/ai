@@ -24,7 +24,16 @@ export async function connect(
   options: McpTransportOptions,
 ): Promise<McpClient> {
   const client = new Client({ name: "@huuma/ai", version: "0.0.10" });
-  await client.connect(transportFrom(options));
+  try {
+    await client.connect(transportFrom(options));
+  } catch (error) {
+    // A stdio transport may have already spawned the child process when the
+    // MCP handshake fails; close so it doesn't outlive the rejected connect.
+    // SDK v1 fires an unawaited close() itself on init failure, but that is
+    // an implementation detail this seam must not depend on (ADR 0002).
+    await client.close().catch(() => {});
+    throw error;
+  }
 
   return {
     async listTools() {

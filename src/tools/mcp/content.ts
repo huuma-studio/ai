@@ -23,7 +23,10 @@ export function flattenResult(
 ): string | ToolOutput<string> {
   if (result.isError) {
     const text = (result.content ?? [])
-      .filter((block) => block.type === "text")
+      .filter(
+        (block): block is Extract<McpContentBlock, { type: "text" }> =>
+          block.type === "text",
+      )
       .map((block) => block.text)
       .join("\n");
     throw new Error(text || "MCP tool call failed");
