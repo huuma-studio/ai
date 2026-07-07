@@ -1,6 +1,7 @@
 # @huuma/ai
 
-Composable AI primitives for Deno and TypeScript: unified chat-model adapters, agent orchestration, workflows, and tool factories.
+Composable AI primitives for Deno and TypeScript: unified chat-model adapters,
+agent orchestration, workflows, and tool factories.
 
 ## Example
 
@@ -33,7 +34,8 @@ const assistant = agent({
 });
 ```
 
-An agent can delegate tasks to another agent through the `subagent` tool. The sub-agent runs its own loop and only its final answer reaches the parent:
+An agent can delegate tasks to another agent through the `subagent` tool. The
+sub-agent runs its own loop and only its final answer reaches the parent:
 
 ```typescript
 import { agent } from "jsr:@huuma/ai/agent";
@@ -150,11 +152,43 @@ match the user-message table above; files are never silently dropped.
 
 - Shared message and content types in `@huuma/ai`.
 - A common `BaseModel` interface in `@huuma/ai/model`.
-- Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, and Ollama in `@huuma/ai/models`.
+- Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, and
+  Ollama in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
-- Tool factories for CLI execution, file operations, grep, website fetching, web search, skill loading, and sub-agent delegation in `@huuma/ai/tools`.
+- Tool factories for CLI execution, file operations, grep, website fetching, web
+  search, skill loading, sub-agent delegation, and MCP servers in
+  `@huuma/ai/tools`.
+
+## MCP servers
+
+`mcp()` connects to a Model Context Protocol server and exposes its tools as
+ordinary tools — nothing else changes:
+
+```typescript
+import { mcp } from "jsr:@huuma/ai/tools";
+
+const deepwiki = await mcp({
+  name: "deepwiki", // model-visible tools become deepwiki_<tool>
+  transport: { url: "https://mcp.deepwiki.com/mcp" }, // or { command, args } for stdio
+});
+
+const assistant = agent({ /* ... */ tools: [...deepwiki.tools()] });
+// later — required, stdio transports own a child process:
+await deepwiki.close();
+```
+
+Multi-server setups compose handles: `[...a.tools(), ...b.tools()]`. Tool
+results flatten to text (`structuredContent` preferred); `image` and `audio`
+content blocks land on the tool result's `files` field and are delivered
+per provider exactly like media from tools above; execution failures
+reported by the server surface as regular tool errors. stdio transports need
+`--allow-run --allow-read --allow-env`; HTTP transports need `--allow-net`.
+Design record: `docs/adr/0002-mcp-servers-as-a-tool-factory.md`.
 
 ## Permissions
 
-Some bundled tools require Deno permissions when called, such as `--allow-read`, `--allow-write`, `--allow-run`, `--allow-net`, or `--allow-env`, depending on the tool and provider configuration.
+Some bundled tools require Deno permissions when called, such as `--allow-read`,
+`--allow-write`, `--allow-run`, `--allow-net`, or `--allow-env`, depending on
+the tool and provider configuration. MCP transports: stdio needs
+`--allow-run --allow-read --allow-env`; Streamable HTTP needs `--allow-net`.
