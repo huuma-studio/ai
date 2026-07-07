@@ -10,6 +10,8 @@ type NonMediaBlock = Exclude<McpContentBlock, { type: "image" | "audio" }>;
  *
  * `isError: true` throws so `callTool`'s existing settled-promise path
  * formats it as `{ result: { error } }` (ADR 0001: errors propagate).
+ * The thrown message is the text blocks, falling back to
+ * `structuredContent` as JSON for servers that report errors structurally.
  * The model-visible output is `structuredContent` as JSON when present
  * (servers commonly duplicate it as a text block), else the remaining
  * blocks joined: text verbatim, resources as placeholders. `image` and
@@ -29,7 +31,10 @@ export function flattenResult(
       )
       .map((block) => block.text)
       .join("\n");
-    throw new Error(text || "MCP tool call failed");
+    const structured = result.structuredContent !== undefined
+      ? JSON.stringify(result.structuredContent)
+      : "";
+    throw new Error(text || structured || "MCP tool call failed");
   }
 
   const texts: string[] = [];

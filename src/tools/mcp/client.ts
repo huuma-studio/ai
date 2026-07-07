@@ -18,12 +18,15 @@ import type {
   McpToolDef,
   McpTransportOptions,
 } from "@/tools/mcp/types.ts";
+import denoJson from "../../../deno.json" with { type: "json" };
 
 /** Connect to an MCP server and return the narrow client handle. */
 export async function connect(
   options: McpTransportOptions,
 ): Promise<McpClient> {
-  const client = new Client({ name: "@huuma/ai", version: "0.0.10" });
+  // Sent to every server in the initialize handshake; sourced from
+  // deno.json so version bumps can't leave it behind.
+  const client = new Client({ name: denoJson.name, version: denoJson.version });
   try {
     await client.connect(transportFrom(options));
   } catch (error) {

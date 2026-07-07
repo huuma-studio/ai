@@ -289,6 +289,27 @@ Deno.test("mcp - refresh picks up new tools; prior arrays stay unchanged", async
   }
 });
 
+Deno.test("mcp - colliding sanitized names throw instead of clobbering", async () => {
+  const { connection, defs } = await connectFixture();
+  try {
+    // Both sanitize to "fixture_repo_search" — silent last-one-wins would
+    // hide a tool from the model.
+    defs.push(
+      { name: "repo.search", inputSchema: { type: "object" } },
+      { name: "repo_search", inputSchema: { type: "object" } },
+    );
+    const error = await assertRejects(() => connection.refresh(), Error);
+    assertStringIncludes(error.message, "repo.search");
+    assertStringIncludes(error.message, "repo_search");
+    assertStringIncludes(error.message, "allowedTools");
+
+    // The prior snapshot stays intact and usable.
+    assertEquals(connection.tools().length, 5);
+  } finally {
+    await connection.close();
+  }
+});
+
 Deno.test("mcp - agent end-to-end through Agent.run", async () => {
   const { connection, calledWith } = await connectFixture();
   try {

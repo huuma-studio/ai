@@ -118,11 +118,25 @@ export class McpConnection {
   // deno-lint-ignore no-explicit-any
   #wrap(defs: McpToolDef[]): Tool<any, string | ToolOutput<string>>[] {
     const allowed = this.#allowedTools;
+    // Sanitization can collide below the length cap ("repo.search" and
+    // "repo_search" both become "srv_repo_search"); the tool map would
+    // silently keep the last one, so fail loud instead (ADR 0002).
+    const seen = new Map<string, string>();
     return defs
       .filter((def) => !allowed || allowed.includes(def.name))
-      .map((def) =>
-        new Tool({
-          name: modelToolName(this.#name, def.name),
+      .map((def) => {
+        const name = modelToolName(this.#name, def.name);
+        const clash = seen.get(name);
+        if (clash !== undefined) {
+          throw new Error(
+            `mcp server "${this.#name}": tools "${clash}" and ` +
+              `"${def.name}" both map to model tool name "${name}" — ` +
+              `exclude one via allowedTools`,
+          );
+        }
+        seen.set(name, def.name);
+        return new Tool({
+          name,
           description: def.description ?? "",
           input: new PassthroughSchema(def.inputSchema),
           // The server is always called with the original tool name; the
@@ -131,8 +145,8 @@ export class McpConnection {
             flattenResult(
               await this.#client.callTool(def.name, props, this.#timeout),
             ),
-        })
-      );
+        });
+      });
   }
 }
 

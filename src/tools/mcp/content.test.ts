@@ -102,6 +102,32 @@ Deno.test("flattenResult - isError without text uses a fallback message", () => 
   );
 });
 
+Deno.test("flattenResult - isError without text falls back to structuredContent", () => {
+  assertThrows(
+    () =>
+      flattenResult({
+        content: [],
+        structuredContent: { code: 42, reason: "quota exceeded" },
+        isError: true,
+      }),
+    Error,
+    JSON.stringify({ code: 42, reason: "quota exceeded" }),
+  );
+});
+
+Deno.test("flattenResult - isError text blocks win over structuredContent", () => {
+  assertThrows(
+    () =>
+      flattenResult({
+        content: [{ type: "text", text: "boom" }],
+        structuredContent: { code: 42 },
+        isError: true,
+      }),
+    Error,
+    "boom",
+  );
+});
+
 Deno.test("flattenResult - isError with media still throws text-only", () => {
   // callTool's rejection path has no files channel (ADR 0004, resolved
   // question 1), so media on errored results is not forwarded.
