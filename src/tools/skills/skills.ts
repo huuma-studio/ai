@@ -28,7 +28,7 @@
  * import { agent } from "jsr:@huuma/ai/agent";
  * import { skills } from "jsr:@huuma/ai/tools";
  *
- * const [listSkills, retrieveSkill] = skills({ path: "./skills" });
+ * const [listSkills, retrieveSkill] = skills({ path: "./.agents/skills" });
  *
  * const assistant = agent({
  *   // ...
@@ -87,7 +87,7 @@ export interface SkillInfo {
 
 /** Options for configuring the {@link skills} factory. */
 export interface SkillsToolOptions {
-  /** Path to the skills directory (default `"./skills"`). Resolved to an
+  /** Path to the skills directory (default `"./.agents/skills"`). Resolved to an
    * absolute path eagerly at factory time. */
   path?: string;
   /** Callback for load diagnostics (default `console.warn`). Each message
@@ -106,7 +106,7 @@ export interface SkillsToolOptions {
  * import { skills } from "jsr:@huuma/ai/tools";
  *
  * const [listSkills, retrieveSkill] = skills({
- *   path: "./skills",
+ *   path: "./.agents/skills",
  *   onWarning: (message) => console.error(message),
  * });
  * ```
@@ -119,7 +119,7 @@ export interface SkillsToolOptions {
 type SkillsToolPair = readonly [Tool<any, unknown>, Tool<any, unknown>];
 
 export function skills(
-  { path = "./skills", onWarning = console.warn }: SkillsToolOptions = {},
+  { path = "./.agents/skills", onWarning = console.warn }: SkillsToolOptions = {},
 ): SkillsToolPair {
   const root = resolve(path);
   let loading: Promise<SkillInfo[]> | null = null;
