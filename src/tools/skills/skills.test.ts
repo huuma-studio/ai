@@ -218,6 +218,54 @@ Deno.test("skills - a rejected scan retries on the next call", async (t) => {
   await t.step({ name: "cleanup", fn: () => Deno.remove(tempDir, { recursive: true }) });
 });
 
+Deno.test({
+  name:
+    "skills - a symlink whose target cannot be traversed warns instead of vanishing",
+  ignore: Deno.build.os === "windows",
+  async fn() {
+    // Put the real skill under a dir that will be locked, outside the scan
+    // root, so only the symlink path hits `Deno.stat` and the locked parent
+    // makes that stat throw `PermissionDenied`.
+    const outer = await Deno.makeTempDir();
+    const scanRoot = await Deno.makeTempDir();
+    const real = join(outer, "real");
+    await Deno.mkdir(join(real, "skill"), { recursive: true });
+    await Deno.writeTextFile(
+      join(real, "skill", "SKILL.md"),
+      ["---", "name: locked", "description: Behind a permission-denied symlink.", "---", ""].join("\n"),
+    );
+    await Deno.symlink(real, join(scanRoot, "link"));
+    await Deno.chmod(outer, 0o000);
+
+    try {
+      // Bail out on hosts where the perm trick doesn't deny (e.g. root),
+      // so the test never false-fails there.
+      let denied = false;
+      try {
+        await Deno.stat(join(scanRoot, "link"));
+      } catch {
+        denied = true;
+      }
+      if (!denied) return;
+
+      const { warnings, onWarning } = collector();
+      const [list] = skills({ path: scanRoot, onWarning });
+
+      const result = await list.call({}) as ListResult;
+      assertEquals(result, []);
+      assert(
+        warnings.some((w) =>
+          w.includes("link") && w.includes("Failed to inspect")),
+        `expected a symlink-inspection warning, got: ${JSON.stringify(warnings)}`,
+      );
+    } finally {
+      await Deno.chmod(outer, 0o700);
+      await Deno.remove(outer, { recursive: true });
+      await Deno.remove(scanRoot, { recursive: true });
+    }
+  },
+});
+
 // --- Agent end-to-end -------------------------------------------------------
 
 type ScriptedResponse =

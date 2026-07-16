@@ -156,7 +156,9 @@ export function skills(
 
     // Collect directory entries, following symlinks (a symlink to a
     // directory reports `isDirectory: false`). A broken symlink throws
-    // `NotFound` from `stat` and is skipped silently.
+    // `NotFound` from `stat` and is skipped silently; any other stat error
+    // (e.g. `PermissionDenied` on an unreadable target) is surfaced through
+    // `onWarning` so the skill does not vanish without a diagnostic.
     const folders: string[] = [];
     for (const entry of entries) {
       if (entry.isDirectory) {
@@ -167,7 +169,11 @@ export function skills(
           if (stat.isDirectory) folders.push(entry.name);
         } catch (error) {
           if (error instanceof Deno.errors.NotFound) continue;
-          continue;
+          onWarning(
+            `Failed to inspect skill folder ${join(root, entry.name)}: ${
+              describe(error)
+            }`,
+          );
         }
       }
     }
