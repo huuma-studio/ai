@@ -119,7 +119,7 @@ export interface SkillsToolOptions {
 type SkillsToolPair = readonly [Tool<any, unknown>, Tool<any, unknown>];
 
 export function skills(
-  { path = "./skills", onWarning = console.warn }: SkillsToolOptions = {},
+  { path = "./.agents/skills", onWarning = console.warn }: SkillsToolOptions = {},
 ): SkillsToolPair {
   const root = resolve(path);
   let loading: Promise<SkillInfo[]> | null = null;
