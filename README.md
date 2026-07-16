@@ -203,7 +203,7 @@ import { openai } from "jsr:@huuma/ai/models/openai";
 import { skills } from "jsr:@huuma/ai/tools";
 
 const [listSkills, retrieveSkill] = skills({
-  path: "./skills", // default
+  path: "./.agents/skills", // default
   onWarning: (message) => console.warn(message), // default
 });
 
