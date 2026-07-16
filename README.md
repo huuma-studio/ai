@@ -186,9 +186,42 @@ reported by the server surface as regular tool errors. stdio transports need
 `--allow-run --allow-read --allow-env`; HTTP transports need `--allow-net`.
 Design record: `docs/adr/0002-mcp-servers-as-a-tool-factory.md`.
 
+## Skills
+
+`skills()` loads Agent-Skills-style `SKILL.md` folders from a directory and
+exposes them as two tools implementing progressive disclosure: `list_skills`
+returns cheap `{ name, description }` pairs, and `retrieve_skill` loads one
+skill's full instructions plus the skill folder's absolute `path` so an agent
+equipped with `files`/`grep`/`cli` can resolve bundled resources referenced
+by relative path. Loading is lenient — a missing directory yields an empty
+list and misconfigured skills warn through `onWarning` instead of failing
+the scan — and the scan is cached for the factory's lifetime:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { openai } from "jsr:@huuma/ai/models/openai";
+import { skills } from "jsr:@huuma/ai/tools";
+
+const [listSkills, retrieveSkill] = skills({
+  path: "./skills", // default
+  onWarning: (message) => console.warn(message), // default
+});
+
+const assistant = agent({
+  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  modelId: "gpt-5.5",
+  systemPrompt: "You follow skill instructions precisely.",
+  tools: [listSkills, retrieveSkill],
+});
+```
+
+Construct a new factory to re-scan disk; the cache does not watch files.
+Design record: `docs/adr/0005-skills-as-a-tool-factory.md`.
+
 ## Permissions
 
 Some bundled tools require Deno permissions when called, such as `--allow-read`,
 `--allow-write`, `--allow-run`, `--allow-net`, or `--allow-env`, depending on
 the tool and provider configuration. MCP transports: stdio needs
 `--allow-run --allow-read --allow-env`; Streamable HTTP needs `--allow-net`.
+The `skills` factory needs `--allow-read` for the skills directory.

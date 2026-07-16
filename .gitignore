@@ -10,3 +10,4 @@ main.ts
 prompt.md
 todo.md
 .agents/*
+/docs/*

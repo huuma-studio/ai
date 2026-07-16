@@ -65,6 +65,13 @@ export {
 } from "@/tools/subagent/subagent.ts";
 
 export {
+  type SkillFrontmatter,
+  type SkillInfo,
+  skills,
+  type SkillsToolOptions,
+} from "@/tools/skills/skills.ts";
+
+export {
   mcp,
   McpConnection,
   type McpHttpTransportOptions,
