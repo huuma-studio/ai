@@ -184,6 +184,24 @@ content blocks land on the tool result's `files` field and are delivered
 per provider exactly like media from tools above; execution failures
 reported by the server surface as regular tool errors. stdio transports need
 `--allow-run --allow-read --allow-env`; HTTP transports need `--allow-net`.
+
+The client implements the **MCP 2026-07-28** specification revision via
+`@modelcontextprotocol/sdk@^1.30.0`. Tool definitions with a `title` field
+have it surfaced in the model-visible description. `resource_link` content
+blocks carry optional `description`, `size`, `title`, and `icons` fields.
+
+**MRTR (Model Requesting Tool Result):** when a server returns
+`resultType: "input_required"`, the tool call throws an error with the
+server's text content (or a descriptive fallback) rather than silently
+returning incomplete data. This client has no user-in-the-loop, so
+interactive tool flows are not supported — the error surfaces to the agent
+so it can self-correct or report the need for additional input.
+
+**Deprecated features:** Roots, Sampling, Logging, HTTP+SSE transport, and
+OAuth Dynamic Client Registration are still functional in the SDK but are
+not adopted by this client. New code should not rely on them; they may be
+removed in a future spec revision.
+
 Design record: `docs/adr/0002-mcp-servers-as-a-tool-factory.md`.
 
 ## Skills
