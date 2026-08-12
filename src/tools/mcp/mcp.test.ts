@@ -25,6 +25,8 @@ import type {
 interface ToolDef {
   name: string;
   description?: string;
+  title?: string;
+  icons?: { src: string; mimeType?: string; sizes?: string[]; theme?: "light" | "dark" }[];
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
 }
@@ -67,6 +69,13 @@ async function connectFixture(
         "a_tool_with_an_extremely_long_name_that_exceeds_the_provider_limit",
       inputSchema: { type: "object", properties: {} },
     },
+    {
+      name: "titled",
+      title: "Titled Tool",
+      description: "A tool with a display title.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    { name: "needs_input", inputSchema: { type: "object", properties: {} } },
   ];
   const calledWith: string[] = [];
 
@@ -106,6 +115,11 @@ async function connectFixture(
               { type: "text", text: "a tiny png" },
             ],
           };
+        case "needs_input":
+          return {
+            content: [{ type: "text", text: "Please specify the file path." }],
+            resultType: "input_required",
+          };
         default:
           return { content: [{ type: "text", text: "ok" }] };
       }
@@ -131,7 +145,7 @@ Deno.test("mcp - lists and wraps tools with prefixed names and verbatim schemas"
     const names = connection.tools().map((tool) => tool.name);
     assert(names.includes("fixture_echo"), `echo missing in ${names}`);
     assert(names.includes("fixture_add"), `add missing in ${names}`);
-    assertEquals(connection.tools().length, 5);
+    assertEquals(connection.tools().length, 7);
 
     const echo = connection.tools().find((tool) =>
       tool.name === "fixture_echo"
@@ -276,14 +290,14 @@ Deno.test("mcp - refresh picks up new tools; prior arrays stay unchanged", async
   const { connection, defs } = await connectFixture();
   try {
     const before = connection.tools();
-    assertEquals(before.length, 5);
+    assertEquals(before.length, 7);
 
     defs.push({ name: "extra", inputSchema: { type: "object" } });
     const refreshed = await connection.refresh();
 
     assert(refreshed.some((tool) => tool.name === "fixture_extra"));
-    assertEquals(before.length, 5);
-    assertEquals(connection.tools().length, 6);
+    assertEquals(before.length, 7);
+    assertEquals(connection.tools().length, 8);
   } finally {
     await connection.close();
   }
@@ -304,7 +318,7 @@ Deno.test("mcp - colliding sanitized names throw instead of clobbering", async (
     assertStringIncludes(error.message, "allowedTools");
 
     // The prior snapshot stays intact and usable.
-    assertEquals(connection.tools().length, 5);
+    assertEquals(connection.tools().length, 7);
   } finally {
     await connection.close();
   }
@@ -352,6 +366,39 @@ Deno.test("mcp - agent end-to-end through Agent.run", async () => {
     assert("toolResult" in content);
     assertEquals(content.toolResult.result.output, JSON.stringify({ sum: 3 }));
     assertEquals(messages.at(-1)?.contents, [{ text: "The sum is 3." }]);
+  } finally {
+    await connection.close();
+  }
+});
+
+Deno.test("mcp - tool title is surfaced in the model-visible description", async () => {
+  const { connection } = await connectFixture();
+  try {
+    const titled = connection.tools().find((tool) =>
+      tool.name === "fixture_titled"
+    );
+    assert(titled, "titled tool missing");
+    assertEquals(
+      titled.description,
+      "Titled Tool — A tool with a display title.",
+    );
+  } finally {
+    await connection.close();
+  }
+});
+
+Deno.test("mcp - resultType input_required throws a descriptive error", async () => {
+  const { connection } = await connectFixture();
+  try {
+    const needsInput = connection.tools().find((tool) =>
+      tool.name === "fixture_needs_input"
+    );
+    assert(needsInput, "needs_input tool missing");
+    await assertRejects(
+      () => needsInput.call({}),
+      Error,
+      "Please specify the file path.",
+    );
   } finally {
     await connection.close();
   }

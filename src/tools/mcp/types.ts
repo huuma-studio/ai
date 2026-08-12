@@ -8,12 +8,28 @@
  */
 import type { JSONSchema } from "@huuma/validate";
 
+/** Icon declaration (spec 2026-07-28: optional `icons` on tools and links). */
+export interface McpIcon {
+  /** Icon source URL or data URI. */
+  src: string;
+  /** MIME type of the icon resource. */
+  mimeType?: string;
+  /** Available sizes (e.g. `["16x16","32x32"]`). */
+  sizes?: string[];
+  /** Icon theme variant. */
+  theme?: "light" | "dark";
+}
+
 /** Tool definition as listed by an MCP server. */
 export interface McpToolDef {
   /** Original tool name on the server. */
   name: string;
   /** Tool description, if the server provides one. */
   description?: string;
+  /** Human-readable display title (spec 2026-07-28). */
+  title?: string;
+  /** Icon set for UI rendering (spec 2026-07-28). */
+  icons?: McpIcon[];
   /** The server's raw JSON Schema for tool input. */
   inputSchema: JSONSchema;
 }
@@ -23,17 +39,50 @@ export type McpContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
   | { type: "audio"; data: string; mimeType: string }
-  | { type: "resource_link"; uri: string; name?: string; mimeType?: string }
+  | {
+    type: "resource_link";
+    uri: string;
+    name?: string;
+    description?: string;
+    mimeType?: string;
+    size?: number;
+    title?: string;
+    icons?: McpIcon[];
+  }
   | {
     type: "resource";
     resource: { uri: string; mimeType?: string; text?: string; blob?: string };
   };
+
+/**
+ * Result type discriminator for tool call results (spec 2026-07-28).
+ *
+ * - `"complete"` (default when absent): the result is final and ready to
+ *   flatten for the model.
+ * - `"input_required"`: the server signals a Model Requesting Tool Result
+ *   (MRTR) — it needs additional input from the caller before the result
+ *   is usable.  This client has no user-in-the-loop, so MRTR results are
+ *   treated as errors.
+ */
+export type McpResultType = "complete" | "input_required";
 
 /** Result of an MCP tool call. */
 export interface McpCallResult {
   content?: McpContentBlock[];
   structuredContent?: unknown;
   isError?: boolean;
+  /** Spec 2026-07-28: result type discriminator (absent = `"complete"`). */
+  resultType?: McpResultType;
+}
+
+/**
+ * Narrow view of a tool result that carries `resultType: "input_required"`.
+ *
+ * Used only for type-narrowing in error paths — the full {@linkcode McpCallResult}
+ * is the runtime shape.
+ */
+export interface McpInputRequiredResult extends McpCallResult {
+  resultType: "input_required";
 }
 
 /** Narrow client handle the factory builds tools from. */

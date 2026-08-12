@@ -135,9 +135,16 @@ export class McpConnection {
           );
         }
         seen.set(name, def.name);
+        // Spec 2026-07-28: surface the tool's human-readable title in the
+        // model-visible description, prepended to the existing description.
+        const description = def.title
+          ? def.description
+            ? `${def.title} — ${def.description}`
+            : def.title
+          : (def.description ?? "");
         return new Tool({
           name,
-          description: def.description ?? "",
+          description,
           input: new PassthroughSchema(def.inputSchema),
           // The server is always called with the original tool name; the
           // prefixed name exists only for the model.

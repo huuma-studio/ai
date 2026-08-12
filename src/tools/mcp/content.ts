@@ -23,6 +23,10 @@ type NonMediaBlock = Exclude<McpContentBlock, { type: "image" | "audio" }>;
 export function flattenResult(
   result: McpCallResult,
 ): string | ToolOutput<string> {
+  // MRTR (resultType "input_required") is handled in client.ts's callTool
+  // before this function is ever called — keeping a second copy here would
+  // let the directly tested fallback message drift from the production
+  // path (which has the tool name available for a better message).
   if (result.isError) {
     const text = (result.content ?? [])
       .filter(
