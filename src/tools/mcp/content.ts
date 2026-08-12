@@ -23,26 +23,10 @@ type NonMediaBlock = Exclude<McpContentBlock, { type: "image" | "audio" }>;
 export function flattenResult(
   result: McpCallResult,
 ): string | ToolOutput<string> {
-  // Spec 2026-07-28: resultType "input_required" (MRTR) means the server
-  // needs additional input from a user-in-the-loop. This client has no
-  // interactive loop, so treat it as an error rather than silently
-  // returning incomplete data. Missing resultType is "complete" (backward
-  // compat with pre-2026-07-28 servers).
-  if (result.resultType === "input_required") {
-    const text = (result.content ?? [])
-      .filter(
-        (block): block is Extract<McpContentBlock, { type: "text" }> =>
-          block.type === "text",
-      )
-      .map((block) => block.text)
-      .join("\n");
-    throw new Error(
-      text ||
-        'MCP tool returned resultType "input_required" — additional input ' +
-          "is needed but no interactive loop is available",
-    );
-  }
-
+  // MRTR (resultType "input_required") is handled in client.ts's callTool
+  // before this function is ever called — keeping a second copy here would
+  // let the directly tested fallback message drift from the production
+  // path (which has the tool name available for a better message).
   if (result.isError) {
     const text = (result.content ?? [])
       .filter(
