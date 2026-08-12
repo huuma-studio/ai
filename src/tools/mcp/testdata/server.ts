@@ -41,6 +41,16 @@ const TOOLS = [
     description: "Always fails.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "greet",
+    title: "Greeter",
+    description: "Greet someone by name.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    },
+  },
 ];
 
 const server = new Server(
@@ -73,6 +83,10 @@ server.setRequestHandler(
         return {
           content: [{ type: "text", text: "boom" }],
           isError: true,
+        };
+      case "greet":
+        return {
+          content: [{ type: "text", text: `Hello, ${args?.name}!` }],
         };
       default:
         return { content: [{ type: "text", text: "ok" }] };

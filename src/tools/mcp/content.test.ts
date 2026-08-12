@@ -149,3 +149,52 @@ Deno.test("flattenResult - empty content flattens to empty string", () => {
   assertEquals(flattenResult({ content: [] }), "");
   assertEquals(flattenResult({}), "");
 });
+
+Deno.test("flattenResult - resultType input_required throws with text content", () => {
+  assertThrows(
+    () =>
+      flattenResult({
+        content: [{ type: "text", text: "Please provide more details." }],
+        resultType: "input_required",
+      }),
+    Error,
+    "Please provide more details.",
+  );
+});
+
+Deno.test("flattenResult - resultType input_required without text uses fallback message", () => {
+  assertThrows(
+    () =>
+      flattenResult({
+        content: [],
+        resultType: "input_required",
+      }),
+    Error,
+    "input_required",
+  );
+});
+
+Deno.test("flattenResult - resultType input_required wins over isError", () => {
+  // MRTR takes precedence over isError — the server is asking for input,
+  // not reporting a failure.
+  assertThrows(
+    () =>
+      flattenResult({
+        content: [{ type: "text", text: "Need more input" }],
+        resultType: "input_required",
+        isError: true,
+      }),
+    Error,
+    "Need more input",
+  );
+});
+
+Deno.test("flattenResult - resultType complete is treated like missing (backward compat)", () => {
+  assertEquals(
+    flattenResult({
+      content: [{ type: "text", text: "done" }],
+      resultType: "complete",
+    }),
+    "done",
+  );
+});
