@@ -2,6 +2,8 @@
 deno.lock
 .zed/*
 node_modules/*
+.huuma/
+.huumadist/
 main.tsx
 progress.txt
 tasks.json

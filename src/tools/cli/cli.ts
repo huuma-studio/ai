@@ -5,15 +5,22 @@ import { Tool } from "@/tools/mod.ts";
 export interface CliToolOptions {
   /** Commands the tool is allowed to execute. */
   allowedCommands: string[];
+  /** Maximum duration of each command in milliseconds. Defaults to 120s. */
+  timeout?: number;
 }
+
+/** Default maximum runtime of a CLI command. */
+export const DEFAULT_CLI_TIMEOUT = 120_000;
 
 /** Create a tool that executes allow-listed CLI commands.
  *
  * @param options Configuration including the list of permitted commands.
  * @returns A {@link Tool} that runs CLI commands and returns stdout.
  */
-// deno-lint-ignore no-explicit-any
-export function cli({ allowedCommands }: CliToolOptions): Tool<any, string> {
+export function cli(
+  { allowedCommands, timeout = DEFAULT_CLI_TIMEOUT }: CliToolOptions,
+  // deno-lint-ignore no-explicit-any
+): Tool<any, string> {
   return new Tool({
     name: "cli",
     description: `Execute CLI commands. Allowed commands: ${
@@ -23,7 +30,8 @@ export function cli({ allowedCommands }: CliToolOptions): Tool<any, string> {
       command: string(),
       args: array(string()),
     }),
-    fn: async ({ command, args }) => {
+    timeout,
+    fn: async ({ command, args }, { signal }) => {
       if (!allowedCommands.includes(command)) {
         throw new Error(
           `Command "${command}" is not allowed. Allowed commands: ${
@@ -32,7 +40,10 @@ export function cli({ allowedCommands }: CliToolOptions): Tool<any, string> {
         );
       }
 
-      const cmd = new Deno.Command(command, { args });
+      const cmd = new Deno.Command(command, {
+        args,
+        signal,
+      });
       const { code, stdout, stderr } = await cmd.output();
 
       const output = new TextDecoder().decode(stdout);

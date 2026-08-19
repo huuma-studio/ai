@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { cli } from "@/tools/cli/cli.ts";
+import { cli, DEFAULT_CLI_TIMEOUT } from "@/tools/cli/cli.ts";
 
 Deno.test("cli - executes allowed command", async () => {
   const cliTool = cli({ allowedCommands: ["echo"] });
@@ -25,5 +25,25 @@ Deno.test("cli - throws on non-zero exit code", async () => {
   await assertRejects(
     () => cliTool.call({ command: "false", args: [] }),
     Error,
+  );
+});
+
+Deno.test("cli - has a 120 second default timeout", () => {
+  const cliTool = cli({ allowedCommands: ["echo"] });
+  assertEquals(cliTool.timeout, DEFAULT_CLI_TIMEOUT);
+});
+
+Deno.test("cli - kills a command when its timeout expires", async () => {
+  const executable = Deno.execPath();
+  const cliTool = cli({ allowedCommands: [executable], timeout: 10 });
+
+  await assertRejects(
+    () =>
+      cliTool.call({
+        command: executable,
+        args: ["eval", "await new Promise(() => {})"],
+      }),
+    DOMException,
+    "The operation was aborted due to timeout",
   );
 });
