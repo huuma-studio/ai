@@ -21,6 +21,33 @@ const messages = await assistant.run("Check the current Deno version.");
 console.log(messages.at(-1));
 ```
 
+CLI commands run with stdin closed. Tools that can prompt or open a pager should
+also receive their command-specific non-interactive environment settings. For
+example, configure GitHub CLI like this:
+
+```typescript
+const gh = cli({
+  allowedCommands: ["gh"],
+  // Trusted configuration overrides same-named values supplied by the agent.
+  env: { GIT_TERMINAL_PROMPT: "0" },
+});
+
+await gh.call({
+  command: "gh",
+  args: ["pr", "view", "--json", "title"],
+  env: {
+    GH_PROMPT_DISABLED: "1",
+    GH_PAGER: "cat",
+  },
+});
+```
+
+Agent-provided environment variables must have string values. Set `GH_TOKEN` or
+`GITHUB_TOKEN` in the parent process when non-interactive authentication is
+needed; child commands inherit the parent environment. Keep secrets in the
+parent or trusted tool configuration rather than exposing them through
+model-generated tool calls.
+
 The same agent can be backed by Mistral:
 
 ```typescript
