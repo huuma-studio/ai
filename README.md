@@ -21,6 +21,42 @@ const messages = await assistant.run("Check the current Deno version.");
 console.log(messages.at(-1));
 ```
 
+CLI commands run with stdin closed. Tools that can prompt or open a pager should
+also receive their command-specific non-interactive environment settings. For
+example, configure GitHub CLI like this:
+
+```typescript
+const gh = cli({
+  allowedCommands: ["gh"],
+  // Only enable when child processes run in an external OS sandbox.
+  allowUnsafeEnvironmentVariables: true,
+  // Trusted configuration overrides same-named values supplied by the agent.
+  env: { GIT_TERMINAL_PROMPT: "0" },
+});
+
+await gh.call({
+  command: "gh",
+  args: ["pr", "view", "--json", "title"],
+  env: {
+    GH_PROMPT_DISABLED: "1",
+    GH_PAGER: "cat",
+  },
+});
+```
+
+Per-call environment variables are disabled by default. Enabling
+`allowUnsafeEnvironmentVariables` permits arbitrary string-valued variables and
+means `allowedCommands` is no longer a security boundary: variables such as
+`PATH`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, and runtime-specific options can
+execute additional code. Only enable it when child processes are protected by
+an external OS sandbox. Trusted `CliToolOptions.env` values remain available
+without the unsafe opt-in and override same-named per-call values.
+
+Set `GH_TOKEN` or `GITHUB_TOKEN` in the parent process when non-interactive
+authentication is needed; child commands inherit the parent environment. Keep
+secrets in the parent or trusted tool configuration rather than exposing them
+through model-generated tool calls.
+
 The same agent can be backed by Mistral:
 
 ```typescript
