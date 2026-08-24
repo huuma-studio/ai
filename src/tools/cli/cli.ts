@@ -15,6 +15,13 @@ export interface CliToolOptions {
   timeout?: number;
   /** Environment variables added to the inherited child-process environment. */
   env?: Record<string, string>;
+  /** Allow arbitrary agent-provided environment variables per call.
+   *
+   * This makes `allowedCommands` unsuitable as a security boundary because
+   * loader and runtime variables can execute additional code. Enable only when
+   * child processes are protected by an external OS sandbox. Defaults to false.
+   */
+  allowUnsafeEnvironmentVariables?: boolean;
 }
 
 /** Default maximum runtime of a CLI command. */
@@ -26,16 +33,21 @@ export const DEFAULT_CLI_TIMEOUT = 120_000;
  * @returns A {@link Tool} that runs CLI commands and returns stdout.
  */
 export function cli(
-  { allowedCommands, timeout = DEFAULT_CLI_TIMEOUT, env: configuredEnv }:
-    CliToolOptions,
+  {
+    allowedCommands,
+    timeout = DEFAULT_CLI_TIMEOUT,
+    env: configuredEnv,
+    allowUnsafeEnvironmentVariables = false,
+  }: CliToolOptions,
   // deno-lint-ignore no-explicit-any
 ): Tool<any, string> {
   return new Tool({
     name: "cli",
-    description:
-      `Execute CLI commands non-interactively. Optionally provide environment variables as an env object with string values; PATH cannot be set per call. Allowed commands: ${
-        allowedCommands.join(", ")
-      }`,
+    description: `Execute CLI commands non-interactively. ${
+      allowUnsafeEnvironmentVariables
+        ? "Arbitrary per-call environment variables are enabled and must have string values."
+        : "Per-call environment variables are disabled."
+    } Allowed commands: ${allowedCommands.join(", ")}`,
     input: object({
       command: string(),
       args: array(string()),
@@ -52,12 +64,11 @@ export function cli(
       }
 
       const callEnv = env ?? {};
-      const pathVariable = Object.keys(callEnv).find((name) =>
-        name.toLowerCase() === "path"
-      );
-      if (pathVariable) {
+      if (
+        Object.keys(callEnv).length > 0 && !allowUnsafeEnvironmentVariables
+      ) {
         throw new Error(
-          `Environment variable "${pathVariable}" cannot be set per call because it controls executable resolution. Configure it through CliToolOptions.env instead.`,
+          "Per-call environment variables are disabled. Enable CliToolOptions.allowUnsafeEnvironmentVariables only when child processes run in an external OS sandbox.",
         );
       }
 

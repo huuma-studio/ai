@@ -59,9 +59,12 @@ Deno.test("cli - passes configured environment variables", async () => {
   assertEquals(result.trim(), "configured");
 });
 
-Deno.test("cli - passes per-call environment variables", async () => {
+Deno.test("cli - passes explicitly enabled per-call environment variables", async () => {
   const executable = Deno.execPath();
-  const cliTool = cli({ allowedCommands: [executable] });
+  const cliTool = cli({
+    allowedCommands: [executable],
+    allowUnsafeEnvironmentVariables: true,
+  });
 
   const result = await cliTool.call({
     command: executable,
@@ -72,22 +75,20 @@ Deno.test("cli - passes per-call environment variables", async () => {
   assertEquals(result.trim(), "agent");
 });
 
-Deno.test("cli - rejects per-call PATH overrides", async () => {
+Deno.test("cli - rejects per-call environment variables by default", async () => {
   const executable = Deno.execPath();
   const cliTool = cli({ allowedCommands: [executable] });
 
-  for (const name of ["PATH", "Path"]) {
-    await assertRejects(
-      () =>
-        cliTool.call({
-          command: executable,
-          args: ["--version"],
-          env: { [name]: "/tmp" },
-        }),
-      Error,
-      `Environment variable "${name}" cannot be set per call`,
-    );
-  }
+  await assertRejects(
+    () =>
+      cliTool.call({
+        command: executable,
+        args: ["--version"],
+        env: { LD_PRELOAD: "/tmp/payload.so" },
+      }),
+    Error,
+    "Per-call environment variables are disabled",
+  );
 });
 
 Deno.test("cli - rejects non-string environment values", async () => {
@@ -119,6 +120,7 @@ Deno.test("cli - configured environment overrides per-call values", async () => 
   const cliTool = cli({
     allowedCommands: [executable],
     env: { HUUMA_CLI_TEST: "configured" },
+    allowUnsafeEnvironmentVariables: true,
   });
 
   const result = await cliTool.call({

@@ -28,6 +28,8 @@ example, configure GitHub CLI like this:
 ```typescript
 const gh = cli({
   allowedCommands: ["gh"],
+  // Only enable when child processes run in an external OS sandbox.
+  allowUnsafeEnvironmentVariables: true,
   // Trusted configuration overrides same-named values supplied by the agent.
   env: { GIT_TERMINAL_PROMPT: "0" },
 });
@@ -42,13 +44,18 @@ await gh.call({
 });
 ```
 
-Agent-provided environment variables must have string values. Per-call `PATH`
-overrides are rejected because they could bypass the command allowlist; trusted
-configuration may set `PATH` through `CliToolOptions.env`. Set `GH_TOKEN` or
-`GITHUB_TOKEN` in the parent process when non-interactive authentication is
-needed; child commands inherit the parent environment. Keep secrets in the
-parent or trusted tool configuration rather than exposing them through
-model-generated tool calls.
+Per-call environment variables are disabled by default. Enabling
+`allowUnsafeEnvironmentVariables` permits arbitrary string-valued variables and
+means `allowedCommands` is no longer a security boundary: variables such as
+`PATH`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, and runtime-specific options can
+execute additional code. Only enable it when child processes are protected by
+an external OS sandbox. Trusted `CliToolOptions.env` values remain available
+without the unsafe opt-in and override same-named per-call values.
+
+Set `GH_TOKEN` or `GITHUB_TOKEN` in the parent process when non-interactive
+authentication is needed; child commands inherit the parent environment. Keep
+secrets in the parent or trusted tool configuration rather than exposing them
+through model-generated tool calls.
 
 The same agent can be backed by Mistral:
 
