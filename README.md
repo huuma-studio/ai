@@ -42,7 +42,9 @@ await gh.call({
 });
 ```
 
-Agent-provided environment variables must have string values. Set `GH_TOKEN` or
+Agent-provided environment variables must have string values. Per-call `PATH`
+overrides are rejected because they could bypass the command allowlist; trusted
+configuration may set `PATH` through `CliToolOptions.env`. Set `GH_TOKEN` or
 `GITHUB_TOKEN` in the parent process when non-interactive authentication is
 needed; child commands inherit the parent environment. Keep secrets in the
 parent or trusted tool configuration rather than exposing them through

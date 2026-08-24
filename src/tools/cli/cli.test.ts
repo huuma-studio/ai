@@ -72,6 +72,24 @@ Deno.test("cli - passes per-call environment variables", async () => {
   assertEquals(result.trim(), "agent");
 });
 
+Deno.test("cli - rejects per-call PATH overrides", async () => {
+  const executable = Deno.execPath();
+  const cliTool = cli({ allowedCommands: [executable] });
+
+  for (const name of ["PATH", "Path"]) {
+    await assertRejects(
+      () =>
+        cliTool.call({
+          command: executable,
+          args: ["--version"],
+          env: { [name]: "/tmp" },
+        }),
+      Error,
+      `Environment variable "${name}" cannot be set per call`,
+    );
+  }
+});
+
 Deno.test("cli - rejects non-string environment values", async () => {
   const executable = Deno.execPath();
   const cliTool = cli({ allowedCommands: [executable] });

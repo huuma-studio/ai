@@ -33,7 +33,7 @@ export function cli(
   return new Tool({
     name: "cli",
     description:
-      `Execute CLI commands non-interactively. Optionally provide environment variables as an env object with string values. Allowed commands: ${
+      `Execute CLI commands non-interactively. Optionally provide environment variables as an env object with string values; PATH cannot be set per call. Allowed commands: ${
         allowedCommands.join(", ")
       }`,
     input: object({
@@ -52,6 +52,15 @@ export function cli(
       }
 
       const callEnv = env ?? {};
+      const pathVariable = Object.keys(callEnv).find((name) =>
+        name.toLowerCase() === "path"
+      );
+      if (pathVariable) {
+        throw new Error(
+          `Environment variable "${pathVariable}" cannot be set per call because it controls executable resolution. Configure it through CliToolOptions.env instead.`,
+        );
+      }
+
       const cmd = new Deno.Command(command, {
         args,
         env: { ...callEnv, ...configuredEnv },
