@@ -70,6 +70,58 @@ const assistant = agent({
 });
 ```
 
+The same agent can be backed by Z.AI (GLM Coding Plan):
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { zai } from "jsr:@huuma/ai/models/zai";
+
+const assistant = agent({
+  model: zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") }),
+  modelId: "glm-5.3",
+  systemPrompt: "You are a concise TypeScript assistant.",
+});
+```
+
+The Z.AI adapter targets the **GLM Coding Plan** endpoint at
+`https://api.z.ai/api/coding/paas/v4/` by default. Supported model IDs are
+`glm-5.3`, `glm-5-turbo`, and `glm-4.7` (requests for GLM-5.2/GLM-5.1
+auto-route to GLM-5.3). The API is fully OpenAI Chat Completions-compatible,
+so the adapter wraps the OpenAI SDK with a pre-configured base URL.
+
+Z.AI-specific options — `thinking`, `reasoning_effort`, `do_sample`, and
+`tool_stream` — are passed through the `options` field:
+
+```typescript
+import { zai } from "jsr:@huuma/ai/models/zai";
+import { cli } from "jsr:@huuma/ai/tools";
+
+const model = zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") });
+
+// Generation with thinking controls
+const result = await model.generate({
+  modelId: "glm-4.7",
+  messages: [{ role: "user", contents: "Debug this function." }],
+  options: {
+    thinking: { type: "enabled", clear_thinking: false },
+    reasoning_effort: "max",
+  },
+});
+
+// Streaming with tools
+const stream = await model.stream({
+  modelId: "glm-5.3",
+  messages: [{ role: "user", contents: "List the files in this directory." }],
+  tools: [cli({ allowedCommands: ["ls"] })],
+  options: { reasoning_effort: "high" },
+});
+```
+
+Preserved Thinking is enabled by default on the Coding Plan endpoint. The
+adapter round-trips `reasoning_content` in assistant messages so that prior
+thinking state carries across tool-call iterations — sending incomplete or
+missing thinking blocks degrades model performance and cache hit rates.
+
 An agent can delegate tasks to another agent through the `subagent` tool. The
 sub-agent runs its own loop and only its final answer reaches the parent:
 
@@ -137,6 +189,7 @@ What each adapter supports:
 | --- | --- | --- | --- | --- |
 | Anthropic | ✓ (jpeg/png/gif/webp as base64) | ✓ | ✗ | ✓ image + PDF |
 | OpenAI | ✓ | ✓ (base64 only) | ✓ wav/mp3 (base64 only) | ✓ images only |
+| Z.AI | ✓ | ✓ (base64 only) | ✓ wav/mp3 (base64 only) | ✓ images only |
 | Google Gemini | ✓ | ✓ | ✓ (+ video) | ✓ |
 | Mistral | ✓ | ✓ (URL only) | ✓ | ✓ |
 | Ollama | ✓ (base64 only) | ✗ | ✗ | ✗ |
@@ -176,6 +229,7 @@ the model in a provider-dependent way:
 | Anthropic | native — content blocks inside `tool_result` |
 | Google Gemini | native — `FunctionResponse` parts |
 | OpenAI | synthetic user message after the tool messages |
+| Z.AI | synthetic user message after the tool messages |
 | Mistral | synthetic user message after the tool messages |
 | Ollama | synthetic user message (base64 images only) |
 
@@ -188,8 +242,8 @@ match the user-message table above; files are never silently dropped.
 
 - Shared message and content types in `@huuma/ai`.
 - A common `BaseModel` interface in `@huuma/ai/model`.
-- Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, and
-  Ollama in `@huuma/ai/models`.
+- Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, Ollama,
+  and Z.AI (GLM Coding Plan) in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
 - Tool factories for CLI execution, file operations, grep, website fetching, web
