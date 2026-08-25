@@ -40,12 +40,15 @@ export async function connect(
   // Collect stderr from stdio transports so connection failures can surface
   // the child process's actual error output (e.g. "npx: not found",
   // "Missing system library libnss3") instead of the opaque SDK message
-  // "MCP error -32000: Connection closed".
+  // "MCP error -32000: Connection closed". The listener is removed once the
+  // handshake succeeds so a long-lived child's recurring stderr does not
+  // accumulate unboundedly in memory.
   const stderrChunks: string[] = [];
+  const stderrListener = (chunk: Uint8Array) => {
+    stderrChunks.push(new TextDecoder().decode(chunk));
+  };
   if (transport instanceof StdioClientTransport && transport.stderr) {
-    transport.stderr.on("data", (chunk: Uint8Array) => {
-      stderrChunks.push(new TextDecoder().decode(chunk));
-    });
+    transport.stderr.on("data", stderrListener);
   }
 
   try {
@@ -69,6 +72,13 @@ export async function connect(
     }
     throw error;
   }
+
+  // Handshake succeeded — stop collecting stderr so a long-lived child's
+  // recurring diagnostics don't accumulate unboundedly in memory.
+  if (transport instanceof StdioClientTransport && transport.stderr) {
+    transport.stderr.removeListener("data", stderrListener);
+  }
+  stderrChunks.length = 0;
 
   // Best-effort version probe (spec 2026-07-28: server/discover).
   // The SDK exposes the negotiated version via getServerVersion() after
