@@ -147,16 +147,34 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
 }
 
 /**
+ * Options for {@link openAIMessagesFrom}.
+ */
+export interface OpenAIMessagesFromOptions {
+  /**
+   * When true, `reasoning_content` is round-tripped on assistant messages
+   * from the model message's `thinking` field, and thinking-only messages
+   * (no text content or tool calls) are included rather than skipped.
+   *
+   * OpenAI's API does not accept `reasoning_content` in assistant request
+   * messages, so this defaults to `false`. OpenAI-compatible providers that
+   * support Preserved Thinking (e.g. Z.AI) opt in.
+   */
+  preserveThinking?: boolean;
+}
+
+/**
  * Converts Huuma {@link Message}s into the format expected by the
  * OpenAI chat completions API.
  *
- * Note: `thinking` on model messages is intentionally **not**
- * round-tripped because OpenAI's API does not accept `reasoning_content`
- * (or similar) in assistant request messages.
+ * By default, `thinking` on model messages is **not** round-tripped because
+ * OpenAI's API does not accept `reasoning_content` in assistant request
+ * messages. Set `options.preserveThinking` to `true` for providers that
+ * support it.
  */
 export function openAIMessagesFrom(
   messages: Message[],
   system?: string,
+  options?: OpenAIMessagesFromOptions,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
 
@@ -191,9 +209,14 @@ export function openAIMessagesFrom(
         },
       }));
 
+      const preserveThinking = options?.preserveThinking;
+      const hasThinking = message.thinking !== undefined;
+
       // Skip fully empty assistant messages. OpenAI rejects a message
-      // with neither `content` nor `tool_calls`.
-      if (content === null && toolCalls.length === 0) {
+      // with neither `content` nor `tool_calls`. When `preserveThinking`
+      // is enabled, thinking-only messages are kept so the reasoning state
+      // carries across tool-call iterations.
+      if (content === null && toolCalls.length === 0 && !(preserveThinking && hasThinking)) {
         continue;
       }
 
@@ -206,6 +229,10 @@ export function openAIMessagesFrom(
       }
       if (toolCalls.length > 0) {
         assistantMessage.tool_calls = toolCalls;
+      }
+      if (preserveThinking && hasThinking) {
+        (assistantMessage as ReasoningExtension).reasoning_content =
+          message.thinking;
       }
       result.push(assistantMessage);
     } else if (message.role === "tool") {
