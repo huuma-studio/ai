@@ -40,12 +40,22 @@ export async function connect(
   // Collect stderr from stdio transports so connection failures can surface
   // the child process's actual error output (e.g. "npx: not found",
   // "Missing system library libnss3") instead of the opaque SDK message
-  // "MCP error -32000: Connection closed". The listener is removed once the
-  // handshake succeeds so a long-lived child's recurring stderr does not
-  // accumulate unboundedly in memory.
+  // "MCP error -32000: Connection closed". Capture is capped at a fixed byte
+  // limit so a child spamming stderr during a slow or failed handshake cannot
+  // cause unbounded memory growth or an arbitrarily large error message. The
+  // listener is removed once the handshake succeeds so a long-lived child's
+  // recurring stderr does not accumulate either.
+  const STDERR_CAPTURE_LIMIT = 4096;
   const stderrChunks: string[] = [];
+  let stderrCollectedBytes = 0;
+  let stderrTruncated = false;
   const stderrListener = (chunk: Uint8Array) => {
+    if (stderrCollectedBytes >= STDERR_CAPTURE_LIMIT) {
+      stderrTruncated = true;
+      return;
+    }
     stderrChunks.push(new TextDecoder().decode(chunk));
+    stderrCollectedBytes += chunk.byteLength;
   };
   if (transport instanceof StdioClientTransport && transport.stderr) {
     transport.stderr.on("data", stderrListener);
@@ -63,7 +73,10 @@ export async function connect(
     // Enhance the error with captured stderr to aid diagnosis. The child's
     // stderr often contains the real reason the process exited before the
     // MCP handshake (missing binary, missing library, network error, etc.).
-    const stderrText = stderrChunks.join("").trim();
+    let stderrText = stderrChunks.join("").trim();
+    if (stderrTruncated) {
+      stderrText += `\n[stderr truncated at ${STDERR_CAPTURE_LIMIT} bytes]`;
+    }
     if (stderrText) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`${message}\nChild stderr: ${stderrText}`, {
