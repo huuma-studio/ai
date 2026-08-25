@@ -30,6 +30,7 @@ import {
   streamCompletions,
   usageFrom,
   type OpenAIRequestOptions,
+  type ReasoningExtension,
 } from "../openai/mod.ts";
 
 /** Default base URL for the Z.AI Coding Plan endpoint. */
@@ -136,7 +137,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
     const response = await this.#client.chat.completions.create({
       ...options,
       model: modelId,
-      messages: openAIMessagesFrom(messages, system),
+      messages: zaiMessagesFrom(messages, system),
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: false,
     } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
@@ -169,7 +170,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
     const stream = await this.#client.chat.completions.create({
       ...options,
       model: modelId,
-      messages: openAIMessagesFrom(messages, system),
+      messages: zaiMessagesFrom(messages, system),
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: true,
       stream_options: { include_usage: true },
@@ -177,6 +178,63 @@ export class ZAIModel implements BaseModel<ZAIModels> {
 
     return streamCompletions(stream, modelId);
   }
+}
+
+/**
+ * Converts Huuma {@link Message}s into the format expected by the Z.AI
+ * chat completions API.
+ *
+ * Delegates to {@link openAIMessagesFrom} for all message roles, then
+ * post-processes assistant messages to include `reasoning_content` from
+ * the model message's `thinking` field. Z.AI's Coding Plan endpoint
+ * accepts and expects `reasoning_content` in assistant messages for
+ * Preserved Thinking (enabled by default); sending incomplete or missing
+ * thinking blocks degrades model performance and cache hit rates.
+ *
+ * Assistant messages without a `thinking` field are left untouched — no
+ * null or empty `reasoning_content` is sent.
+ */
+export function zaiMessagesFrom(
+  messages: Message[],
+  system?: string,
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const result = openAIMessagesFrom(messages, system);
+
+  // Walk through model messages and their corresponding assistant messages
+  // in the result in parallel. Non-empty model messages each produce one
+  // assistant message; empty ones are skipped by openAIMessagesFrom.
+  let assistantIdx = 0;
+
+  for (const message of messages) {
+    if (message.role !== "model") continue;
+
+    const hasContent = message.contents.some((c) => "text" in c);
+    const hasToolCalls = message.toolCalls.length > 0 ||
+      message.contents.some((c) => "toolCall" in c);
+
+    // Skip empty model messages (not present in the result).
+    if (!hasContent && !hasToolCalls) continue;
+
+    // Advance to the next assistant message, skipping any interleaved
+    // system/user/tool messages produced by other message roles.
+    while (
+      assistantIdx < result.length &&
+      result[assistantIdx].role !== "assistant"
+    ) {
+      assistantIdx++;
+    }
+
+    if (assistantIdx < result.length && message.thinking) {
+      // Attach reasoning_content via the same type-assertion pattern used
+      // by the OpenAI adapter's response parsing. The value is the exact,
+      // unmodified thinking text from the prior model response.
+      (result[assistantIdx] as ReasoningExtension).reasoning_content =
+        message.thinking;
+    }
+    assistantIdx++;
+  }
+
+  return result;
 }
 
 /**
