@@ -35,14 +35,38 @@ export async function connect(
   // Sent to every server in the initialize handshake; sourced from
   // deno.json so version bumps can't leave it behind.
   const client = new Client({ name: denoJson.name, version: denoJson.version });
+  const transport = transportFrom(options);
+
+  // Collect stderr from stdio transports so connection failures can surface
+  // the child process's actual error output (e.g. "npx: not found",
+  // "Missing system library libnss3") instead of the opaque SDK message
+  // "MCP error -32000: Connection closed".
+  const stderrChunks: string[] = [];
+  if (transport instanceof StdioClientTransport && transport.stderr) {
+    transport.stderr.on("data", (chunk: Uint8Array) => {
+      stderrChunks.push(new TextDecoder().decode(chunk));
+    });
+  }
+
   try {
-    await client.connect(transportFrom(options));
+    await client.connect(transport);
   } catch (error) {
     // A stdio transport may have already spawned the child process when the
     // MCP handshake fails; close so it doesn't outlive the rejected connect.
     // SDK v1 fires an unawaited close() itself on init failure, but that is
     // an implementation detail this seam must not depend on (ADR 0002).
     await client.close().catch(() => {});
+
+    // Enhance the error with captured stderr to aid diagnosis. The child's
+    // stderr often contains the real reason the process exited before the
+    // MCP handshake (missing binary, missing library, network error, etc.).
+    const stderrText = stderrChunks.join("").trim();
+    if (stderrText) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message}\nChild stderr: ${stderrText}`, {
+        cause: error,
+      });
+    }
     throw error;
   }
 
@@ -116,7 +140,11 @@ export async function connect(
 function transportFrom(options: McpTransportOptions): Transport {
   if ("command" in options) {
     const { command, args, env, cwd } = options;
-    return new StdioClientTransport({ command, args, env, cwd });
+    // stderr: "pipe" creates a PassThrough stream accessible via
+    // transport.stderr, so connect() can capture and surface the child's
+    // error output when the MCP handshake fails. Without this, stderr
+    // defaults to "inherit" and the actual error is silently lost.
+    return new StdioClientTransport({ command, args, env, cwd, stderr: "pipe" });
   }
 
   if ("url" in options) {
