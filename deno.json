@@ -14,6 +14,7 @@
     "./models/ollama": "./models/ollama/mod.ts",
     "./models/openai": "./models/openai/mod.ts",
     "./models/mistral": "./models/mistral/mod.ts",
+    "./models/zai": "./models/zai/mod.ts",
     "./agent": "./src/agent/mod.ts",
     "./tools": "./src/tools/mod.ts"
   },

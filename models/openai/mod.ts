@@ -28,7 +28,7 @@ import type { Tool } from "@/tools/mod.ts";
 import type { JSONSchema } from "@huuma/validate";
 
 /** Vendor extension used by reasoning-capable OpenAI-compatible providers. */
-interface ReasoningExtension {
+export interface ReasoningExtension {
   reasoning_content?: string | null;
 }
 
@@ -237,7 +237,7 @@ export function openAIMessagesFrom(
   return result;
 }
 
-function modelMessageFrom(
+export function modelMessageFrom(
   message: OpenAI.Chat.ChatCompletionMessage,
 ): ModelMessage {
   const result: ModelMessage = {
@@ -280,7 +280,7 @@ function modelMessageFrom(
   return result;
 }
 
-interface PendingToolCall {
+export interface PendingToolCall {
   id: string;
   name: string;
   argumentsJSON: string;
@@ -290,10 +290,10 @@ interface PendingToolCall {
 // complete, instead of re-parsing partial JSON on every delta. A pending
 // call is complete when a fragment for a higher index arrives, when the
 // choice reports a finish reason, or when the stream ends.
-async function* streamCompletions(
+export async function* streamCompletions<T extends string>(
   stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-  modelId: OpenAIModels,
-): AsyncGenerator<ModelResult<OpenAIModels>> {
+  modelId: T,
+): AsyncGenerator<ModelResult<T>> {
   const pendingToolCalls: Record<number, PendingToolCall> = {};
   let usage: ModelUsage | undefined;
 
@@ -349,7 +349,7 @@ async function* streamCompletions(
 }
 
 /** Maps OpenAI completion usage to the normalized {@link ModelUsage}. */
-function usageFrom(
+export function usageFrom(
   usage: OpenAI.CompletionUsage | null | undefined,
 ): ModelUsage | undefined {
   if (!usage) {
@@ -375,11 +375,11 @@ function usageFrom(
   return result;
 }
 
-function* flushPendingToolCalls(
+export function* flushPendingToolCalls<T extends string>(
   pendingToolCalls: Record<number, PendingToolCall>,
-  modelId: OpenAIModels,
+  modelId: T,
   beforeIndex = Infinity,
-): Generator<ModelResult<OpenAIModels>> {
+): Generator<ModelResult<T>> {
   const indexes = Object.keys(pendingToolCalls)
     .map(Number)
     .filter((index) => index < beforeIndex)
@@ -405,7 +405,7 @@ function* flushPendingToolCalls(
   }
 }
 
-function modelMessageFromDelta(
+export function modelMessageFromDelta(
   delta: OpenAI.Chat.ChatCompletionChunk.Choice.Delta,
 ): ModelMessage {
   const message: ModelMessage = {
@@ -430,7 +430,7 @@ function modelMessageFromDelta(
   return message;
 }
 
-function isPopulatedModelMessage(message: ModelMessage): boolean {
+export function isPopulatedModelMessage(message: ModelMessage): boolean {
   return message.contents.length > 0 || message.thinking !== undefined ||
     message.toolCalls.length > 0;
 }
