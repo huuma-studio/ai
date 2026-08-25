@@ -28,7 +28,7 @@ export function search(
   return new Tool({
     name: "search",
     description:
-      "Search for information on the internet using Perplexity or Brave Search. Provide a query string.",
+      "Search for information on the internet using Perplexity, Brave Search, or Ollama. Provide a query string.",
     input: object({
       query: string(),
       count: number().optional(),
