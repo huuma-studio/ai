@@ -26,32 +26,48 @@ export interface EditFileResult {
 }
 
 /**
- * Per-path locks for read-modify-write edits.
+ * Per-file locks for read-modify-write edits.
  *
  * Batched tool calls run concurrently (callTool settles every call in a batch
  * via Promise.allSettled), so two same-file edits previously raced on
  * unsynchronized read/modify/write cycles: one edit was silently lost, and
  * interleaved open/truncate/write ordering could even leave stale bytes
- * appended after a shorter later write. Locking on the file's real path makes
- * each operation resolve against the current on-disk content. Files missing
- * on disk (edits that fail with "File not found" anyway) fall back to the
- * given path as the lock key.
+ * appended after a shorter later write. Locking on the file's identity
+ * (device + inode) makes every operation resolve against the current on-disk
+ * content and keeps path aliases — symlinks and hard links to the same file —
+ * on one lock. Where file identity is unavailable (missing file, or a
+ * filesystem without inode info) the key falls back to the real path, then to
+ * the given path; such edits fail with "File not found" anyway. The lock
+ * serializes within this process only; writers in other processes are not
+ * synchronized.
  */
-const pathLocks = new Map<string, Promise<unknown>>();
+const fileLocks = new Map<string, Promise<unknown>>();
 
-async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
-  let key = path;
+/** Resolve a lock key that identifies the underlying file, not the path. */
+async function lockKeyFor(path: string): Promise<string> {
   try {
-    key = await Deno.realPath(path);
+    const info = await Deno.stat(path);
+    if (info.dev !== null && info.ino !== null && info.ino !== 0) {
+      return `file:${info.dev}:${info.ino}`;
+    }
   } catch {
     // Missing file: the edit fails below with a clear error regardless.
   }
-  const previous = pathLocks.get(key) ?? Promise.resolve();
+  try {
+    return `path:${await Deno.realPath(path)}`;
+  } catch {
+    return `path:${path}`;
+  }
+}
+
+async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const key = await lockKeyFor(path);
+  const previous = fileLocks.get(key) ?? Promise.resolve();
   const run = previous.catch(() => {}).then(fn);
   const tracked = run.catch(() => {}).finally(() => {
-    if (pathLocks.get(key) === tracked) pathLocks.delete(key);
+    if (fileLocks.get(key) === tracked) fileLocks.delete(key);
   });
-  pathLocks.set(key, tracked);
+  fileLocks.set(key, tracked);
   return run;
 }
 
@@ -94,7 +110,7 @@ export function editFile(): Tool<any, EditFileResult> {
           `Unknown operation "${props.operation}". Must be one of: search_replace, insert_lines, delete_lines.`,
         );
       }
-      return withPathLock(props.path, async () => {
+      return withFileLock(props.path, async () => {
         try {
           // Read the current file content while holding the path lock so the
           // operation always resolves against up-to-date on-disk state.

@@ -491,6 +491,37 @@ Deno.test("editFile - same-batch same-file edits apply sequentially", async (t) 
     },
   );
 
+  await t.step(
+    "edits through hard-linked names of one file still serialize",
+    async () => {
+      const testFile = `${testDir}/hard-link-target.txt`;
+      await Deno.writeTextFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
+      const aliasFile = `${testDir}/hard-link-alias.txt`;
+      await Deno.link(testFile, aliasFile);
+
+      // One edit per alias of the same underlying file, issued concurrently:
+      // both must land instead of racing on separate (per-path) locks.
+      await Promise.all([
+        tool.call({
+          path: testFile,
+          operation: "search_replace",
+          search: "alpha",
+          replace: "ALPHA",
+        }),
+        tool.call({
+          path: aliasFile,
+          operation: "search_replace",
+          search: "beta",
+          replace: "BETA",
+        }),
+      ]);
+
+      const content = await Deno.readTextFile(testFile);
+      assertEquals(content, "ALPHA\nBETA\nTAIL-MARKER-OK");
+      assertEquals(await Deno.readTextFile(aliasFile), content);
+    },
+  );
+
   await Deno.remove(testDir, { recursive: true });
 });
 
