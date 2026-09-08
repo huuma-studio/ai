@@ -1,6 +1,5 @@
 import { number, object, string } from "@huuma/validate";
 import { type Tool, tool } from "../mod.ts";
-import { EOL } from "@std/fs";
 
 /**
  * Input schema for the edit_file tool.
@@ -26,7 +25,40 @@ export interface EditFileResult {
   message: string;
 }
 
+/**
+ * Per-path locks for read-modify-write edits.
+ *
+ * Batched tool calls run concurrently (callTool settles every call in a batch
+ * via Promise.allSettled), so two same-file edits previously raced on
+ * unsynchronized read/modify/write cycles: one edit was silently lost, and
+ * interleaved open/truncate/write ordering could even leave stale bytes
+ * appended after a shorter later write. Locking on the file's real path makes
+ * each operation resolve against the current on-disk content. Files missing
+ * on disk (edits that fail with "File not found" anyway) fall back to the
+ * given path as the lock key.
+ */
+const pathLocks = new Map<string, Promise<unknown>>();
+
+async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  let key = path;
+  try {
+    key = await Deno.realPath(path);
+  } catch {
+    // Missing file: the edit fails below with a clear error regardless.
+  }
+  const previous = pathLocks.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => {}).then(fn);
+  const tracked = run.catch(() => {}).finally(() => {
+    if (pathLocks.get(key) === tracked) pathLocks.delete(key);
+  });
+  pathLocks.set(key, tracked);
+  return run;
+}
+
 /** Create a tool that performs targeted file edits (search/replace, insert, delete).
+ *
+ * Same-file edits are serialized per path, so several operations issued
+ * against one file in a single batch all land instead of racing.
  *
  * @returns A {@link Tool} that edits files in place and returns an {@link EditFileResult}.
  */
@@ -50,7 +82,7 @@ export function editFile(): Tool<any, EditFileResult> {
       lineStart: number().optional(),
       lineEnd: number().optional(),
     }),
-    fn: async (
+    fn: (
       props,
     ) => {
       if (
@@ -62,148 +94,173 @@ export function editFile(): Tool<any, EditFileResult> {
           `Unknown operation "${props.operation}". Must be one of: search_replace, insert_lines, delete_lines.`,
         );
       }
-      try {
-        // Read the current file content
-        let fileContent = await Deno.readTextFile(props.path);
-        const lines = fileContent.split(EOL);
+      return withPathLock(props.path, async () => {
+        try {
+          // Read the current file content while holding the path lock so the
+          // operation always resolves against up-to-date on-disk state.
+          const fileContent = await Deno.readTextFile(props.path);
 
-        switch (props.operation) {
-          case "search_replace": {
-            const search = props.search;
-            const replace = props.replace;
-            if (search === undefined || replace === undefined) {
-              throw new Error(
-                'search_replace requires both "search" and "replace" fields.',
+          switch (props.operation) {
+            case "search_replace": {
+              const search = props.search;
+              const replace = props.replace;
+              if (search === undefined || replace === undefined) {
+                throw new Error(
+                  'search_replace requires both "search" and "replace" fields.',
+                );
+              }
+
+              // Count occurrences to ensure uniqueness
+              const occurrences = countOccurrences(fileContent, search);
+
+              if (occurrences === 0) {
+                throw new Error(
+                  `Text not found in file: "${
+                    truncate(search, 50)
+                  }". Make sure the search text matches exactly including whitespace.`,
+                );
+              }
+
+              if (occurrences > 1) {
+                throw new Error(
+                  `Found ${occurrences} occurrences of the search text. The search text must be unique to avoid unintended replacements. Please include more context to make it unique.`,
+                );
+              }
+
+              // Perform the replacement with raw string operations; the line
+              // handling below is only needed for insert/delete, so no line
+              // array is allocated here.
+              await Deno.writeTextFile(
+                props.path,
+                fileContent.replace(search, replace),
               );
+
+              return {
+                success: true,
+                path: props.path,
+                operation: props.operation,
+                message: `Successfully replaced text in ${props.path}`,
+              };
             }
 
-            // Count occurrences to ensure uniqueness
-            const occurrences = countOccurrences(fileContent, search);
+            case "insert_lines": {
+              const content = props.content;
+              const line = props.line;
+              if (content === undefined || line === undefined) {
+                throw new Error(
+                  'insert_lines requires both "content" and "line" fields.',
+                );
+              }
 
-            if (occurrences === 0) {
-              throw new Error(
-                `Text not found in file: "${
-                  truncate(search, 50)
-                }". Make sure the search text matches exactly including whitespace.`,
-              );
+              if (line < 1) {
+                throw new Error("line must be 1 or greater");
+              }
+
+              const { lines, eol } = splitLines(fileContent);
+
+              if (line > lines.length + 1) {
+                throw new Error(
+                  `line ${line} is beyond end of file (file has ${lines.length} lines). Use line ${
+                    lines.length + 1
+                  } to append at end.`,
+                );
+              }
+
+              // Insert content at the specified line (1-indexed)
+              // line=1 means insert at beginning, line=lines.length+1 means append at end
+              const insertIndex = line - 1;
+
+              // Strip a single trailing line break so content lines line up
+              // with read_file numbering; tolerate CRLF and LF content.
+              const contentLines = content.replace(/\r?\n$/, "").split(/\r?\n/);
+
+              // Assemble via slices instead of spreading into splice(): the
+              // spread form hits V8's ~65k argument limit on large inserts.
+              const updated = [
+                ...lines.slice(0, insertIndex),
+                ...contentLines,
+                ...lines.slice(insertIndex),
+              ];
+
+              await Deno.writeTextFile(props.path, updated.join(eol));
+
+              return {
+                success: true,
+                path: props.path,
+                operation: props.operation,
+                message:
+                  `Successfully inserted content at line ${line} in ${props.path}`,
+              };
             }
 
-            if (occurrences > 1) {
-              throw new Error(
-                `Found ${occurrences} occurrences of the search text. The search text must be unique to avoid unintended replacements. Please include more context to make it unique.`,
-              );
+            case "delete_lines": {
+              const start = props.lineStart;
+              if (start === undefined) {
+                throw new Error('delete_lines requires "lineStart" field.');
+              }
+              const end = props.lineEnd ?? start;
+
+              if (start < 1) {
+                throw new Error("line numbers must be 1 or greater");
+              }
+              if (end < start) {
+                throw new Error(
+                  "lineEnd must be greater than or equal to lineStart",
+                );
+              }
+
+              const { lines, eol } = splitLines(fileContent);
+
+              if (start > lines.length) {
+                throw new Error(
+                  `start line ${start} is beyond end of file (file has ${lines.length} lines)`,
+                );
+              }
+              if (end > lines.length) {
+                throw new Error(
+                  `end line ${end} is beyond end of file (file has ${lines.length} lines)`,
+                );
+              }
+
+              // Delete lines (1-indexed, inclusive range)
+              const deleteStart = start - 1;
+              const deleteCount = end - start + 1;
+              lines.splice(deleteStart, deleteCount);
+
+              await Deno.writeTextFile(props.path, lines.join(eol));
+
+              return {
+                success: true,
+                path: props.path,
+                operation: props.operation,
+                message:
+                  `Successfully deleted ${deleteCount} line(s) (${start}-${end}) from ${props.path}`,
+              };
             }
 
-            // Perform the replacement
-            fileContent = fileContent.replace(search, replace);
-            await Deno.writeTextFile(props.path, fileContent);
-
-            return {
-              success: true,
-              path: props.path,
-              operation: props.operation,
-              message: `Successfully replaced text in ${props.path}`,
-            };
+            default:
+              // Unreachable: the operation is validated before the lock is
+              // taken, but the explicit throw keeps this callback's return
+              // type from including undefined.
+              throw new Error(
+                `Unknown operation "${props.operation}". Must be one of: search_replace, insert_lines, delete_lines.`,
+              );
           }
-
-          case "insert_lines": {
-            const content = props.content;
-            const line = props.line;
-            if (content === undefined || line === undefined) {
-              throw new Error(
-                'insert_lines requires both "content" and "line" fields.',
-              );
-            }
-
-            if (line < 1) {
-              throw new Error("line must be 1 or greater");
-            }
-            if (line > lines.length + 1) {
-              throw new Error(
-                `line ${line} is beyond end of file (file has ${lines.length} lines). Use line ${
-                  lines.length + 1
-                } to append at end.`,
-              );
-            }
-
-            // Insert content at the specified line (1-indexed)
-            // line=1 means insert at beginning, line=lines.length+1 means append at end
-            const insertIndex = line - 1;
-
-            // Handle multi-line content
-            const contentLines = content.endsWith(EOL)
-              ? content.slice(0, -1).split(EOL)
-              : content.split(EOL);
-
-            lines.splice(insertIndex, 0, ...contentLines);
-
-            await Deno.writeTextFile(props.path, lines.join(EOL));
-
-            return {
-              success: true,
-              path: props.path,
-              operation: props.operation,
-              message:
-                `Successfully inserted content at line ${line} in ${props.path}`,
-            };
+        } catch (error) {
+          if (error instanceof Deno.errors.NotFound) {
+            throw new Error(`File not found: ${props.path}`);
           }
-
-          case "delete_lines": {
-            const start = props.lineStart;
-            if (start === undefined) {
-              throw new Error('delete_lines requires "lineStart" field.');
-            }
-            const end = props.lineEnd ?? start;
-
-            if (start < 1) {
-              throw new Error("line numbers must be 1 or greater");
-            }
-            if (end < start) {
-              throw new Error(
-                "lineEnd must be greater than or equal to lineStart",
-              );
-            }
-            if (start > lines.length) {
-              throw new Error(
-                `start line ${start} is beyond end of file (file has ${lines.length} lines)`,
-              );
-            }
-            if (end > lines.length) {
-              throw new Error(
-                `end line ${end} is beyond end of file (file has ${lines.length} lines)`,
-              );
-            }
-
-            // Delete lines (1-indexed, inclusive range)
-            const deleteStart = start - 1;
-            const deleteCount = end - start + 1;
-            lines.splice(deleteStart, deleteCount);
-
-            await Deno.writeTextFile(props.path, lines.join(EOL));
-
-            return {
-              success: true,
-              path: props.path,
-              operation: props.operation,
-              message:
-                `Successfully deleted ${deleteCount} line(s) (${start}-${end}) from ${props.path}`,
-            };
+          if (error instanceof Deno.errors.PermissionDenied) {
+            throw new Error(
+              `Permission denied: ${props.path}. Make sure to run with --allow-read and --allow-write.`,
+            );
           }
+          if (error instanceof Deno.errors.IsADirectory) {
+            throw new Error(`Path is a directory, not a file: ${props.path}`);
+          }
+          throw error;
         }
-      } catch (error) {
-        if (error instanceof Deno.errors.NotFound) {
-          throw new Error(`File not found: ${props.path}`);
-        }
-        if (error instanceof Deno.errors.PermissionDenied) {
-          throw new Error(
-            `Permission denied: ${props.path}. Make sure to run with --allow-read and --allow-write.`,
-          );
-        }
-        if (error instanceof Deno.errors.IsADirectory) {
-          throw new Error(`Path is a directory, not a file: ${props.path}`);
-        }
-        throw error;
-      }
+      });
     },
   });
 }
@@ -220,6 +277,22 @@ function countOccurrences(text: string, search: string): number {
     pos += search.length;
   }
   return count;
+}
+
+/**
+ * Split file content into lines tolerating both LF and CRLF endings, and
+ * report the file's dominant line ending so writes preserve it. Splitting on
+ * the platform EOL constant mangled files using the "other" ending: on Linux
+ * a CRLF file parsed with stray carriage returns in every line, and on
+ * Windows an LF file parsed as one giant line.
+ */
+function splitLines(fileContent: string): { lines: string[]; eol: string } {
+  const crlf = countOccurrences(fileContent, "\r\n");
+  const loneLf = countOccurrences(fileContent, "\n") - crlf;
+  return {
+    lines: fileContent.split(/\r?\n/),
+    eol: crlf > loneLf ? "\r\n" : "\n",
+  };
 }
 
 /**
