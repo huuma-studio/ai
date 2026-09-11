@@ -333,3 +333,5 @@ Some bundled tools require Deno permissions when called, such as `--allow-read`,
 the tool and provider configuration. MCP transports: stdio needs
 `--allow-run --allow-read --allow-env`; Streamable HTTP needs `--allow-net`.
 The `skills` factory needs `--allow-read` for the skills directory.
+The `image` factory needs `--allow-read` for the image files the model
+requests.

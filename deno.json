@@ -48,6 +48,7 @@
     "zod": "npm:zod@^3.25",
     "@mistralai/mistralai": "npm:@mistralai/mistralai@^2.5.0",
     "@std/fs": "jsr:@std/fs@^1.0.24",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0",
     "ollama": "npm:ollama@^0.6.3",
     "@huuma/validate": "jsr:@huuma/validate@^0.2.1",
     "@std/front-matter": "jsr:@std/front-matter@^1.0.9",

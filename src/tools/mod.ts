@@ -79,6 +79,8 @@ export {
   writeFile,
 } from "@/tools/file/file.ts";
 
+export { image, type ImageToolOptions } from "@/tools/image/image.ts";
+
 export { fetchWebsite } from "@/tools/browser/browser.ts";
 
 export { search } from "@/tools/search/search.ts";
