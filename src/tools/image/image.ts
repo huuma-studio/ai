@@ -111,8 +111,9 @@ export function image(
         );
       }
 
-      // The read itself is also bounded and abortable in case the file
-      // grew or was swapped between stat and read.
+      // readBounded re-validates the opened handle itself, closing the
+      // race where the path is swapped for a special file between stat
+      // and open, and caps the read at maxBytes.
       const bytes = await readBounded(path, maxBytes, context.signal);
 
       const mimeType = sniffImageMime(bytes);
@@ -145,12 +146,13 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
 }
 
-/** Read at most `maxBytes` bytes from a stat-verified regular file.
+/** Read at most `maxBytes` bytes from a regular file.
  *
- * `stat` already capped the size, but the file may have grown or been
- * swapped between stat and read, so the read stops as soon as the limit
- * is exceeded — memory stays capped no matter what the path resolves to
- * at open time.
+ * The path is stat-verified before opening, but the path can be
+ * replaced between stat and open — so the opened handle is re-validated
+ * through `file.stat()` and every read below runs against the verified
+ * handle, immune to further path replacement. Reading stops as soon as
+ * the limit is exceeded, and the abort signal is checked between reads.
  */
 async function readBounded(
   path: string,
@@ -165,6 +167,22 @@ async function readBounded(
   }
 
   try {
+    // Validate the handle, not the path: this is the inode the reads
+    // below actually touch, so a special file swapped into the path
+    // between stat and open cannot get past the checks.
+    const info = await file.stat();
+    if (info.isDirectory) {
+      throw new Error(`Path is a directory, not a file: ${path}`);
+    }
+    if (!info.isFile) {
+      throw new Error(`Path is not a regular file: ${path}`);
+    }
+    if (info.size > maxBytes) {
+      throw new Error(
+        `Image too large: ${path} is ${info.size} bytes, which exceeds the ${maxBytes} byte limit.`,
+      );
+    }
+
     const chunks: Uint8Array[] = [];
     let total = 0;
     const buffer = new Uint8Array(64 * 1024);
