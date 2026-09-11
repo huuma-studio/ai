@@ -34,7 +34,11 @@
  *
  * @module
  */
-import { type Schema, ValidationException } from "@huuma/validate";
+import {
+  type JSONSchema,
+  type Schema,
+  ValidationException,
+} from "@huuma/validate";
 export type { JSONSchema, Schema } from "@huuma/validate";
 import type { FileContent, Message, ToolResultContent } from "@huuma/ai";
 
@@ -109,6 +113,7 @@ export class Tool<T extends Schema<any>, R = unknown> {
   #input: T;
   #fn: (props: T["infer"], context: ToolContext) => (Promise<R>) | R;
   #timeout?: number;
+  #jsonSchema?: JSONSchema;
 
   /** Tool name exposed to models. */
   get name(): string {
@@ -128,6 +133,19 @@ export class Tool<T extends Schema<any>, R = unknown> {
   /** Configured maximum duration of each call in milliseconds. */
   get timeout(): number | undefined {
     return this.#timeout;
+  }
+
+  /**
+   * Cached JSON Schema of the tool's input.
+   *
+   * Computed once on first access from `input.jsonSchema()` and frozen:
+   * model adapters share the cached document across repeated generate and
+   * stream calls, so mutating it would poison every subsequent request.
+   * Tools with dynamic schemas must create new Tool instances instead of
+   * relying on later mutations of a shared schema.
+   */
+  get jsonSchema(): JSONSchema {
+    return this.#jsonSchema ??= deepFreeze(this.#input.jsonSchema());
   }
 
   /** Create a tool instance. */
@@ -186,6 +204,24 @@ export class Tool<T extends Schema<any>, R = unknown> {
     });
     return await Promise.race([execution, aborted]);
   }
+}
+
+/**
+ * Freezes a JSON Schema document deeply so consumers cannot poison the
+ * shared cached schema. The visited set keeps cyclic schemas safe.
+ */
+function deepFreeze(schema: JSONSchema): JSONSchema {
+  const visited = new Set<unknown>();
+  const freeze = (node: unknown): void => {
+    if (typeof node !== "object" || node === null || visited.has(node)) {
+      return;
+    }
+    visited.add(node);
+    Object.freeze(node);
+    for (const value of Object.values(node)) freeze(value);
+  };
+  freeze(schema);
+  return schema;
 }
 
 function shortestTimeout(

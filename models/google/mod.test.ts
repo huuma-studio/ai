@@ -5,8 +5,11 @@ import {
   FinishReason,
   type GenerateContentResponse,
 } from "@google/genai";
+import { object, string } from "@huuma/validate";
+import { tool } from "@/tools/mod.ts";
 import {
   genAIContentsFrom,
+  googleToolsFrom,
   googleUsageFrom,
   modelMessagesFrom,
 } from "./mod.ts";
@@ -17,6 +20,49 @@ function responseFrom(
 ): GenerateContentResponse {
   return partial as GenerateContentResponse;
 }
+
+Deno.test("googleToolsFrom converts tools to function declarations", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  assertEquals(googleToolsFrom([testTool]) as unknown, [{
+    functionDeclarations: [{
+      name: "test_tool",
+      description: "A test tool",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    }],
+  }]);
+});
+
+Deno.test("googleToolsFrom reuses the tool's cached JSON Schema", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  const [first] = googleToolsFrom([testTool]);
+  const [second] = googleToolsFrom([testTool]);
+  // Gemini's Tool type is a union; the function-declaration branch carries
+  // the parameters schema.
+  const firstParameters =
+    (first as { functionDeclarations?: [{ parameters?: object }] })
+      .functionDeclarations?.[0]?.parameters;
+  const secondParameters =
+    (second as { functionDeclarations?: [{ parameters?: object }] })
+      .functionDeclarations?.[0]?.parameters;
+  assertEquals(firstParameters === secondParameters, true);
+  assertEquals(firstParameters === (testTool.jsonSchema as object), true);
+});
 
 Deno.test("genAIContentsFrom maps user and model roles through", () => {
   const messages: Message[] = [

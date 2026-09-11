@@ -111,11 +111,18 @@ export interface MistralGenerateOptions {
   options?: MistralRequestOptions;
 }
 
-/** Minimal tool shape accepted by the adapter. */
+/**
+ * Minimal tool shape accepted by the adapter.
+ *
+ * `jsonSchema` is the cached JSON Schema accessor present on Tool
+ * instances; structural tools without it fall back to converting `input`
+ * on every call.
+ */
 type ToolLike = {
   name: string;
   description: string;
   input: Schema<unknown>;
+  jsonSchema?: JSONSchema;
 };
 
 /**
@@ -313,7 +320,10 @@ export function mistralToolsFrom(
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.input.jsonSchema() as Record<string, unknown>,
+      parameters: (tool.jsonSchema ?? tool.input.jsonSchema()) as Record<
+        string,
+        unknown
+      >,
     },
   }));
 }

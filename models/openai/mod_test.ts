@@ -1,7 +1,7 @@
 import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
 import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
-import { string } from "@huuma/validate";
+import { object, type Schema, string } from "@huuma/validate";
 import {
   openai,
   openAIMessagesFrom,
@@ -26,6 +26,138 @@ Deno.test("openAIToolsFrom converts tools correctly", () => {
   assertEquals((openAITools[0] as any).function.description, "A test tool");
   // deno-lint-ignore no-explicit-any
   assertEquals((openAITools[0] as any).function.parameters, { type: "string" });
+});
+
+Deno.test("openAIToolsFrom reuses the tool's cached JSON Schema", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  const [first] = openAIToolsFrom([testTool]);
+  const [second] = openAIToolsFrom([testTool]);
+  // deno-lint-ignore no-explicit-any
+  const firstFunction = (first as any).function as { parameters?: object };
+  // deno-lint-ignore no-explicit-any
+  const secondFunction = (second as any).function as { parameters?: object };
+  assertEquals(
+    firstFunction.parameters === secondFunction.parameters,
+    true,
+  );
+  assertEquals(
+    firstFunction.parameters === (testTool.jsonSchema as object),
+    true,
+  );
+});
+
+Deno.test("OpenAIModel converts a tool's schema once across repeated generate and stream calls", async () => {
+  const wrapped = object({ query: string() });
+  let conversions = 0;
+  const counting: Schema<unknown> & { conversions: number } = {
+    infer: undefined,
+    validate: (value, key) => wrapped.validate(value, key),
+    jsonSchema() {
+      conversions += 1;
+      return wrapped.jsonSchema();
+    },
+    isRequired: () => wrapped.isRequired(),
+    get conversions() {
+      return conversions;
+    },
+  };
+  const counted = tool({
+    name: "counted",
+    description: "Counts schema conversions.",
+    input: counting,
+    fn: () => "result",
+  });
+
+  const bodies: Record<string, unknown>[] = [];
+  const model = new OpenAIModel({
+    apiKey: "test-key",
+    fetch: (requestInput: string | URL | Request, init) => {
+      const url = typeof requestInput === "string"
+        ? requestInput
+        : requestInput instanceof URL
+        ? requestInput.toString()
+        : requestInput.url;
+      if (!url.includes("/v1/chat/completions")) {
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }
+
+      const body = JSON.parse(
+        (init as { body?: string })?.body ?? "{}",
+      ) as Record<string, unknown>;
+      bodies.push(body);
+
+      if (body.stream === true) {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n',
+              ),
+            );
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        );
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: "chatcmpl-123",
+            choices: [{
+              index: 0,
+              message: { role: "assistant", content: "Hello" },
+              finish_reason: "stop",
+            }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    },
+  });
+
+  const messages: Message[] = [{ role: "user", contents: "Hi" }];
+  await model.generate({ modelId: "gpt-4o", messages, tools: [counted] });
+  await model.generate({ modelId: "gpt-4o", messages, tools: [counted] });
+  const stream = await model.stream({
+    modelId: "gpt-4o",
+    messages,
+    tools: [counted],
+  });
+  for await (const _ of stream) {
+    // drain
+  }
+
+  assertEquals(counting.conversions, 1);
+  assertEquals(bodies.length, 3);
+  const expectedTools = [{
+    type: "function",
+    function: {
+      name: "counted",
+      description: "Counts schema conversions.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  }];
+  for (const body of bodies) {
+    assertEquals(body.tools, expectedTools);
+  }
 });
 
 Deno.test("openAIMessagesFrom converts user message", () => {

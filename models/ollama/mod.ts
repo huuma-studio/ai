@@ -310,7 +310,9 @@ export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.input.jsonSchema(),
+      // Ollama narrows JSON Schema `type` to a single string; the cached
+      // schema keeps the superset shape validate produces.
+      parameters: tool.jsonSchema as OllamaTool["function"]["parameters"],
     },
   }));
 }

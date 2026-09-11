@@ -30,6 +30,20 @@ Deno.test("anthropicToolsFrom converts tools correctly", () => {
   assertEquals(tools[0].input_schema.type, "object");
 });
 
+Deno.test("anthropicToolsFrom reuses the tool's cached JSON Schema", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  const [first] = anthropicToolsFrom([testTool]);
+  const [second] = anthropicToolsFrom([testTool]);
+  assertEquals(first.input_schema === second.input_schema, true);
+  assertEquals(first.input_schema === (testTool.jsonSchema as object), true);
+});
+
 Deno.test("anthropicMessagesFrom converts user message", () => {
   const msg: Message = { role: "user", contents: "Hello" };
   assertEquals(anthropicMessagesFrom([msg]), [

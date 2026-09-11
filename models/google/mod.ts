@@ -25,6 +25,7 @@ import {
   type Part,
   type Schema as JSONSchema,
   type ThinkingConfig,
+  type Tool as GeminiTool,
 } from "@google/genai";
 import type {
   FileContent,
@@ -36,7 +37,6 @@ import type {
 } from "@/mod.ts";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import { fileSourceFrom } from "@/model/mod.ts";
-import type { Schema } from "@huuma/validate";
 import type { Tool } from "@/tools/mod.ts";
 
 // Shutdown date: October 16, 2026
@@ -122,17 +122,7 @@ export class GoogleGenAIModel implements BaseModel {
         config: {
           thinkingConfig: options?.thinkingConfig,
           systemInstruction: system,
-          tools: tools?.length
-            ? [{
-              functionDeclarations: tools.map((
-                { name, description, input },
-              ) => ({
-                name,
-                description,
-                parameters: parametersFrom(input),
-              })),
-            }]
-            : undefined,
+          tools: tools?.length ? googleToolsFrom(tools) : undefined,
         },
       });
     return modelResultFrom(
@@ -157,15 +147,7 @@ export class GoogleGenAIModel implements BaseModel {
       config: {
         systemInstruction: system,
         thinkingConfig: options?.thinkingConfig,
-        tools: tools?.length
-          ? [{
-            functionDeclarations: tools.map(({ name, description, input }) => ({
-              name,
-              description,
-              parameters: parametersFrom(input),
-            })),
-          }]
-          : undefined,
+        tools: tools?.length ? googleToolsFrom(tools) : undefined,
       },
     });
     return streamMessages(stream, modelId);
@@ -467,8 +449,24 @@ function messagesFrom(
   return [message];
 }
 
+/**
+ * Converts Huuma {@link Tool}s into Gemini function-declaration tool entries.
+ */
+export function googleToolsFrom(
+  // deno-lint-ignore no-explicit-any
+  tools: Tool<any>[],
+): GeminiTool[] {
+  return [{
+    functionDeclarations: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: parametersFrom(tool),
+    })),
+  }];
+}
+
 // deno-lint-ignore no-explicit-any
-function parametersFrom(schema: Schema<any>): JSONSchema {
+function parametersFrom(tool: Tool<any>): JSONSchema {
   // TODO: apply logic to comply with googles OpenApi based schema
-  return schema.jsonSchema() as JSONSchema;
+  return tool.jsonSchema as JSONSchema;
 }
