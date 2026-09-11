@@ -847,9 +847,9 @@ export function anthropicToolsFrom(
   // deno-lint-ignore no-explicit-any
   tools: Tool<any>[],
 ): Anthropic.Tool[] {
-  return tools.map(({ name, description, input }) => ({
-    name,
-    description,
-    input_schema: input.jsonSchema() as Anthropic.Tool.InputSchema,
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.jsonSchema as Anthropic.Tool.InputSchema,
   }));
 }

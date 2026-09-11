@@ -607,7 +607,7 @@ export function openAIToolsFrom(
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.input.jsonSchema() as Record<string, unknown>,
+      parameters: tool.jsonSchema as Record<string, unknown>,
     },
   }));
 }
