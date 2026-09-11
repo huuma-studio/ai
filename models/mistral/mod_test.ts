@@ -8,7 +8,7 @@ import { HTTPClient } from "@mistralai/mistralai";
 import type { JSONSchema } from "@huuma/validate";
 import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
-import { string } from "@huuma/validate";
+import { object, string } from "@huuma/validate";
 import {
   mistral,
   MistralModel,
@@ -45,6 +45,44 @@ Deno.test("mistralToolsFrom converts tools correctly", () => {
   assertEquals(mistralTools[0].function.name, "test_tool");
   assertEquals(mistralTools[0].function.description, "A test tool");
   assertEquals(mistralTools[0].function.parameters, { type: "string" });
+});
+
+Deno.test("mistralToolsFrom reuses the cached schema of Tool instances", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  const [first] = mistralToolsFrom([testTool]);
+  const [second] = mistralToolsFrom([testTool]);
+  assertEquals(first.function.parameters === second.function.parameters, true);
+  assertEquals(
+    first.function.parameters === (testTool.jsonSchema as object),
+    true,
+  );
+});
+
+Deno.test("mistralToolsFrom converts structural tools without a cached schema", () => {
+  const converted = mistralToolsFrom([{
+    name: "structural",
+    description: "A structural tool",
+    input: object({ query: string() }),
+  }]);
+
+  assertEquals(converted, [{
+    type: "function",
+    function: {
+      name: "structural",
+      description: "A structural tool",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+  }]);
 });
 
 Deno.test("mistralMessagesFrom converts user message", () => {

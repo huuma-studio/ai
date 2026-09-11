@@ -2,7 +2,7 @@ import { assertEquals, assertThrows } from "@std/assert";
 
 import type { Message, ToolMessage } from "@/mod.ts";
 import { tool } from "@/tools/mod.ts";
-import { string } from "@huuma/validate";
+import { object, string } from "@huuma/validate";
 import type { ChatResponse } from "ollama";
 import { ollamaMessagesFrom, ollamaToolsFrom, ollamaUsageFrom } from "./mod.ts";
 
@@ -20,6 +20,23 @@ Deno.test("ollamaToolsFrom converts tools correctly", () => {
   assertEquals(ollamaTools[0].function.description, "A test tool");
   // Expecting JSON schema. string() -> { type: "string" }
   assertEquals(ollamaTools[0].function.parameters, { type: "string" });
+});
+
+Deno.test("ollamaToolsFrom reuses the tool's cached JSON Schema", () => {
+  const testTool = tool({
+    name: "test_tool",
+    description: "A test tool",
+    input: object({ query: string() }),
+    fn: () => "result",
+  });
+
+  const [first] = ollamaToolsFrom([testTool]);
+  const [second] = ollamaToolsFrom([testTool]);
+  assertEquals(first.function.parameters === second.function.parameters, true);
+  assertEquals(
+    first.function.parameters === (testTool.jsonSchema as object),
+    true,
+  );
 });
 
 Deno.test("ollamaMessagesFrom converts user message", () => {

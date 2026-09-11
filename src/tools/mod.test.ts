@@ -1,5 +1,10 @@
-import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
-import { object, string } from "@huuma/validate";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "@std/assert";
+import { type JSONSchema, object, type Schema, string } from "@huuma/validate";
 import type { Message, ToolMessage } from "@/mod.ts";
 import { callTool, tool, toolOutput, Tools } from "./mod.ts";
 
@@ -229,4 +234,58 @@ Deno.test("tool rejects a zero timeout before invoking its callback", async () =
     "The tool operation timed out",
   );
   assertEquals(invoked, false);
+});
+
+Deno.test("tool memoizes its input's JSON Schema on first access", () => {
+  const wrapped = object({ target: string() });
+  let conversions = 0;
+  const counting: Schema<unknown> = {
+    infer: undefined,
+    validate: (value, key) => wrapped.validate(value, key),
+    jsonSchema(): JSONSchema {
+      conversions += 1;
+      return wrapped.jsonSchema();
+    },
+    isRequired: () => wrapped.isRequired(),
+  };
+
+  const memoized = tool({
+    name: "memoized",
+    description: "Memoize schema conversions.",
+    input: counting,
+    fn: () => "done",
+  });
+
+  const first = memoized.jsonSchema;
+  const second = memoized.jsonSchema;
+  assertEquals(conversions, 1);
+  assertEquals(first === second, true);
+  assertEquals(first, {
+    type: "object",
+    properties: { target: { type: "string" } },
+    required: ["target"],
+  });
+});
+
+Deno.test("tool freezes its cached JSON Schema against mutation", () => {
+  const frozen = tool({
+    name: "frozen",
+    description: "Guard the shared schema.",
+    input: object({ target: string() }),
+    fn: () => "done",
+  });
+
+  const schema = frozen.jsonSchema;
+  assertThrows(() => {
+    (schema as { type?: string }).type = "number";
+  }, TypeError);
+  assertThrows(() => {
+    const properties = schema.properties as Record<string, unknown>;
+    (properties.target as { type?: string }).type = "number";
+  }, TypeError);
+  assertEquals(frozen.jsonSchema.type, "object");
+  assertEquals(
+    (frozen.jsonSchema.properties as Record<string, unknown>).target,
+    { type: "string" },
+  );
 });
