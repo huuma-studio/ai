@@ -425,3 +425,50 @@ Deno.test("image - rejects invalid maxBytes configuration", () => {
     );
   }
 });
+
+Deno.test("image - reads an image through a symlink to a regular file", async () => {
+  const tempDir = await Deno.makeTempDir();
+  const tool = image();
+  const targetPath = join(tempDir, "pixel.png");
+  const linkPath = join(tempDir, "link.png");
+
+  try {
+    await Deno.writeFile(targetPath, PNG_BYTES);
+    await Deno.symlink(targetPath, linkPath);
+    const result = await tool.call({ path: linkPath });
+    assertInstanceOf(result, ToolOutput);
+
+    const [part] = result.files;
+    assertEquals(part.file, {
+      mimeType: "image/png",
+      data: encodeBase64(PNG_BYTES),
+    });
+  } finally {
+    await Deno.remove(tempDir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "image - throws when the path is a FIFO",
+  // mkfifo is a Unix utility.
+  ignore: Deno.build.os === "windows",
+  async fn() {
+    const tempDir = await Deno.makeTempDir();
+    const tool = image();
+    const fifoPath = join(tempDir, "named-pipe.png");
+
+    try {
+      const mkfifo = new Deno.Command("mkfifo", { args: [fifoPath] });
+      const { success } = await mkfifo.output();
+      assertEquals(success, true);
+
+      await assertRejects(
+        () => tool.call({ path: fifoPath }),
+        Error,
+        `Path is not a regular file: ${fifoPath}`,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  },
+});

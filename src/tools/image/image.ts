@@ -38,9 +38,11 @@ const WEBP_SIGNATURE = [0x57, 0x45, 0x42, 0x50]; // "WEBP", at offset 8
  * The `read_image` tool loads the requested path, sniffs the image's
  * MIME type from magic bytes — the file extension is never trusted —
  * and returns it as a base64 {@linkcode FileContent} part on the tool
- * result, ready for provider-native delivery. Files larger than
- * `maxBytes` (5 MB by default) fail fast with a descriptive error
- * instead of surfacing opaque provider errors at request time.
+ * result, ready for provider-native delivery. Only regular files are
+ * attached — FIFOs, devices, and directories are rejected before any
+ * byte is read — and files larger than `maxBytes` (5 MB by default)
+ * fail fast with a descriptive error instead of surfacing opaque
+ * provider errors at request time.
  *
  * @example
  * ```typescript
@@ -95,28 +97,23 @@ export function image(
         throw new Error(`Path is a directory, not a file: ${path}`);
       }
 
+      // FIFOs and device nodes stat as non-regular files. Reading one is
+      // unbounded — a FIFO with no writer never reaches EOF and a device
+      // like /dev/zero never ends — so they are rejected before any byte
+      // is read instead of blocking or exhausting memory.
+      if (!stat.isFile) {
+        throw new Error(`Path is not a regular file: ${path}`);
+      }
+
       if (stat.size > maxBytes) {
         throw new Error(
           `Image too large: ${path} is ${stat.size} bytes, which exceeds the ${maxBytes} byte limit.`,
         );
       }
 
-      throwIfAborted(context.signal);
-
-      let bytes: Uint8Array;
-      try {
-        bytes = await Deno.readFile(path);
-      } catch (error) {
-        throw mapFileSystemError(error, path);
-      }
-
-      // The file may have grown between stat and read, so re-check the
-      // actual byte count before encoding it into the conversation.
-      if (bytes.byteLength > maxBytes) {
-        throw new Error(
-          `Image too large: ${path} is ${bytes.byteLength} bytes, which exceeds the ${maxBytes} byte limit.`,
-        );
-      }
+      // The read itself is also bounded and abortable in case the file
+      // grew or was swapped between stat and read.
+      const bytes = await readBounded(path, maxBytes, context.signal);
 
       const mimeType = sniffImageMime(bytes);
       if (mimeType === undefined) {
@@ -146,6 +143,59 @@ export function image(
 
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
+}
+
+/** Read at most `maxBytes` bytes from a stat-verified regular file.
+ *
+ * `stat` already capped the size, but the file may have grown or been
+ * swapped between stat and read, so the read stops as soon as the limit
+ * is exceeded — memory stays capped no matter what the path resolves to
+ * at open time.
+ */
+async function readBounded(
+  path: string,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true });
+  } catch (error) {
+    throw mapFileSystemError(error, path);
+  }
+
+  try {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const buffer = new Uint8Array(64 * 1024);
+    while (total <= maxBytes) {
+      throwIfAborted(signal);
+      const read = await file.read(buffer);
+      if (read === null) break;
+      total += read;
+      chunks.push(buffer.slice(0, read));
+    }
+    if (total > maxBytes) {
+      throw new Error(
+        `Image too large: ${path} exceeded the ${maxBytes} byte limit while reading.`,
+      );
+    }
+    return concatBytes(chunks, total);
+  } catch (error) {
+    throw mapFileSystemError(error, path);
+  } finally {
+    file.close();
+  }
+}
+
+function concatBytes(chunks: Uint8Array[], length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
 /** Sniff an image's MIME type from its magic bytes.

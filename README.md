@@ -238,6 +238,36 @@ the canonical `files` shape, so the same history replayed against a
 native provider uses its native path. Per-file support and throw rules
 match the user-message table above; files are never silently dropped.
 
+The bundled `image()` factory gives agents a ready-made way to load
+images from disk: its `read_image` tool sniffs the MIME type from magic
+bytes — never the file extension — and attaches the image through the
+mechanism above:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { openai } from "jsr:@huuma/ai/models/openai";
+import { image } from "jsr:@huuma/ai/tools";
+
+const assistant = agent({
+  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  modelId: "gpt-5.5",
+  systemPrompt: "You describe images concisely.",
+  tools: [image()],
+});
+
+// The model calls read_image with { path: "./photo.png" } and the image
+// arrives as an image/png file part on the tool result.
+const messages = await assistant.run("What is in ./photo.png?");
+```
+
+PNG, JPEG, GIF, and WebP — the four formats every mainstream provider
+accepts — are supported out of the box, and only regular files are
+attached; FIFOs, devices, and directories are rejected before any byte
+is read. Files larger than `maxBytes` (5 MB by default, the strictest
+mainstream provider cap) fail fast with a descriptive error instead of
+surfacing opaque provider errors at request time; configure `maxBytes`
+and `allowedMimeTypes` to tighten or loosen the defaults.
+
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.
@@ -246,9 +276,9 @@ match the user-message table above; files are never silently dropped.
   and Z.AI (GLM Coding Plan) in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
 - Lightweight workflow primitives in `@huuma/ai/workflow`.
-- Tool factories for CLI execution, file operations, grep, website fetching, web
-  search, skill loading, sub-agent delegation, and MCP servers in
-  `@huuma/ai/tools`.
+- Tool factories for CLI execution, file operations, image loading, grep,
+  website fetching, web search, skill loading, sub-agent delegation, and MCP
+  servers in `@huuma/ai/tools`.
 
 ## MCP servers
 
