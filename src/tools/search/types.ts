@@ -18,6 +18,8 @@ export interface SearchResponse {
 export interface SearchOptions {
   /** Maximum number of results to return. */
   count?: number;
+  /** Aborts the in-flight provider request when aborted. */
+  signal?: AbortSignal;
 }
 
 /** Interface implemented by search providers. */

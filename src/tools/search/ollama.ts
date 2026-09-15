@@ -41,9 +41,13 @@ export class OllamaSearchProvider implements SearchProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
+      // Cancel the body so an unconsumed response does not pin the
+      // connection until it is finalized.
+      await response.body?.cancel();
       throw new Error(
         `Ollama Search failed: ${response.status} ${response.statusText}`,
       );

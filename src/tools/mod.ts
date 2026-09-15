@@ -83,7 +83,11 @@ export { image, type ImageToolOptions } from "@/tools/image/image.ts";
 
 export { fetchWebsite } from "@/tools/browser/browser.ts";
 
-export { search } from "@/tools/search/search.ts";
+export {
+  DEFAULT_SEARCH_TIMEOUT,
+  search,
+  type SearchToolOptions,
+} from "@/tools/search/search.ts";
 
 export {
   subagent,
