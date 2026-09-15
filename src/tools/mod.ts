@@ -42,6 +42,10 @@ import {
 export type { JSONSchema, Schema } from "@huuma/validate";
 import type { FileContent, Message, ToolResultContent } from "@huuma/ai";
 import { mapSettled, validateMaxConcurrency } from "./concurrency.ts";
+import {
+  addToolCallAbortListener,
+  armToolCallTimeout,
+} from "./tool_call_resources.ts";
 
 /** Runtime controls passed to a tool implementation. */
 export interface ToolContext {
@@ -202,19 +206,36 @@ export class Tool<T extends Schema<any>, R = unknown> {
 
     const timeout = shortestTimeout(this.#timeout, options.timeout);
     const signals: AbortSignal[] = [];
+    let clearDeadline: (() => void) | undefined;
     if (options.signal) signals.push(options.signal);
-    if (timeout !== undefined) signals.push(timeoutSignal(timeout));
+    if (timeout !== undefined) {
+      if (timeout === 0) {
+        signals.push(zeroTimeoutSignal());
+      } else {
+        const timeoutController = new AbortController();
+        clearDeadline = armToolCallTimeout(
+          () =>
+            timeoutController.abort(
+              new DOMException(
+                "The operation was aborted due to timeout",
+                "TimeoutError",
+              ),
+            ),
+          timeout,
+        );
+        signals.push(timeoutController.signal);
+      }
+    }
     const signal = signals.length > 0
       ? AbortSignal.any(signals)
       : new AbortController().signal;
 
+    let removeAbortListener: (() => void) | undefined;
     const aborted = new Promise<never>((_, reject) => {
       const rejectOnAbort = () => reject(abortReason(signal));
       if (signal.aborted) rejectOnAbort();
       else {
-        signal.addEventListener("abort", rejectOnAbort, {
-          once: true,
-        });
+        removeAbortListener = addToolCallAbortListener(signal, rejectOnAbort);
       }
     });
 
@@ -222,7 +243,12 @@ export class Tool<T extends Schema<any>, R = unknown> {
       if (signal.aborted) throw abortReason(signal);
       return this.#fn(value, { signal, timeout });
     });
-    return await Promise.race([execution, aborted]);
+    try {
+      return await Promise.race([execution, aborted]);
+    } finally {
+      clearDeadline?.();
+      removeAbortListener?.();
+    }
   }
 }
 
@@ -259,13 +285,10 @@ function validateTimeout(timeout: number | undefined): void {
   }
 }
 
-function timeoutSignal(timeout: number): AbortSignal {
-  if (timeout === 0) {
-    return AbortSignal.abort(
-      new DOMException("The tool operation timed out", "TimeoutError"),
-    );
-  }
-  return AbortSignal.timeout(timeout);
+function zeroTimeoutSignal(): AbortSignal {
+  return AbortSignal.abort(
+    new DOMException("The tool operation timed out", "TimeoutError"),
+  );
 }
 
 function abortReason(signal: AbortSignal): unknown {
