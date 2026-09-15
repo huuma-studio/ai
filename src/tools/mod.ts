@@ -41,6 +41,7 @@ import {
 } from "@huuma/validate";
 export type { JSONSchema, Schema } from "@huuma/validate";
 import type { FileContent, Message, ToolResultContent } from "@huuma/ai";
+import { mapSettled, validateMaxConcurrency } from "./concurrency.ts";
 
 /** Runtime controls passed to a tool implementation. */
 export interface ToolContext {
@@ -56,6 +57,19 @@ export interface ToolCallOptions {
   signal?: AbortSignal;
   /** Maximum duration of the call in milliseconds. */
   timeout?: number;
+  /**
+   * Maximum number of calls from a single batch that may overlap in
+   * execution. Only {@linkcode callTool} batches are bounded; a single
+   * {@linkcode Tool.call} ignores it. Models control their own batch
+   * size, so without a cap one message starts every requested tool at
+   * once and peak memory and event-loop pressure scale with it —
+   * buffers, subprocesses, and conversions all multiply. Capping a
+   * batch trades throughput for that protection: queued calls wait for
+   * a free slot instead of competing. Defaults to unlimited (the
+   * behavior of every prior release); starts stay in input order and
+   * results stay index-aligned with the batch either way.
+   */
+  maxConcurrency?: number;
 }
 
 export {
@@ -363,13 +377,15 @@ function formatRejection(reason: unknown): string {
 /** Create a callable that executes tool calls found in the last model message.
  *
  * @param tools Collection of available tools.
- * @param options Cancellation signal or timeout shared by calls in the batch.
+ * @param options Cancellation signal, timeout, or concurrency bound shared
+ * by calls in the batch.
  * @returns An async function that takes messages and returns updated messages with tool results appended.
  */
 export function callTool(
   tools: Tools,
   options: ToolCallOptions = {},
 ): (messages: Message[]) => Promise<Message[]> {
+  validateMaxConcurrency(options.maxConcurrency);
   return async function executeToolCalls(messages: Message[]) {
     const lastMessage = messages.at(-1);
     if (!lastMessage || lastMessage.role !== "model") {
@@ -381,8 +397,9 @@ export function callTool(
       return messages;
     }
 
-    const settled = await Promise.allSettled(
-      toolCalls.map(async (toolCall) => {
+    const settled = await mapSettled(
+      toolCalls,
+      async (toolCall) => {
         const tool = tools.get(toolCall.name);
         const output = await tool.call(toolCall.props, options);
         const wrapped = output instanceof ToolOutput;
@@ -394,7 +411,8 @@ export function callTool(
             ...(wrapped ? { files: output.files } : {}),
           },
         } satisfies ToolResultContent;
-      }),
+      },
+      options.maxConcurrency,
     );
 
     const contents = settled.map((outcome, i): ToolResultContent => {

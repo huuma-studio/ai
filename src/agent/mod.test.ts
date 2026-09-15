@@ -1058,3 +1058,237 @@ Deno.test("agent - unknown fields on prior messages survive unchanged in the ret
     { foo: 1 },
   );
 });
+
+// --- maxConcurrency ------------------------------------------------------
+
+function slowCallsMessage(count: number): Message {
+  const toolCalls = Array.from({ length: count }, (_, i) => ({
+    id: `call-${i + 1}`,
+    name: "slow",
+    props: { target: String(i) } as unknown as JSONSchema,
+  }));
+  return {
+    role: "model",
+    contents: toolCalls.map((toolCall) => ({ toolCall })),
+    toolCalls,
+  };
+}
+
+function outputsOf(message: Message): unknown[] {
+  if (message.role !== "tool") throw new Error("expected a tool message");
+  return message.contents.map((content) => {
+    if (!("toolResult" in content)) {
+      throw new Error("expected a tool result content");
+    }
+    return content.toolResult.result.output;
+  });
+}
+
+Deno.test("agent - maxConcurrency bounds overlapping tool executions", async () => {
+  const model = new StubModel([
+    [slowCallsMessage(5)],
+    [modelMessage("All done.")],
+  ]);
+  let active = 0;
+  let maxActive = 0;
+  const slow = tool({
+    name: "slow",
+    description: "Slow down.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) =>
+        setTimeout(resolve, 20 + Number(target) * 10)
+      );
+      active -= 1;
+      return `done:${target}`;
+    },
+  });
+
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [slow],
+    maxConcurrency: 2,
+  });
+
+  const messages = await assistant.run("Go");
+
+  assertEquals(maxActive, 2);
+  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
+    "done:0",
+    "done:1",
+    "done:2",
+    "done:3",
+    "done:4",
+  ]);
+  assertEquals(messages.at(-1), modelMessage("All done."));
+});
+
+Deno.test("agent - tool batches stay unbounded without maxConcurrency", async () => {
+  const model = new StubModel([
+    [slowCallsMessage(3)],
+    [modelMessage("All done.")],
+  ]);
+  let active = 0;
+  let maxActive = 0;
+  const slow = tool({
+    name: "slow",
+    description: "Slow down.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      return `done:${target}`;
+    },
+  });
+
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [slow],
+  });
+
+  const messages = await assistant.run("Go");
+
+  assertEquals(maxActive, 3);
+  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
+    "done:0",
+    "done:1",
+    "done:2",
+  ]);
+});
+
+Deno.test("agent - per-run maxConcurrency overrides the agent-level cap", async () => {
+  const model = new StubModel([
+    [slowCallsMessage(3)],
+    [modelMessage("All done.")],
+  ]);
+  let active = 0;
+  let maxActive = 0;
+  const slow = tool({
+    name: "slow",
+    description: "Slow down.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      return `done:${target}`;
+    },
+  });
+
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [slow],
+    maxConcurrency: 5,
+  });
+
+  const messages = await assistant.run("Go", [], { maxConcurrency: 1 });
+
+  assertEquals(maxActive, 1);
+  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
+    "done:0",
+    "done:1",
+    "done:2",
+  ]);
+});
+
+Deno.test("agent - duplicate finish_turn batches honor maxConcurrency", async () => {
+  const slowCalls = Array.from({ length: 3 }, (_, i) => ({
+    id: `call-${i + 1}`,
+    name: "slow",
+    props: { target: String(i) } as unknown as JSONSchema,
+  }));
+  const finishCalls = [
+    finishTurnCall("call-4", "question", "A?"),
+    finishTurnCall("call-5", "completion", "B."),
+  ];
+  const model = new StubModel([
+    [{
+      role: "model",
+      contents: [
+        ...slowCalls.map((toolCall) => ({ toolCall })),
+        ...finishCalls,
+      ],
+      toolCalls: [...slowCalls, ...finishCalls.map((call) => call.toolCall)],
+    }],
+    [modelMessage("Recovered.")],
+  ]);
+  let active = 0;
+  let maxActive = 0;
+  const slow = tool({
+    name: "slow",
+    description: "Slow down.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      active -= 1;
+      return `done:${target}`;
+    },
+  });
+
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [slow],
+    finishTurn: true,
+    maxConcurrency: 2,
+  });
+
+  const messages = await assistant.run("Hi");
+
+  assertEquals(maxActive, 2);
+  const firstTool = messages.at(-2) as ToolMessage;
+  assertEquals(resultOf(firstTool, 0).toolResult.result.output, "done:0");
+  assertEquals(resultOf(firstTool, 1).toolResult.result.output, "done:1");
+  assertEquals(resultOf(firstTool, 2).toolResult.result.output, "done:2");
+  const duplicateError =
+    "Issue exactly one finish_turn call per turn; multiple finish_turn calls in a single response are not allowed.";
+  assertEquals(resultOf(firstTool, 3).toolResult.result.error, duplicateError);
+  assertEquals(resultOf(firstTool, 4).toolResult.result.error, duplicateError);
+  // The duplicate batch is non-terminal: the model gets another request.
+  assertEquals(model.calls.length, 2);
+});
+
+Deno.test("agent - invalid maxConcurrency fails construction", () => {
+  const model = new StubModel([]);
+  assertThrows(
+    () =>
+      agent({
+        model,
+        modelId: "stub",
+        systemPrompt: "Be helpful.",
+        maxConcurrency: 0,
+      }),
+    TypeError,
+    "maxConcurrency must be a positive integer",
+  );
+});
+
+Deno.test("agent - invalid per-run maxConcurrency rejects before any model call", async () => {
+  const model = new StubModel([[modelMessage("Hi")]]);
+  const assistant = agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+  });
+
+  await assertRejects(
+    () => assistant.run("Hi", [], { maxConcurrency: 1.5 }),
+    TypeError,
+    "maxConcurrency must be a positive integer",
+  );
+  assertEquals(model.calls.length, 0);
+});

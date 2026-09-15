@@ -14,6 +14,29 @@ function modelMessageCalling(name: string, id = "call-1"): Message {
   return { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] };
 }
 
+function modelMessageCallingEach(count: number, name: string): Message {
+  const toolCalls = Array.from({ length: count }, (_, i) => ({
+    id: `call-${i + 1}`,
+    name,
+    // deno-lint-ignore no-explicit-any
+    props: { target: String(i) } as any,
+  }));
+  return {
+    role: "model",
+    contents: toolCalls.map((toolCall) => ({ toolCall })),
+    toolCalls,
+  };
+}
+
+function toolResultIds(message: ToolMessage): string[] {
+  return message.contents.map((content) => {
+    if (!("toolResult" in content)) {
+      throw new Error("expected a tool result content");
+    }
+    return content.toolResult.id;
+  });
+}
+
 Deno.test("callTool unwraps toolOutput into result output and files", async () => {
   const screenshot = tool({
     name: "screenshot",
@@ -110,6 +133,136 @@ Deno.test("callTool maps rejections to error results without files", async () =>
       result: { error: "boom" },
     },
   }]);
+});
+
+Deno.test("callTool bounds overlapping executions to maxConcurrency", async () => {
+  const events: string[] = [];
+  let active = 0;
+  let maxActive = 0;
+  const slow = tool({
+    name: "slow",
+    description: "Record start and finish.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      events.push(`start:${target}`);
+      // Staggered delays keep every settle on its own tick, so start
+      // order stays deterministic without racing equal timers.
+      await new Promise((resolve) =>
+        setTimeout(resolve, 20 + Number(target) * 10)
+      );
+      events.push(`finish:${target}`);
+      active -= 1;
+      return `done:${target}`;
+    },
+  });
+
+  const messages = await callTool(new Tools([slow]), { maxConcurrency: 2 })([
+    modelMessageCallingEach(5, "slow"),
+  ]);
+
+  assertEquals(maxActive, 2);
+  assertEquals(events.filter((event) => event.startsWith("start:")), [
+    "start:0",
+    "start:1",
+    "start:2",
+    "start:3",
+    "start:4",
+  ]);
+  assertEquals(events.filter((event) => event.startsWith("finish:")), [
+    "finish:0",
+    "finish:1",
+    "finish:2",
+    "finish:3",
+    "finish:4",
+  ]);
+  assertEquals(toolResultIds(messages.at(-1) as ToolMessage), [
+    "call-1",
+    "call-2",
+    "call-3",
+    "call-4",
+    "call-5",
+  ]);
+});
+
+Deno.test("callTool starts every call before any settles by default", async () => {
+  const events: string[] = [];
+  const releasers: Array<(value: string) => void> = [];
+  const gated = tool({
+    name: "gated",
+    description: "Run until released.",
+    input: object({ target: string() }),
+    fn: ({ target }) =>
+      new Promise<string>((resolve) => {
+        events.push(`start:${target}`);
+        releasers.push((value) => resolve(`${value}:${target}`));
+      }),
+  });
+
+  const pending = callTool(new Tools([gated]))([
+    modelMessageCallingEach(5, "gated"),
+  ]);
+  // Yield one macrotask: the unbounded batch starts every call on
+  // microtasks before any of them can settle.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assertEquals(events, [
+    "start:0",
+    "start:1",
+    "start:2",
+    "start:3",
+    "start:4",
+  ]);
+  assertEquals(releasers.length, 5);
+
+  for (const release of releasers) release("done");
+  const messages = await pending;
+
+  const toolMessage = messages.at(-1) as ToolMessage;
+  assertEquals(toolMessage.contents.map((content) => {
+    if (!("toolResult" in content)) {
+      throw new Error("expected a tool result content");
+    }
+    return content.toolResult.result.output;
+  }), ["done:0", "done:1", "done:2", "done:3", "done:4"]);
+});
+
+Deno.test("callTool keeps success and error outcomes aligned per call under the cap", async () => {
+  const flaky = tool({
+    name: "flaky",
+    description: "Fail odd targets.",
+    input: object({ target: string() }),
+    fn: async ({ target }) => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (Number(target) % 2 === 1) throw new Error(`boom:${target}`);
+      return `ok:${target}`;
+    },
+  });
+
+  const messages = await callTool(new Tools([flaky]), { maxConcurrency: 2 })(
+    [modelMessageCallingEach(5, "flaky")],
+  );
+
+  const toolMessage = messages.at(-1) as ToolMessage;
+  assertEquals(toolMessage.contents, [
+    { toolResult: { id: "call-1", name: "flaky", result: { output: "ok:0" } } },
+    { toolResult: { id: "call-2", name: "flaky", result: { error: "boom:1" } } },
+    { toolResult: { id: "call-3", name: "flaky", result: { output: "ok:2" } } },
+    { toolResult: { id: "call-4", name: "flaky", result: { error: "boom:3" } } },
+    { toolResult: { id: "call-5", name: "flaky", result: { output: "ok:4" } } },
+  ]);
+});
+
+Deno.test("callTool rejects invalid maxConcurrency values", () => {
+  const invalid = [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
+  for (const maxConcurrency of invalid) {
+    assertThrows(
+      () => callTool(new Tools([]), { maxConcurrency }),
+      TypeError,
+      "maxConcurrency must be a positive integer",
+    );
+  }
 });
 
 Deno.test("tool passes a cancellation signal and timeout to its callback", async () => {

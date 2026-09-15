@@ -26,6 +26,7 @@
  *
  * @module
  */
+import { mapSettled, validateMaxConcurrency } from "@/tools/concurrency.ts";
 import {
   callTool,
   tool,
@@ -165,6 +166,10 @@ export interface RunOptions {
    * {@link AgentOptions.onMessageError}. Defaults to `"warn"` when
    * unset at both levels. */
   onMessageError?: OnMessageError;
+  /** Maximum number of tool calls from a single model message that may
+   * overlap in execution during this run. Overrides the agent-level
+   * {@link AgentOptions.maxConcurrency} for this run. */
+  maxConcurrency?: number;
 }
 
 /** Options used to create an agent. */
@@ -195,6 +200,18 @@ export interface AgentOptions<T extends string> {
    * for the lifetime of the Agent; there is no per-run override.
    * Defaults to `false`. */
   finishTurn?: boolean;
+  /**
+   * Maximum number of tool calls from a single model message that may
+   * overlap in execution. Models control their own batch size, so
+   * without a cap one message can fan out into dozens of simultaneous
+   * processes, fetches, and buffers — a memory and event-loop spike
+   * under the model's control that degrades every run sharing the
+   * process. Capping a batch trades throughput for that protection:
+   * queued calls wait for a free slot instead of competing. Defaults to
+   * unlimited (the behavior of every prior release); per-run
+   * {@link RunOptions.maxConcurrency} overrides this value.
+   */
+  maxConcurrency?: number;
 }
 
 /** Agent that loops over model responses and tool calls. */
@@ -206,6 +223,7 @@ export class Agent<T extends string> {
   #onMessage?: OnMessage;
   #onMessageError?: OnMessageError;
   #finishTurn: boolean;
+  #maxConcurrency?: number;
   /** Create an agent instance. */
   constructor(
     {
@@ -216,6 +234,7 @@ export class Agent<T extends string> {
       onMessage,
       onMessageError,
       finishTurn,
+      maxConcurrency,
     }: AgentOptions<T>,
   ) {
     this.#model = model;
@@ -224,6 +243,8 @@ export class Agent<T extends string> {
     this.#onMessage = onMessage;
     this.#onMessageError = onMessageError;
     this.#finishTurn = finishTurn ?? false;
+    validateMaxConcurrency(maxConcurrency);
+    this.#maxConcurrency = maxConcurrency;
     tools?.forEach((tool) => {
       if (tool.name === FINISH_TURN_TOOL) {
         throw new Error(
@@ -250,6 +271,9 @@ export class Agent<T extends string> {
     history: Message[] = [],
     options?: RunOptions,
   ): Promise<Message[]> {
+    const maxConcurrency = options?.maxConcurrency ??
+      this.#maxConcurrency;
+    validateMaxConcurrency(maxConcurrency);
     const onMessage = options?.onMessage ?? this.#onMessage;
     const onMessageError = options?.onMessageError ??
       this.#onMessageError ?? "warn";
@@ -280,7 +304,8 @@ export class Agent<T extends string> {
     };
     const askStep = step(askAction);
 
-    const executeToolCalls = this.#executeToolCalls.bind(this);
+    const executeToolCalls = (messages: Message[]) =>
+      this.#executeToolCalls(messages, maxConcurrency);
     const callToolStep = step(async (messages: Message[]) => {
       const updated = await executeToolCalls(messages);
       await emit(...updated.slice(messages.length));
@@ -328,8 +353,15 @@ export class Agent<T extends string> {
    * one `finish_turn` call, every `finish_turn` in that batch receives a
    * deterministic error result instructing the model to issue exactly
    * one, and the batch is non-terminal. Other tool calls in the same
-   * message use the existing execution semantics. */
-  async #executeToolCalls(messages: Message[]): Promise<Message[]> {
+   * message use the existing execution semantics.
+   *
+   * `maxConcurrency` bounds how many calls of the batch may overlap,
+   * uniformly across both the delegated `callTool` path and the
+   * duplicate-`finish_turn` path. */
+  async #executeToolCalls(
+    messages: Message[],
+    maxConcurrency?: number,
+  ): Promise<Message[]> {
     const lastMessage = messages.at(-1);
     if (!lastMessage || lastMessage.role !== "model") return messages;
     const toolCalls = lastMessage.toolCalls;
@@ -339,13 +371,14 @@ export class Agent<T extends string> {
       tc.name === FINISH_TURN_TOOL
     ).length;
     if (!this.#finishTurn || finishTurnCount <= 1) {
-      return await callTool(this.#tools)(messages);
+      return await callTool(this.#tools, { maxConcurrency })(messages);
     }
 
     const duplicateError =
       "Issue exactly one finish_turn call per turn; multiple finish_turn calls in a single response are not allowed.";
-    const settled = await Promise.allSettled(
-      toolCalls.map(async (toolCall) => {
+    const settled = await mapSettled(
+      toolCalls,
+      async (toolCall) => {
         if (toolCall.name === FINISH_TURN_TOOL) {
           throw new Error(duplicateError);
         }
@@ -360,7 +393,8 @@ export class Agent<T extends string> {
             ...(wrapped ? { files: output.files } : {}),
           },
         } satisfies ToolResultContent;
-      }),
+      },
+      maxConcurrency,
     );
 
     const contents = settled.map((outcome, i): ToolResultContent => {
