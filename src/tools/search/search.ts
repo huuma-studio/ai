@@ -9,11 +9,16 @@ export interface SearchToolOptions {
   engine: SearchEngine;
   /** Provider API key. */
   apiKey?: string;
+  /** Maximum duration of each search in milliseconds. Defaults to 30s. */
+  timeout?: number;
 }
+
+/** Default maximum duration of a search. */
+export const DEFAULT_SEARCH_TIMEOUT = 30_000;
 
 /** Create a tool that searches the web.
  *
- * @param options Search engine and optional API key.
+ * @param options Search engine, API key, and optional timeout.
  * @returns A {@link Tool} that queries the web and returns a {@link SearchResponse}.
  */
 export function search(
@@ -33,8 +38,9 @@ export function search(
       query: string(),
       count: number().optional(),
     }),
-    fn: async ({ query, count }) => {
-      return await searchTool.search(query, { count });
+    timeout: options?.timeout ?? DEFAULT_SEARCH_TIMEOUT,
+    fn: async ({ query, count }, { signal }) => {
+      return await searchTool.search(query, { count, signal });
     },
   });
 }

@@ -28,9 +28,13 @@ export class BraveSearchProvider implements SearchProvider {
         "Accept": "application/json",
         "X-Subscription-Token": apiKey,
       },
+      signal: options?.signal,
     });
 
     if (!response.ok) {
+      // Cancel the body so an unconsumed response does not pin the
+      // connection until it is finalized.
+      await response.body?.cancel();
       throw new Error(
         `Brave Search failed: ${response.status} ${response.statusText}`,
       );

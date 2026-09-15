@@ -37,9 +37,13 @@ export class PerplexitySearchProvider implements SearchProvider {
         query: query,
         max_results: options?.count,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
+      // Cancel the body so an unconsumed response does not pin the
+      // connection until it is finalized.
+      await response.body?.cancel();
       throw new Error(
         `Perplexity Search failed: ${response.status} ${response.statusText}`,
       );
