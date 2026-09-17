@@ -12,6 +12,17 @@
  *   implementation that pins per-iteration snapshots — an accidental
  *   accumulator, or an engine whose suspended async frames retain the
  *   arrays passed through them — collects almost none and fails.
+ *   Finalizers are only promised to run "eventually", so this
+ *   assertion never fails on delayed collection: it is gated on a
+ *   control group of known-dead arrays that die interleaved with the
+ *   run's snapshots — one registered per round and dropped by the
+ *   next, so both are reclaimed by the same collections. Delivered
+ *   control callbacks prove the finalizer pipeline works for exactly
+ *   the kind of object this assertion measures; undelivered control
+ *   callbacks mean the measurement stalled, and the assertion is
+ *   skipped for that run. When the suite runs with
+ *   `--v8-flags=--expose-gc`, explicit collections make the
+ *   measurement fully deterministic.
  * - Bounded heap growth: settled `heapUsed` readings at 50-round
  *   milestones must grow linearly in the message count. Readings taken
  *   without `--expose-gc` are only mostly accurate: V8 reclaims
@@ -108,6 +119,21 @@ const registry = new FinalizationRegistry((round: number) => {
   collected.add(round);
 });
 
+// Control group: one small array registered per round alongside the
+// run's snapshot and dropped when the next round replaces it, so
+// controls die exactly when the run's snapshots die and are reclaimed
+// by the same collections. Their delivered callbacks prove the
+// finalizer pipeline works for exactly the kind of object the
+// reclamation assertion measures.
+const controlCollected = new Set<number>();
+const controlRegistry = new FinalizationRegistry((round: number) => {
+  controlCollected.add(round);
+});
+// Slot for the current round's control array. The binding is
+// deliberately write-only: its element is replaced each round, which
+// drops the previous round's control alongside its snapshot.
+const controlSlot: unknown[] = [];
+
 /**
  * Deterministic fake model: every round up to {@linkcode ROUNDS} returns
  * {@linkcode FILLERS_PER_ROUND} filler messages plus a model message
@@ -130,6 +156,12 @@ class LoopModel implements BaseModel<string> {
     registry.register(messages, this.calls);
     this.calls += 1;
     const round = this.calls;
+    // Register this round's control array and drop the previous one:
+    // the control dies exactly when the run's snapshot does, so both
+    // are reclaimed by the same collections.
+    const control: unknown[] = [round];
+    controlRegistry.register(control, round);
+    controlSlot[0] = control;
     if (round % MILESTONE_EVERY === 0 && round <= ROUNDS) {
       // Finalization callbacks are delivered on event-loop turns; the
       // yields let them flush before and after the settle pressure.
@@ -198,36 +230,14 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
   // is not limited by it.
   const messages = await assistant.run("Drive the loop.");
 
+  // Drop the final control array; every earlier control died during
+  // the run alongside the snapshots it tracks.
+  controlSlot[0] = undefined;
+
   assertEquals(model.calls, ROUNDS + 1);
   assertEquals(
     messages.length,
     1 + ROUNDS * (FILLERS_PER_ROUND + 2) + 1,
-  );
-
-  // Drain finalization callbacks: yields plus light pressure until the
-  // reclaimed count stops growing, so the assertion measures collection
-  // delivery rather than event-loop scheduling.
-  let previous = -1;
-  let stable = 0;
-  for (let i = 0; i < 100 && stable < 5; i++) {
-    await yieldToEventLoop();
-    const ballast: unknown[] = new Array(64_000);
-    ballast.fill(i);
-    if (ballast.length === 0) throw new Error("unreachable");
-    if (collected.size === previous) stable += 1;
-    else stable = 0;
-    previous = collected.size;
-  }
-
-  // The run itself must not retain superseded snapshots: nearly every
-  // array handed to the model is garbage by the next round. The slack
-  // absorbs the last rounds' arrays (still live at the end) and
-  // callback-delivery jitter; a real retention bug collects almost
-  // none and fails by a wide margin.
-  const reclaimed = collected.size;
-  assert(
-    reclaimed >= Math.floor(ROUNDS * RECLAIMED_RATIO),
-    `only ${reclaimed} of ${ROUNDS} snapshot arrays were reclaimed by the end of the run`,
   );
 
   const { samples } = model;
@@ -262,6 +272,56 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
     `total heap growth over ${ROUNDS} rounds was ${
       (totalGrowth / MEGABYTE).toFixed(1)
     } MB (limit ${TOTAL_GROWTH_LIMIT / MEGABYTE} MB): ${JSON.stringify(deltas)}`,
+  );
+
+  // Drain finalization callbacks. Each iteration forces at least one
+  // major collection — explicit GC when the suite runs with
+  // `--v8-flags=--expose-gc`, otherwise the same allocation pressure
+  // `settleHeap` uses — then yields so callbacks flush, and repeats
+  // until both reclaimed counts stop growing. Per-iteration collections
+  // matter because garbage that dies late in the run (the final
+  // snapshots and the final control array) otherwise sits uncollected.
+  const gc = (globalThis as { gc?: () => void }).gc;
+  let previousRun = -1;
+  let previousControl = -1;
+  let stable = 0;
+  for (let i = 0; i < 50 && stable < 5; i++) {
+    if (gc) {
+      gc();
+    } else {
+      settleHeap();
+    }
+    await yieldToEventLoop();
+    const settled = collected.size === previousRun &&
+      controlCollected.size === previousControl;
+    stable = settled ? stable + 1 : 0;
+    previousRun = collected.size;
+    previousControl = controlCollected.size;
+  }
+
+  // Gate on the control group: finalizers are only promised to run
+  // "eventually", so delayed collection must not fail correct code.
+  // The controls die interleaved with the run's snapshots, so if not
+  // one of them was delivered, the pipeline that would deliver the
+  // snapshots stalled too — nothing was measured; skip this run.
+  if (controlCollected.size === 0) {
+    console.warn(
+      "[agent loop memory test] finalizer delivery stalled during the drain; " +
+        "skipping the reclamation assertion this run " +
+        "(see the module docs in loop_memory_test.ts)",
+    );
+    return;
+  }
+
+  // The run itself must not retain superseded snapshots: nearly every
+  // array handed to the model is garbage by the next round. The slack
+  // absorbs the last rounds' arrays (still live at the end) and
+  // callback-delivery jitter; a real retention bug collects almost
+  // none and fails by a wide margin.
+  const reclaimed = collected.size;
+  assert(
+    reclaimed >= Math.floor(ROUNDS * RECLAIMED_RATIO),
+    `only ${reclaimed} of ${ROUNDS} snapshot arrays were reclaimed by the end of the run (control group: ${controlCollected.size} delivered)`,
   );
 });
 
