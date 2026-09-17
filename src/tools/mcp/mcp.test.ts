@@ -403,3 +403,161 @@ Deno.test("mcp - resultType input_required throws a descriptive error", async ()
     await connection.close();
   }
 });
+
+/**
+ * In-process fixture with a scriptable tools/list handler. Every call is
+ * handed the request's cursor and returns a page plus the next cursor, so
+ * tests can script terminating, echoing, or unbounded pagination and watch
+ * how the client bounds the loop. `requestedCursors` records the cursor of
+ * every request, proving the loop stopped instead of merely erroring late.
+ */
+async function paginatingServer(
+  paginate: (
+    cursor: string | undefined,
+  ) => { tools: ToolDef[]; nextCursor?: string },
+) {
+  const requestedCursors: (string | undefined)[] = [];
+  const server = new Server(
+    { name: "huuma-pagination-fixture", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
+  server.setRequestHandler(
+    ListToolsRequestSchema,
+    (request: { params?: { cursor?: string } }) => {
+      // The first request carries no params at all (the client sends
+      // `listTools(undefined)`), so `params` is optional here.
+      const cursor = request.params?.cursor;
+      requestedCursors.push(cursor);
+      return paginate(cursor);
+    },
+  );
+
+  const [clientTransport, serverTransport] = InMemoryTransport
+    .createLinkedPair();
+  await server.connect(serverTransport);
+
+  return { transport: clientTransport as McpTransport, requestedCursors };
+}
+
+function pageTool(name: string): ToolDef {
+  return { name, inputSchema: { type: "object", properties: {} } };
+}
+
+Deno.test("mcp - a server that echoes its cursor rejects instead of hanging", async () => {
+  const { transport, requestedCursors } = await paginatingServer(() => ({
+    tools: [pageTool("stuck_tool")],
+    nextCursor: "stuck",
+  }));
+
+  // The eager listing inside mcp() must fail fast with an error naming the
+  // server, the echoed cursor, and the tools collected so far.
+  const error = await assertRejects(
+    () => mcp({ name: "echo-server", transport }),
+    Error,
+  );
+  assertStringIncludes(error.message, "echo-server");
+  assertStringIncludes(error.message, "stuck");
+  assertStringIncludes(error.message, "2 tools");
+  // Two requests: the first page, then one re-request of the echoed
+  // cursor that exposed the loop — and no more.
+  assertEquals(requestedCursors, [undefined, "stuck"]);
+});
+
+Deno.test("mcp - alternating cursors are detected as a cycle", async () => {
+  const pages = new Map<
+    string | undefined,
+    { tools: ToolDef[]; nextCursor?: string }
+  >([
+    [undefined, { tools: [pageTool("first")], nextCursor: "A" }],
+    ["A", { tools: [pageTool("second")], nextCursor: "B" }],
+    ["B", { tools: [pageTool("third")], nextCursor: "A" }],
+  ]);
+  const { transport, requestedCursors } = await paginatingServer((cursor) =>
+    pages.get(cursor)!
+  );
+
+  const error = await assertRejects(
+    () => mcp({ name: "cycle-server", transport }),
+    Error,
+  );
+  assertStringIncludes(error.message, "cycle-server");
+  assertStringIncludes(error.message, "A");
+  assertEquals(requestedCursors, [undefined, "A", "B"]);
+});
+
+Deno.test("mcp - endless unique cursors stop at the page cap", async () => {
+  const { transport, requestedCursors } = await paginatingServer((cursor) => ({
+    tools: [pageTool(`tool_${cursor ?? "0"}`)],
+    nextCursor: cursor === undefined
+      ? "page-1"
+      : `page-${Number(cursor.slice(5)) + 1}`,
+  }));
+
+  // Every cursor is fresh, so only the page cap can stop this server.
+  const error = await assertRejects(
+    () => mcp({ name: "endless", transport }),
+    Error,
+  );
+  assertStringIncludes(error.message, "endless");
+  assertStringIncludes(error.message, "100 pages");
+  assertStringIncludes(error.message, "100 tools");
+  // Exactly 100 requests — the loop is bounded, not merely slow.
+  assertEquals(requestedCursors.length, 100);
+});
+
+Deno.test("mcp - a well-behaved paginating server returns every page", async () => {
+  const pages = new Map<
+    string | undefined,
+    { tools: ToolDef[]; nextCursor?: string }
+  >([
+    [undefined, { tools: [pageTool("first")], nextCursor: "p2" }],
+    ["p2", { tools: [pageTool("second")], nextCursor: "p3" }],
+    ["p3", { tools: [pageTool("third")] }],
+  ]);
+  const { transport, requestedCursors } = await paginatingServer((cursor) =>
+    pages.get(cursor)!
+  );
+
+  const connection = await mcp({ name: "paged", transport });
+  try {
+    assertEquals(
+      connection.tools().map((tool) => tool.name),
+      ["paged_first", "paged_second", "paged_third"],
+    );
+    assertEquals(requestedCursors, [undefined, "p2", "p3"]);
+  } finally {
+    await connection.close();
+  }
+});
+
+Deno.test("mcp - refresh hits the same pagination bound as the eager listing", async () => {
+  // Terminate after one page so mcp() connects cleanly; flip to an echo
+  // loop before refreshing to prove the later listing is guarded too.
+  let echo = false;
+  const { transport, requestedCursors } = await paginatingServer(() => ({
+    tools: [pageTool("only")],
+    nextCursor: echo ? "stuck" : undefined,
+  }));
+
+  const connection = await mcp({ name: "flipper", transport });
+  try {
+    assertEquals(
+      connection.tools().map((tool) => tool.name),
+      ["flipper_only"],
+    );
+
+    echo = true;
+    const error = await assertRejects(() => connection.refresh(), Error);
+    assertStringIncludes(error.message, "flipper");
+    assertStringIncludes(error.message, "stuck");
+
+    // The failed refresh leaves the prior snapshot usable.
+    assertEquals(
+      connection.tools().map((tool) => tool.name),
+      ["flipper_only"],
+    );
+    assertEquals(requestedCursors, [undefined, undefined, "stuck"]);
+  } finally {
+    await connection.close();
+  }
+});

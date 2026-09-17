@@ -171,7 +171,7 @@ export async function mcp(options: McpToolsOptions): Promise<McpConnection> {
 
   validateServerName(name);
 
-  const client = await connect(transport);
+  const client = await connect(transport, name);
   try {
     const defs = await client.listTools();
     return new McpConnection({ name, client, defs, allowedTools, timeout });
