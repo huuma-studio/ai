@@ -58,7 +58,6 @@ import type {
   ToolResultContent,
 } from "@/mod.ts";
 import { enums, object, string } from "@huuma/validate";
-import { decision, step, workflow } from "@/workflow/mod.ts";
 
 /** Reserved name of the opt-in control tool that ends a run with a
  * structured `question` or `completion` outcome. */
@@ -291,59 +290,45 @@ export class Agent<T extends string> {
       }
     };
 
-    const askAction = async (messages: Message[]) => {
+    const userMessage: Message = { role: "user", contents: prompt };
+    await emit(userMessage);
+
+    // One tools snapshot per run: the collection is frozen at
+    // construction, so every model request can share a single array.
+    const tools = this.#tools.all();
+
+    // Iterative loop instead of a cyclic Step chain. A recursive chain
+    // suspends one frame set per round — each pinning that iteration's
+    // full message-array snapshot — until the whole run resolves, so a
+    // long run retains O(n^2) memory in conversation length. The loop
+    // keeps only the current array alive; each append still produces a
+    // fresh array so every model request sees an immutable snapshot.
+    let messages: Message[] = [...history, userMessage];
+    while (true) {
       const result = await this.#model.generate({
         modelId: this.#modelId,
         system: this.#systemPrompt,
         messages,
-        tools: this.#tools.all(),
+        tools,
       });
       runUsage = sumModelUsage(runUsage, result.usage);
       await emit(...result.messages);
-      return [...messages, ...result.messages];
-    };
-    const askStep = step(askAction);
+      messages = [...messages, ...result.messages];
 
-    const executeToolCalls = (messages: Message[]) =>
-      this.#executeToolCalls(messages, maxConcurrency);
-    const callToolStep = step(async (messages: Message[]) => {
-      const updated = await executeToolCalls(messages);
+      const last = messages.at(-1);
+      if (last?.role !== "model" || !last.toolCalls?.length) break;
+
+      const updated = await this.#executeToolCalls(messages, maxConcurrency);
       await emit(...updated.slice(messages.length));
-      return updated;
-    });
+      messages = updated;
 
-    const stop = step((messages: Message[]) => messages);
+      // Terminate when the produced tool message contains a successful
+      // `finish_turn` result; otherwise loop back to the model. Sibling
+      // tool failures do not cancel a valid finish_turn.
+      if (endsWithSuccessfulFinishTurn(messages.at(-1))) break;
+    }
 
-    const toolCallCheck = decision<Message[]>({
-      condition: (state) => {
-        const message = [...state].pop();
-        return message?.role === "model" && !!message.toolCalls?.length;
-      },
-      then: callToolStep,
-      else: stop,
-    });
-    askStep.next(toolCallCheck);
-
-    // After tool execution, terminate when the produced tool message
-    // contains a successful `finish_turn` result; otherwise loop back to
-    // the model. Sibling tool failures do not cancel a valid finish_turn.
-    const finishCheck = decision<Message[]>({
-      condition: (state) => endsWithSuccessfulFinishTurn([...state].pop()),
-      then: stop,
-      else: askStep,
-    });
-    callToolStep.next(finishCheck);
-
-    const userMessage: Message = { role: "user", contents: prompt };
-    await emit(userMessage);
-
-    const loop = workflow({
-      name: "Huuma Agent",
-      state: [...history, userMessage],
-      start: askStep,
-    });
-
-    return await loop.start();
+    return messages;
   }
 
   /** Execute the tool calls in the last model message, appending a single
