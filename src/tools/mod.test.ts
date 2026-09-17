@@ -7,6 +7,7 @@ import {
 import { type JSONSchema, object, type Schema, string } from "@huuma/validate";
 import type { Message, ToolMessage } from "@/mod.ts";
 import { callTool, tool, toolOutput, Tools } from "./mod.ts";
+import { toolCallResourceSnapshot } from "./tool_call_resources.ts";
 
 function modelMessageCalling(name: string, id = "call-1"): Message {
   // deno-lint-ignore no-explicit-any
@@ -300,8 +301,45 @@ Deno.test("tool uses the shortest configured or caller timeout", async () => {
   assertEquals(receivedTimeout, 50);
 });
 
+Deno.test("tool releases deadline resources when calls settle", async () => {
+  const quick = tool({
+    name: "quick",
+    description: "Finishes immediately.",
+    input: object({ target: string() }),
+    timeout: 120_000,
+    fn: () => "done",
+  });
+  const failing = tool({
+    name: "failing",
+    description: "Rejects immediately.",
+    input: object({ target: string() }),
+    timeout: 120_000,
+    fn: () => {
+      throw new Error("boom");
+    },
+  });
+  const before = toolCallResourceSnapshot();
+
+  for (let index = 0; index < 1_000; index += 1) {
+    await quick.call({ target: "page" });
+  }
+  await assertRejects(() => failing.call({ target: "page" }), Error, "boom");
+
+  const after = toolCallResourceSnapshot();
+  assertEquals(after.armedTimeouts - before.armedTimeouts, 1_001);
+  assertEquals(after.clearedTimeouts - before.clearedTimeouts, 1_001);
+  assertEquals(after.addedAbortListeners - before.addedAbortListeners, 1_001);
+  assertEquals(
+    after.removedAbortListeners - before.removedAbortListeners,
+    1_001,
+  );
+  assertEquals(after.activeTimeouts, before.activeTimeouts);
+  assertEquals(after.activeAbortListeners, before.activeAbortListeners);
+});
+
 Deno.test("tool rejects and aborts its signal when its timeout expires", async () => {
   let receivedSignal: AbortSignal | undefined;
+  const before = toolCallResourceSnapshot();
   const hanging = tool({
     name: "hanging",
     description: "Never finishes.",
@@ -319,6 +357,13 @@ Deno.test("tool rejects and aborts its signal when its timeout expires", async (
     "The operation was aborted due to timeout",
   );
   assertEquals(receivedSignal?.aborted, true);
+  const after = toolCallResourceSnapshot();
+  assertEquals(after.armedTimeouts - before.armedTimeouts, 1);
+  assertEquals(after.clearedTimeouts - before.clearedTimeouts, 1);
+  assertEquals(after.addedAbortListeners - before.addedAbortListeners, 1);
+  assertEquals(after.removedAbortListeners - before.removedAbortListeners, 1);
+  assertEquals(after.activeTimeouts, before.activeTimeouts);
+  assertEquals(after.activeAbortListeners, before.activeAbortListeners);
 });
 
 Deno.test("callTool forwards cancellation and returns an error result", async () => {
