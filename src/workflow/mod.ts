@@ -59,9 +59,13 @@ export interface Callable<T> {
  * The runner starts the configured callable and follows `.next()` links
  * and {@linkcode Decision} branches recursively until the chain
  * completes. Because the chain recurses through suspended async frames,
- * a cyclic chain retains one frame set — and its state snapshot — per
- * cycle taken: prefer an explicit loop over a `Step` cycle for long or
- * unbounded iteration counts (see {@linkcode Step.call}).
+ * a cyclic chain suspends a fresh frame set per cycle taken and holds
+ * every frame — plus its promise links — until the chain resolves;
+ * whether those frames additionally retain each iteration's state
+ * snapshot depends on the engine's liveness analysis of async
+ * continuations and must be treated as a possible cost (see
+ * {@linkcode Step.call}). Prefer an explicit loop over a `Step` cycle
+ * for long or unbounded iteration counts.
  */
 export class Workflow<T> {
   #name: string;
@@ -151,18 +155,21 @@ export class Step<T> implements Callable<T> {
    * Execute this step and any configured next callable.
    *
    * Chained steps recurse: each `call` awaits the next callable's
-   * `call`, so every earlier step's async frame stays suspended —
-   * holding its `state` argument and locals — until the entire chain
-   * resolves. A linear chain of n steps therefore keeps n frames alive
-   * for the whole run. A cyclic chain (where a later `next` link or
+   * `call`, so every earlier step's async frame stays suspended until
+   * the entire chain resolves. A linear chain of n steps therefore
+   * keeps n frames — and their promise links — alive for the whole
+   * run. A cyclic chain (where a later `next` link or
    * {@linkcode Decision} branch points back to an earlier step)
-   * additionally suspends a fresh frame set on every cycle taken,
-   * retaining one frame set — and with it that iteration's state
-   * snapshot — per iteration: memory grows linearly with the number of
-   * iterations even when each step's state is small, and the
-   * ever-deepening promise chain adds per-link resumption overhead on
-   * every iteration. Drive long or unbounded cycles with an explicit
-   * loop that calls steps directly instead of a `Step` cycle.
+   * suspends a fresh frame set on every cycle taken, so memory grows
+   * linearly with the number of iterations even when each step's state
+   * is small, and the ever-deepening promise chain adds per-link
+   * resumption overhead on every iteration. Suspended frames may also
+   * retain each iteration's `state` snapshot: whether they do depends
+   * on the engine's liveness analysis of async continuations — engines
+   * that pin frame state retain one snapshot per iteration taken — so
+   * treat that as a possible cost of cyclic chains. Drive long or
+   * unbounded cycles with an explicit loop that calls steps directly
+   * instead of a `Step` cycle.
    */
   async call(state: T, count: () => void): Promise<T> {
     count();
@@ -223,10 +230,11 @@ export class Decision<T> implements Callable<T> {
    *
    * Like {@linkcode Step.call}, a decision suspends its frame until the
    * chosen branch (and everything it calls) completes. A branch that
-   * points back to an earlier step creates a cycle, which retains one
-   * suspended frame set — and its state snapshot — per iteration; see
-   * {@linkcode Step.call} for why long or unbounded cycles should be
-   * driven with an explicit loop instead.
+   * points back to an earlier step creates a cycle, which suspends one
+   * additional frame set per iteration — possibly retaining that
+   * iteration's state as well, depending on the engine (see
+   * {@linkcode Step.call}); that is why long or unbounded cycles
+   * should be driven with an explicit loop instead.
    */
   async call(state: T, count: () => void): Promise<T> {
     count();

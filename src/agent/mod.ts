@@ -298,11 +298,12 @@ export class Agent<T extends string> {
     const tools = this.#tools.all();
 
     // Iterative loop instead of a cyclic Step chain. A recursive chain
-    // suspends one frame set per round — each pinning that iteration's
-    // full message-array snapshot — until the whole run resolves, so a
-    // long run retains O(n^2) memory in conversation length. The loop
-    // keeps only the current array alive; each append still produces a
-    // fresh array so every model request sees an immutable snapshot.
+    // suspends one frame set per round until the whole run resolves —
+    // possibly pinning each round's message array as well, depending
+    // on the engine's frame liveness — so a long run can retain O(n^2)
+    // memory in conversation length. The loop keeps only the current
+    // array alive; each append still produces a fresh array so every
+    // model request sees an immutable snapshot.
     let messages: Message[] = [...history, userMessage];
     while (true) {
       const result = await this.#model.generate({
