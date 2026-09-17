@@ -1,4 +1,5 @@
 import {
+  assert,
   assertEquals,
   assertInstanceOf,
   assertRejects,
@@ -6,7 +7,13 @@ import {
 } from "@std/assert";
 import { type JSONSchema, object, type Schema, string } from "@huuma/validate";
 import type { Message, ToolMessage } from "@/mod.ts";
-import { callTool, tool, toolOutput, Tools } from "./mod.ts";
+import {
+  callTool,
+  DEFAULT_CLI_TIMEOUT,
+  tool,
+  toolOutput,
+  Tools,
+} from "./mod.ts";
 import { toolCallResourceSnapshot } from "./tool_call_resources.ts";
 
 function modelMessageCalling(name: string, id = "call-1"): Message {
@@ -36,6 +43,115 @@ function toolResultIds(message: ToolMessage): string[] {
     }
     return content.toolResult.id;
   });
+}
+
+// Sustained-load shape for the Tool.call memory regression tests
+// (spec 61): batches of quick calls that each arm a long deadline, with
+// a forced full GC between batches.
+const SUSTAINED_BATCHES = 10;
+const SUSTAINED_CALLS_PER_BATCH = 1_000;
+// Calibrated against the pre-fix machinery: it retained ~2 KiB per
+// completed call (~2 MiB per 1 000-call batch), while the fixed path
+// stays within ~20 KiB of GC noise between batch medians. The 1 MiB
+// bounds sit far from both behaviors.
+const ALLOWED_HEAP_GROWTH = 1_048_576;
+const REQUIRED_LEGACY_GROWTH = 1_048_576;
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+/**
+ * Medians of the first and last steady-state batch windows. The opening
+ * batches absorb one-time warmup (JIT compilation, lazy runtime state)
+ * and are discarded; retention reads as growth between the windows.
+ */
+function steadyStateMedians(
+  samples: number[],
+): { early: number; late: number } {
+  const steady = samples.slice(3);
+  if (steady.length < 6) {
+    throw new Error("steadyStateMedians needs at least 9 batches");
+  }
+  return {
+    early: median(steady.slice(0, 3)),
+    late: median(steady.slice(-3)),
+  };
+}
+
+function formatBytes(bytes: number): string {
+  return `${(bytes / 1_048_576).toFixed(2)} MiB`;
+}
+
+/**
+ * Runs awaited calls in batches, forcing a full GC after each batch and
+ * recording `Deno.memoryUsage().heapUsed`. Forced GC needs the V8 hook
+ * supplied by the test task's `--v8-flags=--expose-gc`.
+ */
+async function sustainedHeapUsed(
+  batches: number,
+  callsPerBatch: number,
+  call: () => Promise<unknown>,
+): Promise<number[]> {
+  const forceGc = (globalThis as { gc?: () => void }).gc;
+  if (!forceGc) {
+    throw new Error(
+      "forced GC is unavailable; run the suite with " +
+        "`--v8-flags=--expose-gc` (the `deno task test` default)",
+    );
+  }
+  const samples: number[] = [];
+  for (let batch = 0; batch < batches; batch += 1) {
+    for (let index = 0; index < callsPerBatch; index += 1) {
+      await call();
+    }
+    // Drain pending microtasks and queued timer callbacks so the sample
+    // reflects live objects only.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    forceGc();
+    samples.push(Deno.memoryUsage().heapUsed);
+  }
+  return samples;
+}
+
+/**
+ * The pre-fix `Tool.call` deadline machinery: `AbortSignal.timeout` arms
+ * an un-cancellable timer, its signal feeds an `AbortSignal.any`
+ * composite, and the abort listener behind the pending `aborted`
+ * promise is never removed. Completed calls leave the whole island
+ * rooted until the deadline fires — the retention spec 61 fixed.
+ */
+function preFixDeadlineCall(
+  fn: () => string,
+  timeout: number,
+): Promise<string> {
+  const signal = AbortSignal.any([AbortSignal.timeout(timeout)]);
+  const aborted = new Promise<never>((_, reject) => {
+    const rejectOnAbort = () => reject(signal.reason);
+    if (signal.aborted) rejectOnAbort();
+    else signal.addEventListener("abort", rejectOnAbort, { once: true });
+  });
+  const execution = Promise.resolve().then(fn);
+  return Promise.race([execution, aborted]);
+}
+
+/**
+ * The comparison test is opt-in: it arms ten thousand real 120 s
+ * deadline timers and asserts visible growth, so it stays out of the
+ * default suite. `querySync` needs no permission, so runs without
+ * `--allow-env` skip it instead of failing to load.
+ */
+function legacyComparisonRequested(): boolean {
+  const status = Deno.permissions.querySync({
+    name: "env",
+    variable: "HUUMA_TOOL_MEMORY_LEGACY",
+  });
+  return status.state === "granted" &&
+    Deno.env.get("HUUMA_TOOL_MEMORY_LEGACY") === "1";
 }
 
 Deno.test("callTool unwraps toolOutput into result output and files", async () => {
@@ -364,6 +480,56 @@ Deno.test("tool rejects and aborts its signal when its timeout expires", async (
   assertEquals(after.removedAbortListeners - before.removedAbortListeners, 1);
   assertEquals(after.activeTimeouts, before.activeTimeouts);
   assertEquals(after.activeAbortListeners, before.activeAbortListeners);
+});
+
+Deno.test("tool sustained load keeps heap flat between forced GCs", async () => {
+  const quick = tool({
+    name: "sustained",
+    description: "Finishes immediately.",
+    input: object({ target: string() }),
+    // Mirrors the bundled cli default: short calls that each arm a long
+    // deadline — the exact leak scenario from spec 61.
+    timeout: DEFAULT_CLI_TIMEOUT,
+    fn: () => "done",
+  });
+
+  const samples = await sustainedHeapUsed(
+    SUSTAINED_BATCHES,
+    SUSTAINED_CALLS_PER_BATCH,
+    () => quick.call({ target: "page" }),
+  );
+  const { early, late } = steadyStateMedians(samples);
+  const growth = late - early;
+  assert(
+    growth <= ALLOWED_HEAP_GROWTH,
+    `sustained calls grew the heap between batch medians ` +
+      `(${formatBytes(early)} -> ${formatBytes(late)}, +${formatBytes(growth)}): ` +
+      `deadline timers or abort listeners are retained past call completion`,
+  );
+});
+
+Deno.test({
+  name:
+    "pre-fix deadline machinery retains heap under sustained load (comparison)",
+  // Comparison run for the flat-heap test above; documents the growth
+  // the cleanup fix removed. Reproduce on demand with:
+  //   HUUMA_TOOL_MEMORY_LEGACY=1 deno task test src/tools/mod.test.ts
+  ignore: !legacyComparisonRequested(),
+  async fn() {
+    const samples = await sustainedHeapUsed(
+      SUSTAINED_BATCHES,
+      SUSTAINED_CALLS_PER_BATCH,
+      () => preFixDeadlineCall(() => "done", DEFAULT_CLI_TIMEOUT),
+    );
+    const { early, late } = steadyStateMedians(samples);
+    const growth = late - early;
+    assert(
+      growth >= REQUIRED_LEGACY_GROWTH,
+      `expected pre-fix retention growth between batch medians ` +
+        `(${formatBytes(early)} -> ${formatBytes(late)}, +${formatBytes(growth)}): ` +
+        `the comparison no longer shows the original leak and needs recalibrating`,
+    );
+  },
 });
 
 Deno.test("callTool forwards cancellation and returns an error result", async () => {

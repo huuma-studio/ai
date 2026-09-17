@@ -20,7 +20,7 @@
   },
   "tasks": {
     "check": "deno check",
-    "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net",
+    "test": "deno test --allow-read --allow-write --allow-env --allow-run --allow-net --v8-flags=--expose-gc",
     "lint": "deno lint",
     "publish:dry-run": "deno publish --dry-run --allow-dirty"
   },
