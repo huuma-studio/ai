@@ -28,9 +28,26 @@ import type {
 } from "@/tools/mcp/types.ts";
 import denoJson from "../../../deno.json" with { type: "json" };
 
-/** Connect to an MCP server and return the narrow client handle. */
+/**
+ * Hard ceiling on tools/list pagination per listing. A server that keeps
+ * handing back a cursor would otherwise paginate forever, hanging the
+ * eager listing inside `mcp()` and every later `McpConnection.refresh()`.
+ * 100 pages is far beyond any legitimate tool catalog; raise this
+ * consciously if a real server genuinely needs more.
+ */
+const LIST_TOOLS_MAX_PAGES = 100;
+
+/**
+ * Connect to an MCP server and return the narrow client handle.
+ *
+ * @param options Transport configuration (`command` → stdio,
+ * `url` → Streamable HTTP, or a pre-built transport).
+ * @param serverName Namespace the caller configured for this server —
+ * used to attribute pagination-abuse errors to the right server.
+ */
 export async function connect(
   options: McpTransportOptions,
+  serverName: string,
 ): Promise<McpClient> {
   // Sent to every server in the initialize handshake; sourced from
   // deno.json so version bumps can't leave it behind.
@@ -107,9 +124,12 @@ export async function connect(
   return {
     async listTools() {
       const tools: McpToolDef[] = [];
+      const seenCursors = new Set<string>();
       let cursor: string | undefined;
+      let pages = 0;
       do {
         const page = await client.listTools(cursor ? { cursor } : undefined);
+        pages++;
         for (const tool of page.tools) {
           const { name, description, inputSchema, title, icons } = tool;
           tools.push({
@@ -121,6 +141,28 @@ export async function connect(
           });
         }
         cursor = page.nextCursor;
+        // A cursor that was already followed means the server echoes
+        // pagination state (constant cursor or an A→B→A cycle) — stop
+        // immediately instead of re-requesting pages forever.
+        if (cursor && seenCursors.has(cursor)) {
+          throw new Error(
+            `MCP server "${serverName}" returned pagination cursor ` +
+              `"${cursor}" again after ${pages} pages (${tools.length} tools ` +
+              `collected) — the server appears to be echoing pagination ` +
+              `state, refusing to loop`,
+          );
+        }
+        // A server that always hands back a fresh cursor never trips the
+        // echo check; the page cap bounds the loop regardless.
+        if (cursor && pages >= LIST_TOOLS_MAX_PAGES) {
+          throw new Error(
+            `MCP server "${serverName}" is still paginating after ` +
+              `${LIST_TOOLS_MAX_PAGES} pages (${tools.length} tools ` +
+              `collected) — refusing to fetch page ${pages + 1}; raise the ` +
+              `page cap if this server legitimately exposes more tools`,
+          );
+        }
+        if (cursor) seenCursors.add(cursor);
       } while (cursor);
       return tools;
     },
