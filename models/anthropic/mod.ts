@@ -85,6 +85,12 @@ export interface AnthropicGenerateOptions {
     /** Thinking configuration, e.g. `{ type: "adaptive" }`. */
     thinking?: Anthropic.ThinkingConfigParam;
   };
+
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -122,7 +128,8 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options }: AnthropicGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      AnthropicGenerateOptions,
   ): Promise<ModelResult<ClaudeModels>> {
     const response = await this.#client.messages.create({
       model: modelId,
@@ -132,7 +139,7 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
       tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
       messages: anthropicMessagesFrom(messages),
       stream: false,
-    });
+    }, { signal });
 
     return modelResultFrom(
       modelId,
@@ -157,7 +164,8 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options }: AnthropicGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      AnthropicGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<ClaudeModels>>> {
     const stream = await this.#client.messages.create({
       model: modelId,
@@ -167,7 +175,7 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
       tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
       messages: anthropicMessagesFrom(messages),
       stream: true,
-    });
+    }, { signal });
 
     return streamMessages(stream, modelId);
   }

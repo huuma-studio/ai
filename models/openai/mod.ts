@@ -73,6 +73,12 @@ export interface OpenAIGenerateOptions {
 
   /** Additional OpenAI chat completion options. */
   options?: OpenAIRequestOptions;
+
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -98,7 +104,8 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options }: OpenAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      OpenAIGenerateOptions,
   ): Promise<ModelResult<OpenAIModels>> {
     const response = await this.#client.chat.completions.create({
       ...options,
@@ -106,7 +113,7 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
       messages: openAIMessagesFrom(messages, system),
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: false,
-    });
+    }, { signal });
 
     const choice = response.choices[0];
     if (!choice) {
@@ -131,7 +138,8 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options }: OpenAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      OpenAIGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<OpenAIModels>>> {
     const stream = await this.#client.chat.completions.create({
       ...options,
@@ -140,7 +148,7 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: true,
       stream_options: { include_usage: true },
-    });
+    }, { signal });
 
     return streamCompletions(stream, modelId);
   }

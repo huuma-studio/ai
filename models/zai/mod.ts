@@ -103,6 +103,12 @@ export interface ZAIGenerateOptions {
 
   /** Additional Z.AI chat completion options. */
   options?: ZAIRequestOptions;
+
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -131,7 +137,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options }: ZAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal }: ZAIGenerateOptions,
   ): Promise<ModelResult<ZAIModels>> {
     const response = await this.#client.chat.completions.create({
       ...options,
@@ -139,7 +145,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
       messages: zaiMessagesFrom(messages, system),
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: false,
-    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, { signal });
 
     const choice = response.choices[0];
     if (!choice) {
@@ -164,7 +170,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options }: ZAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal }: ZAIGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<ZAIModels>>> {
     const stream = await this.#client.chat.completions.create({
       ...options,
@@ -173,7 +179,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
       tools: tools?.length ? openAIToolsFrom(tools) : undefined,
       stream: true,
       stream_options: { include_usage: true },
-    } as OpenAI.Chat.ChatCompletionCreateParamsStreaming);
+    } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal });
 
     return streamCompletions(stream, modelId);
   }
