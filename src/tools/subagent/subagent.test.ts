@@ -160,3 +160,69 @@ Deno.test("subagent - propagates sub-agent errors", async () => {
     "No scripted response left",
   );
 });
+
+Deno.test("subagent - aborting the tool call aborts the sub-agent run", async () => {
+  const controller = new AbortController();
+  const reason = new Error("stop");
+  let childSignal: AbortSignal | undefined;
+  const hanging: BaseModel<string> = {
+    generate(args: unknown) {
+      childSignal = (args as { signal?: AbortSignal }).signal;
+      controller.abort(reason);
+      return new Promise(() => {});
+    },
+    stream: () => Promise.reject(new Error("Not implemented")),
+  };
+  const delegate = subagent({
+    name: "delegate",
+    description: "Delegate a task.",
+    agent: agent({ model: hanging, modelId: "stub", systemPrompt: "" }),
+  });
+
+  const error = await assertRejects(() =>
+    delegate.call({ prompt: "go" }, { signal: controller.signal })
+  );
+
+  assertEquals(error, reason);
+  assertEquals(childSignal?.aborted, true);
+});
+
+Deno.test("subagent - a parent run abort reaches every in-flight sub-agent", async () => {
+  const controller = new AbortController();
+  const childSignals: AbortSignal[] = [];
+  const hanging: BaseModel<string> = {
+    generate(args: unknown) {
+      childSignals.push((args as { signal: AbortSignal }).signal);
+      if (childSignals.length === 2) controller.abort();
+      return new Promise(() => {});
+    },
+    stream: () => Promise.reject(new Error("Not implemented")),
+  };
+  const delegate = subagent({
+    name: "delegate",
+    description: "Delegate a task.",
+    agent: agent({ model: hanging, modelId: "stub", systemPrompt: "" }),
+  });
+  const calls = [
+    { id: "a", name: "delegate", props: { prompt: "a" } as unknown as JSONSchema },
+    { id: "b", name: "delegate", props: { prompt: "b" } as unknown as JSONSchema },
+  ];
+  const parent = agent({
+    model: new StubModel([[{
+      role: "model",
+      contents: calls.map((toolCall) => ({ toolCall })),
+      toolCalls: calls,
+    }]]),
+    modelId: "stub",
+    systemPrompt: "",
+    tools: [delegate],
+  });
+
+  const error = await assertRejects(() =>
+    parent.run("go", [], { signal: controller.signal })
+  );
+
+  assertEquals((error as DOMException).name, "AbortError");
+  assertEquals(childSignals.length, 2);
+  assertEquals(childSignals.every((signal) => signal.aborted), true);
+});

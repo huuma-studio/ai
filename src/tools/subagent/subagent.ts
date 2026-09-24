@@ -31,7 +31,9 @@ function finalText(messages: Message[]): string {
  * prompt) and only its final assistant text is returned to the parent;
  * intermediate messages stay in the sub-agent. Each call starts fresh —
  * no parent history is shared — so the tool description should instruct
- * the parent model to send self-contained prompts.
+ * the parent model to send self-contained prompts. Cancelling the tool
+ * call — through the parent run's signal or the tool's timeout — aborts
+ * the sub-agent's run as well.
  *
  * @example
  * ```typescript
@@ -67,8 +69,8 @@ export function subagent<T extends string>(
     input: object({
       prompt: string(),
     }),
-    fn: async ({ prompt }) => {
-      const messages = await agent.run(prompt);
+    fn: async ({ prompt }, { signal }) => {
+      const messages = await agent.run(prompt, [], { signal });
       return finalText(messages);
     },
   });

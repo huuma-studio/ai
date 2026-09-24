@@ -21,6 +21,23 @@ const messages = await assistant.run("Check the current Deno version.");
 console.log(messages.at(-1));
 ```
 
+A run makes at most 100 model calls by default and then rejects, so a model
+that keeps requesting tools cannot loop and bill without bound. Set
+`maxModelCalls` on the agent to change the cap (`Infinity` disables it), or on a
+single run to lower it. Pass a `signal` to stop a run early: `run()` rejects with
+the abort reason, and the signal reaches the model adapter, every tool call,
+and any `subagent` run the agent started.
+
+```typescript
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 60_000);
+
+await assistant.run("Upgrade the dependencies.", [], {
+  signal: controller.signal,
+  maxModelCalls: 20,
+});
+```
+
 CLI commands run with stdin closed. Tools that can prompt or open a pager should
 also receive their command-specific non-interactive environment settings. For
 example, configure GitHub CLI like this:

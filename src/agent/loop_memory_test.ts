@@ -224,10 +224,10 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
     modelId: "loop",
     systemPrompt: "Be helpful.",
     tools: [echo],
+    // Lift the model-call cap so this run is not limited by it.
+    maxModelCalls: Infinity,
   });
 
-  // When a model-call cap lands (spec #58), raise it here so this run
-  // is not limited by it.
   const messages = await assistant.run("Drive the loop.");
 
   // Drop the final control array; every earlier control died during
