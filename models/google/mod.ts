@@ -38,6 +38,7 @@ import type {
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import { fileSourceFrom } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
+import { abortable } from "@/model/abortable.ts";
 
 // Shutdown date: October 16, 2026
 type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
@@ -95,6 +96,13 @@ export interface GoogleGenAiGenerateOptions {
     /** Thinking/reasoning configuration. */
     thinkingConfig?: ThinkingConfig;
   };
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error. Passed to Gemini as
+   * `config.abortSignal`, which only cancels the client side: the
+   * server may keep processing and billing the request.
+   */
+  signal?: AbortSignal;
 }
 
 /** Google Gemini adapter implementing the common model interface. */
@@ -113,7 +121,8 @@ export class GoogleGenAIModel implements BaseModel {
 
   /** Generate a complete Gemini response. */
   async generate(
-    { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
     const response = await this.#model.models
       .generateContent({
@@ -123,6 +132,7 @@ export class GoogleGenAIModel implements BaseModel {
           thinkingConfig: options?.thinkingConfig,
           systemInstruction: system,
           tools: tools?.length ? googleToolsFrom(tools) : undefined,
+          abortSignal: signal,
         },
       });
     return modelResultFrom(
@@ -139,7 +149,8 @@ export class GoogleGenAIModel implements BaseModel {
    * that reported usage metadata.
    */
   async stream(
-    { modelId, messages, tools, system, options }: GoogleGenAiGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      GoogleGenAiGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
     const stream = await this.#model.models.generateContentStream({
       model: modelId,
@@ -148,9 +159,10 @@ export class GoogleGenAIModel implements BaseModel {
         systemInstruction: system,
         thinkingConfig: options?.thinkingConfig,
         tools: tools?.length ? googleToolsFrom(tools) : undefined,
+        abortSignal: signal,
       },
     });
-    return streamMessages(stream, modelId);
+    return abortable(streamMessages(stream, modelId), signal);
   }
 }
 

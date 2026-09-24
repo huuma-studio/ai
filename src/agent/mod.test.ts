@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { agent, FINISH_TURN_TOOL } from "@/agent/mod.ts";
+import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
+import { agent, DEFAULT_MAX_MODEL_CALLS, FINISH_TURN_TOOL } from "@/agent/mod.ts";
 import type {
   BaseModel,
   JSONSchema,
@@ -1291,4 +1291,336 @@ Deno.test("agent - invalid per-run maxConcurrency rejects before any model call"
     "maxConcurrency must be a positive integer",
   );
   assertEquals(model.calls.length, 0);
+});
+
+// --- maxModelCalls -------------------------------------------------------
+
+/** Model whose every response is produced by `respond`, recording the
+ * generate arguments — lets tests loop forever or hang on demand. */
+class FnModel implements BaseModel<string> {
+  calls: { messages: Message[]; signal?: AbortSignal }[] = [];
+  #respond: (call: number) => Promise<Message[]> | Message[];
+
+  constructor(respond: (call: number) => Promise<Message[]> | Message[]) {
+    this.#respond = respond;
+  }
+
+  async generate(args: unknown): Promise<ModelResult<string>> {
+    const { messages, signal } = args as {
+      messages: Message[];
+      signal?: AbortSignal;
+    };
+    this.calls.push({ messages, signal });
+    return {
+      modelId: "stub",
+      messages: await this.#respond(this.calls.length),
+    };
+  }
+
+  stream(): Promise<AsyncGenerator<ModelResult>> {
+    return Promise.reject(new Error("Not implemented"));
+  }
+}
+
+function toolCallMessage(name: string, id = "call-1"): Message {
+  const toolCall = { id, name, props: {} as unknown as JSONSchema };
+  return { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] };
+}
+
+const noop = tool({
+  name: "noop",
+  description: "Does nothing.",
+  input: object({}),
+  fn: () => "ok",
+});
+
+function loopingAgent(
+  model: FnModel,
+  options: { maxModelCalls?: number } = {},
+) {
+  return agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [noop],
+    ...options,
+  });
+}
+
+Deno.test("agent - maxModelCalls stops a run that never stops calling tools", async () => {
+  const model = new FnModel(() => [toolCallMessage("noop")]);
+
+  await assertRejects(
+    () => loopingAgent(model, { maxModelCalls: 3 }).run("Loop"),
+    Error,
+    'Agent run exceeded maxModelCalls (3) without finishing; last tool called: "noop"',
+  );
+  assertEquals(model.calls.length, 3);
+});
+
+Deno.test("agent - maxModelCalls defaults to DEFAULT_MAX_MODEL_CALLS", async () => {
+  const model = new FnModel(() => [toolCallMessage("noop")]);
+
+  await assertRejects(
+    () => loopingAgent(model).run("Loop"),
+    Error,
+    `maxModelCalls (${DEFAULT_MAX_MODEL_CALLS})`,
+  );
+  assertEquals(model.calls.length, DEFAULT_MAX_MODEL_CALLS);
+});
+
+Deno.test("agent - maxModelCalls Infinity disables the cap", async () => {
+  const total = DEFAULT_MAX_MODEL_CALLS + 20;
+  const model = new FnModel((call) =>
+    call < total ? [toolCallMessage("noop")] : [modelMessage("Done.")]
+  );
+
+  const messages = await loopingAgent(model, { maxModelCalls: Infinity })
+    .run("Loop");
+
+  assertEquals(model.calls.length, total);
+  assertEquals(messages.at(-1), modelMessage("Done."));
+});
+
+Deno.test("agent - an agent-level maxModelCalls above the default applies", async () => {
+  const model = new FnModel(() => [toolCallMessage("noop")]);
+  const cap = DEFAULT_MAX_MODEL_CALLS + 5;
+
+  await assertRejects(
+    () => loopingAgent(model, { maxModelCalls: cap }).run("Loop"),
+    Error,
+    `maxModelCalls (${cap})`,
+  );
+  assertEquals(model.calls.length, cap);
+});
+
+Deno.test("agent - the smaller of agent and per-run maxModelCalls applies", async () => {
+  const lowerPerRun = new FnModel(() => [toolCallMessage("noop")]);
+  await assertRejects(
+    () =>
+      loopingAgent(lowerPerRun, { maxModelCalls: 5 }).run("Loop", [], {
+        maxModelCalls: 2,
+      }),
+    Error,
+    "maxModelCalls (2)",
+  );
+  assertEquals(lowerPerRun.calls.length, 2);
+
+  const higherPerRun = new FnModel(() => [toolCallMessage("noop")]);
+  await assertRejects(
+    () =>
+      loopingAgent(higherPerRun, { maxModelCalls: 2 }).run("Loop", [], {
+        maxModelCalls: Infinity,
+      }),
+    Error,
+    "maxModelCalls (2)",
+  );
+  assertEquals(higherPerRun.calls.length, 2);
+});
+
+Deno.test("agent - a run finishing exactly at maxModelCalls succeeds", async () => {
+  const model = new FnModel((call) =>
+    call < 3 ? [toolCallMessage("noop")] : [modelMessage("Done.")]
+  );
+
+  const messages = await loopingAgent(model, { maxModelCalls: 3 }).run("Go");
+
+  assertEquals(model.calls.length, 3);
+  assertEquals(messages.at(-1), modelMessage("Done."));
+});
+
+Deno.test("agent - invalid maxModelCalls fails construction and runs", async () => {
+  for (const maxModelCalls of [0, -1, 1.5, NaN, -Infinity]) {
+    assertThrows(
+      () => loopingAgent(new FnModel(() => []), { maxModelCalls }),
+      TypeError,
+      "maxModelCalls must be a positive integer or Infinity",
+    );
+  }
+
+  const model = new FnModel(() => [modelMessage("Hi")]);
+  await assertRejects(
+    () => loopingAgent(model).run("Hi", [], { maxModelCalls: 0 }),
+    TypeError,
+    "maxModelCalls must be a positive integer or Infinity",
+  );
+  assertEquals(model.calls.length, 0);
+});
+
+// --- run cancellation ----------------------------------------------------
+
+Deno.test("agent - an already-aborted signal rejects before any model call", async () => {
+  const model = new FnModel(() => [modelMessage("Hi")]);
+  const emitted: Message[] = [];
+  const controller = new AbortController();
+  const reason = new Error("stop");
+  controller.abort(reason);
+
+  const error = await assertRejects(() =>
+    loopingAgent(model).run("Hi", [], {
+      signal: controller.signal,
+      onMessage: (message) => {
+        emitted.push(message);
+      },
+    })
+  );
+
+  assertStrictEquals(error, reason);
+  assertEquals(model.calls.length, 0);
+  assertEquals(emitted, []);
+});
+
+Deno.test("agent - aborting rejects with an AbortError when no reason is given", async () => {
+  const controller = new AbortController();
+  controller.abort();
+
+  const error = await assertRejects(() =>
+    loopingAgent(new FnModel(() => [])).run("Hi", [], {
+      signal: controller.signal,
+    })
+  );
+
+  assertEquals((error as DOMException).name, "AbortError");
+});
+
+Deno.test("agent - the run signal is passed to the model adapter", async () => {
+  const model = new FnModel(() => [modelMessage("Hi")]);
+  const controller = new AbortController();
+
+  await loopingAgent(model).run("Hi", [], { signal: controller.signal });
+
+  assertStrictEquals(model.calls[0].signal, controller.signal);
+});
+
+Deno.test("agent - aborting during a model call rejects without waiting for the adapter", async () => {
+  const controller = new AbortController();
+  const reason = new Error("stop");
+  // An adapter that ignores the signal and never settles on its own.
+  const model = new FnModel(() => {
+    controller.abort(reason);
+    return new Promise<Message[]>(() => {});
+  });
+
+  const error = await assertRejects(() =>
+    loopingAgent(model).run("Hi", [], { signal: controller.signal })
+  );
+
+  assertStrictEquals(error, reason);
+  assertEquals(model.calls.length, 1);
+});
+
+Deno.test("agent - aborting during a tool batch aborts the tools and makes no further model call", async () => {
+  const controller = new AbortController();
+  const reason = new Error("stop");
+  const toolSignals: AbortSignal[] = [];
+  const blocking = tool({
+    name: "blocking",
+    description: "Waits until aborted.",
+    input: object({}),
+    fn: (_props, { signal }) => {
+      toolSignals.push(signal);
+      controller.abort(reason);
+      return new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason))
+      );
+    },
+  });
+  const model = new FnModel(() => [toolCallMessage("blocking")]);
+  const emitted: Message[] = [];
+
+  const error = await assertRejects(() =>
+    agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      tools: [blocking],
+    }).run("Hi", [], {
+      signal: controller.signal,
+      onMessage: (message) => {
+        emitted.push(message);
+      },
+    })
+  );
+
+  assertStrictEquals(error, reason);
+  assertEquals(toolSignals.length, 1);
+  assertEquals(toolSignals[0].aborted, true);
+  assertEquals(model.calls.length, 1);
+  // The tool results of the aborted batch are still emitted, so a caller
+  // resuming from emitted messages has no dangling tool call.
+  assertEquals(emitted.at(-1)?.role, "tool");
+});
+
+Deno.test("agent - duplicate finish_turn batches forward the run signal to sibling tools", async () => {
+  const controller = new AbortController();
+  const received: AbortSignal[] = [];
+  const probe = tool({
+    name: "probe",
+    description: "Records its signal.",
+    input: object({}),
+    fn: (_props, { signal }) => {
+      received.push(signal);
+      return "ok";
+    },
+  });
+  const probeCall = { id: "call-3", name: "probe", props: {} as JSONSchema };
+  const model = new FnModel((call) =>
+    call === 1
+      ? [{
+        role: "model",
+        contents: [
+          finishTurnCall("call-1", "completion", "A."),
+          finishTurnCall("call-2", "completion", "B."),
+          { toolCall: probeCall },
+        ],
+        toolCalls: [
+          finishTurnCall("call-1", "completion", "A.").toolCall,
+          finishTurnCall("call-2", "completion", "B.").toolCall,
+          probeCall,
+        ],
+      }]
+      : [modelMessage("Done.")]
+  );
+
+  await agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [probe],
+    finishTurn: true,
+  }).run("Hi", [], { signal: controller.signal });
+
+  assertEquals(received.length, 1);
+  controller.abort();
+  assertEquals(received[0].aborted, true);
+});
+
+Deno.test("agent - aborting while the final message is delivered rejects the run", async () => {
+  for (const finishTurn of [false, true]) {
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    const model = new FnModel(() =>
+      finishTurn
+        ? [finishTurnModelMessage(finishTurnCall("call-1", "completion", "Done."))]
+        : [modelMessage("Done.")]
+    );
+    const finalRole = finishTurn ? "tool" : "model";
+
+    const error = await assertRejects(() =>
+      agent({
+        model,
+        modelId: "stub",
+        systemPrompt: "Be helpful.",
+        finishTurn,
+      }).run("Hi", [], {
+        signal: controller.signal,
+        onMessage: (message) => {
+          if (message.role === finalRole) controller.abort(reason);
+        },
+      })
+    );
+
+    assertStrictEquals(error, reason);
+    assertEquals(model.calls.length, 1);
+  }
 });

@@ -14,7 +14,7 @@
  *
  * @module
  */
-import { type ChatResponse, Ollama } from "ollama";
+import { type ChatResponse, type Config, Ollama } from "ollama";
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import type {
   FileContent,
@@ -26,6 +26,7 @@ import type {
 import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
+import { abortable } from "@/model/abortable.ts";
 /**
  * Ollama models currently available.
  * This list is not exhaustive as Ollama models can be pulled dynamically.
@@ -100,6 +101,12 @@ export interface OllamaGenerateOptions {
    * Controls how long the model will stay loaded into memory following the request (default: 5m).
    */
   keep_alive?: string | number;
+
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -107,6 +114,7 @@ export interface OllamaGenerateOptions {
  */
 export class OllamaModel implements BaseModel<OllamaModels> {
   private client: Ollama;
+  private config: Partial<Config>;
   private host?: string;
 
   /**
@@ -120,9 +128,28 @@ export class OllamaModel implements BaseModel<OllamaModels> {
     // Validate security before creating client
     assertValidHostUrl(options?.host, !!apiKey);
 
-    this.client = new Ollama({
+    this.config = {
       host,
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    };
+    this.client = new Ollama(this.config);
+  }
+
+  /**
+   * Returns the client for one request. The Ollama SDK takes no
+   * per-request signal, so a cancellable request gets its own client
+   * whose fetch also listens to `signal`; clients are plain config
+   * holders and cheap to create.
+   */
+  private clientFor(signal?: AbortSignal): Ollama {
+    if (!signal) return this.client;
+    return new Ollama({
+      ...this.config,
+      fetch: (input, init) =>
+        fetch(input, {
+          ...init,
+          signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+        }),
     });
   }
 
@@ -143,7 +170,7 @@ export class OllamaModel implements BaseModel<OllamaModels> {
 
     const tools = options.tools ? ollamaToolsFrom(options.tools) : undefined;
 
-    const response = await this.client.chat({
+    const response = await this.clientFor(options.signal).chat({
       model: options.modelId,
       messages,
       tools,
@@ -173,7 +200,7 @@ export class OllamaModel implements BaseModel<OllamaModels> {
 
     const tools = options.tools ? ollamaToolsFrom(options.tools) : undefined;
 
-    const stream = await this.client.chat({
+    const stream = await this.clientFor(options.signal).chat({
       model: options.modelId,
       messages,
       tools,
@@ -183,11 +210,14 @@ export class OllamaModel implements BaseModel<OllamaModels> {
       stream: true,
     });
 
-    return (async function* () {
-      for await (const chunk of stream) {
-        yield modelResultFrom(chunk);
-      }
-    })();
+    return abortable(
+      (async function* () {
+        for await (const chunk of stream) {
+          yield modelResultFrom(chunk);
+        }
+      })(),
+      options.signal,
+    );
   }
 }
 

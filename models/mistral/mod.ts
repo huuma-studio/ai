@@ -42,6 +42,7 @@ import type {
 } from "@/mod.ts";
 // Tool instances are accepted structurally via ToolLike.
 import type { JSONSchema, Schema } from "@huuma/validate";
+import { abortable } from "@/model/abortable.ts";
 
 type Mistral_Large_Latest = "mistral-large-latest";
 type Mistral_Medium_Latest = "mistral-medium-latest";
@@ -109,6 +110,12 @@ export interface MistralGenerateOptions {
 
   /** Additional Mistral chat completion options. */
   options?: MistralRequestOptions;
+
+  /**
+   * Cancels the request. Aborting rejects the pending call and, for
+   * streams, ends iteration with the abort error.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -148,7 +155,8 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options }: MistralGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      MistralGenerateOptions,
   ): Promise<ModelResult<MistralModels>> {
     const response = await this.#client.chat.complete({
       ...options,
@@ -156,7 +164,7 @@ export class MistralModel implements BaseModel<MistralModels> {
       messages: mistralMessagesFrom(messages, system),
       tools: tools?.length ? mistralToolsFrom(tools) : undefined,
       stream: false,
-    } as ChatCompletionRequest);
+    } as ChatCompletionRequest, { signal });
 
     const choice = response.choices[0];
     if (!choice) {
@@ -181,7 +189,8 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options }: MistralGenerateOptions,
+    { modelId, messages, tools, system, options, signal }:
+      MistralGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<MistralModels>>> {
     const stream = await this.#client.chat.stream({
       ...options,
@@ -189,9 +198,9 @@ export class MistralModel implements BaseModel<MistralModels> {
       messages: mistralMessagesFrom(messages, system),
       tools: tools?.length ? mistralToolsFrom(tools) : undefined,
       stream: true,
-    } as ChatCompletionStreamRequest);
+    } as ChatCompletionStreamRequest, { signal });
 
-    return streamCompletions(stream, modelId);
+    return abortable(streamCompletions(stream, modelId), signal);
   }
 }
 

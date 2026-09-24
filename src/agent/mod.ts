@@ -22,6 +22,14 @@
  *
  * // Continue the conversation by passing the previous messages as history.
  * const followUp = await assistant.run("And the previous version?", messages);
+ *
+ * // Runs make at most 100 model calls by default (`maxModelCalls`), and a
+ * // signal stops a run early — run() then rejects with the abort reason.
+ * const controller = new AbortController();
+ * await assistant.run("Upgrade the dependencies.", [], {
+ *   signal: controller.signal,
+ *   maxModelCalls: 20,
+ * });
  * ```
  *
  * @module
@@ -123,6 +131,63 @@ function formatRejection(reason: unknown): string {
   return String(reason);
 }
 
+/** Default upper bound on model calls per run, applied when neither
+ * {@link AgentOptions.maxModelCalls} nor {@link RunOptions.maxModelCalls}
+ * is set. */
+export const DEFAULT_MAX_MODEL_CALLS = 100;
+
+/** Validate a `maxModelCalls` option. `undefined` means "not configured";
+ * `Infinity` disables the cap; anything else must be a positive integer. */
+function validateMaxModelCalls(maxModelCalls: number | undefined): void {
+  if (
+    maxModelCalls !== undefined && maxModelCalls !== Infinity &&
+    (!Number.isInteger(maxModelCalls) || maxModelCalls < 1)
+  ) {
+    throw new TypeError(
+      "maxModelCalls must be a positive integer or Infinity",
+    );
+  }
+}
+
+/** Reason a run rejects with once its signal aborts, following the
+ * `AbortError` convention of {@linkcode Tool.call}. */
+function runAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Agent run aborted", "AbortError");
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw runAbortReason(signal);
+}
+
+/** Settle with `promise`, or reject with the abort reason as soon as
+ * `signal` aborts — whichever happens first. Adapters that cannot cancel
+ * their transport would otherwise hold the run until the provider
+ * responds. The listener is removed once `promise` settles, so a
+ * long-lived signal does not accumulate one listener per model call. */
+function raceAbort<R>(promise: Promise<R>, signal?: AbortSignal): Promise<R> {
+  if (!signal) return promise;
+  return new Promise<R>((resolve, reject) => {
+    const onAbort = () => reject(runAbortReason(signal));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() =>
+      signal.removeEventListener("abort", onAbort)
+    );
+  });
+}
+
+/** Name of the most recent tool the model called, used to make a
+ * `maxModelCalls` error point at the likely loop. */
+function lastToolCallName(messages: Message[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === "model" && message.toolCalls?.length) {
+      return message.toolCalls.at(-1)?.name;
+    }
+  }
+  return undefined;
+}
+
 /** Callback invoked for each message emitted during an agent run.
  *
  * The callback is awaited before the run continues, so within a single
@@ -169,6 +234,15 @@ export interface RunOptions {
    * overlap in execution during this run. Overrides the agent-level
    * {@link AgentOptions.maxConcurrency} for this run. */
   maxConcurrency?: number;
+  /** Maximum number of model calls this run may make. When the
+   * agent-level {@link AgentOptions.maxModelCalls} is also set, the
+   * smaller of the two applies. */
+  maxModelCalls?: number;
+  /** Cancels the run. Once aborted, {@link Agent.run} rejects with the
+   * signal's reason and starts no further model call or tool execution.
+   * The signal is forwarded to the model adapter and to every tool call,
+   * so in-flight work can stop as well where it supports cancellation. */
+  signal?: AbortSignal;
 }
 
 /** Options used to create an agent. */
@@ -211,6 +285,15 @@ export interface AgentOptions<T extends string> {
    * {@link RunOptions.maxConcurrency} overrides this value.
    */
   maxConcurrency?: number;
+  /**
+   * Maximum number of model calls a single run may make. A model that
+   * keeps requesting tools would otherwise loop — and bill — without
+   * bound. Exceeding the cap rejects {@link Agent.run} before the next
+   * model call. Defaults to {@link DEFAULT_MAX_MODEL_CALLS}; pass
+   * `Infinity` to disable the cap. Per-run
+   * {@link RunOptions.maxModelCalls} can only lower it.
+   */
+  maxModelCalls?: number;
 }
 
 /** Agent that loops over model responses and tool calls. */
@@ -223,6 +306,7 @@ export class Agent<T extends string> {
   #onMessageError?: OnMessageError;
   #finishTurn: boolean;
   #maxConcurrency?: number;
+  #maxModelCalls?: number;
   /** Create an agent instance. */
   constructor(
     {
@@ -234,6 +318,7 @@ export class Agent<T extends string> {
       onMessageError,
       finishTurn,
       maxConcurrency,
+      maxModelCalls,
     }: AgentOptions<T>,
   ) {
     this.#model = model;
@@ -244,6 +329,8 @@ export class Agent<T extends string> {
     this.#finishTurn = finishTurn ?? false;
     validateMaxConcurrency(maxConcurrency);
     this.#maxConcurrency = maxConcurrency;
+    validateMaxModelCalls(maxModelCalls);
+    this.#maxModelCalls = maxModelCalls;
     tools?.forEach((tool) => {
       if (tool.name === FINISH_TURN_TOOL) {
         throw new Error(
@@ -262,8 +349,11 @@ export class Agent<T extends string> {
    * and provider; unsupported mimeType/source combinations throw at
    * request time.
    * @param history Prior conversation messages to continue from.
-   * @param options Per-run options such as an {@link OnMessage} callback.
+   * @param options Per-run options such as an {@link OnMessage} callback
+   * or a cancellation signal.
    * @returns The full conversation history including tool results.
+   * @throws The signal's abort reason when {@link RunOptions.signal}
+   * aborts, or an `Error` when the run exceeds its `maxModelCalls` cap.
    */
   async run(
     prompt: string | (TextContent | FileContent)[],
@@ -273,6 +363,14 @@ export class Agent<T extends string> {
     const maxConcurrency = options?.maxConcurrency ??
       this.#maxConcurrency;
     validateMaxConcurrency(maxConcurrency);
+    validateMaxModelCalls(options?.maxModelCalls);
+    const configuredCaps = [this.#maxModelCalls, options?.maxModelCalls]
+      .filter((cap): cap is number => cap !== undefined);
+    const maxModelCalls = configuredCaps.length > 0
+      ? Math.min(...configuredCaps)
+      : DEFAULT_MAX_MODEL_CALLS;
+    const signal = options?.signal;
+    throwIfAborted(signal);
     const onMessage = options?.onMessage ?? this.#onMessage;
     const onMessageError = options?.onMessageError ??
       this.#onMessageError ?? "warn";
@@ -305,13 +403,27 @@ export class Agent<T extends string> {
     // array alive; each append still produces a fresh array so every
     // model request sees an immutable snapshot.
     let messages: Message[] = [...history, userMessage];
+    let modelCalls = 0;
     while (true) {
-      const result = await this.#model.generate({
-        modelId: this.#modelId,
-        system: this.#systemPrompt,
-        messages,
-        tools,
-      });
+      throwIfAborted(signal);
+      if (modelCalls >= maxModelCalls) {
+        const lastTool = lastToolCallName(messages);
+        throw new Error(
+          `Agent run exceeded maxModelCalls (${maxModelCalls}) without finishing` +
+            (lastTool ? `; last tool called: "${lastTool}"` : ""),
+        );
+      }
+      modelCalls += 1;
+      const result = await raceAbort(
+        this.#model.generate({
+          modelId: this.#modelId,
+          system: this.#systemPrompt,
+          messages,
+          tools,
+          signal,
+        }),
+        signal,
+      );
       runUsage = sumModelUsage(runUsage, result.usage);
       await emit(...result.messages);
       messages = [...messages, ...result.messages];
@@ -319,7 +431,12 @@ export class Agent<T extends string> {
       const last = messages.at(-1);
       if (last?.role !== "model" || !last.toolCalls?.length) break;
 
-      const updated = await this.#executeToolCalls(messages, maxConcurrency);
+      throwIfAborted(signal);
+      const updated = await this.#executeToolCalls(
+        messages,
+        maxConcurrency,
+        signal,
+      );
       await emit(...updated.slice(messages.length));
       messages = updated;
 
@@ -329,6 +446,9 @@ export class Agent<T extends string> {
       if (endsWithSuccessfulFinishTurn(messages.at(-1))) break;
     }
 
+    // An abort during the final onMessage delivery must still reject:
+    // run() settles successfully only if the signal never fired.
+    throwIfAborted(signal);
     return messages;
   }
 
@@ -343,10 +463,12 @@ export class Agent<T extends string> {
    *
    * `maxConcurrency` bounds how many calls of the batch may overlap,
    * uniformly across both the delegated `callTool` path and the
-   * duplicate-`finish_turn` path. */
+   * duplicate-`finish_turn` path, and `signal` reaches every call on
+   * both paths. */
   async #executeToolCalls(
     messages: Message[],
     maxConcurrency?: number,
+    signal?: AbortSignal,
   ): Promise<Message[]> {
     const lastMessage = messages.at(-1);
     if (!lastMessage || lastMessage.role !== "model") return messages;
@@ -357,7 +479,7 @@ export class Agent<T extends string> {
       tc.name === FINISH_TURN_TOOL
     ).length;
     if (!this.#finishTurn || finishTurnCount <= 1) {
-      return await callTool(this.#tools, { maxConcurrency })(messages);
+      return await callTool(this.#tools, { maxConcurrency, signal })(messages);
     }
 
     const duplicateError =
@@ -369,7 +491,7 @@ export class Agent<T extends string> {
           throw new Error(duplicateError);
         }
         const tool = this.#tools.get(toolCall.name);
-        const output = await tool.call(toolCall.props);
+        const output = await tool.call(toolCall.props, { signal });
         const wrapped = output instanceof ToolOutput;
         return {
           toolResult: {
