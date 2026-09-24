@@ -63,11 +63,24 @@ async function cancellableServer() {
     .createLinkedPair();
   await server.connect(serverTransport);
 
-  /** Resolves once `count` pending requests have reached the server. */
+  /** Resolves once `count` pending requests have reached the server, and
+   * rejects after a deadline — a request that never arrives must fail the
+   * test rather than stall the run. */
   const started = (count: number) =>
-    new Promise<void>((resolve) => {
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `only ${state.started} of ${count} requests reached the server`,
+            ),
+          ),
+        2_000,
+      );
       const check = () => {
-        if (state.started >= count) resolve();
+        if (state.started < count) return;
+        clearTimeout(timer);
+        resolve();
       };
       notifyStarted = check;
       check();

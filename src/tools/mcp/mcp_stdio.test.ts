@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import { mcp } from "@/tools/mcp/mcp.ts";
 
 const FIXTURE = new URL("./testdata/server.ts", import.meta.url).pathname;
@@ -58,4 +58,52 @@ Deno.test("mcp - stdio child is cleaned up when the handshake fails", async () =
       },
     })
   );
+});
+
+// A child that prints to stderr, signals readiness through a marker file,
+// then reads stdin forever without ever answering `initialize`, holding
+// the handshake open until the caller aborts.
+function stallingServer(marker: string): string {
+  return `
+    await Deno.stderr.write(new TextEncoder().encode("booting slowly\\n"));
+    await Deno.writeTextFile(${JSON.stringify(marker)}, "ready");
+    for await (const _ of Deno.stdin.readable) { /* never reply */ }
+  `;
+}
+
+Deno.test("mcp - aborting the stdio handshake rejects with the reason and cleans up the child", async () => {
+  const marker = await Deno.makeTempFile();
+  await Deno.remove(marker);
+  const controller = new AbortController();
+  const reason = new Error("stop");
+
+  const pending = mcp({
+    name: "stalling",
+    transport: {
+      command: Deno.execPath(),
+      args: ["eval", stallingServer(marker)],
+    },
+    signal: controller.signal,
+  });
+  pending.catch(() => {});
+
+  // Abort only once the child has written to stderr and is blocking the
+  // handshake, so the stderr-enrichment path is live when the abort lands.
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    try {
+      await Deno.stat(marker);
+      break;
+    } catch {
+      if (Date.now() > deadline) throw new Error("stalling child never started");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  await Deno.remove(marker);
+  controller.abort(reason);
+
+  // Exactly the caller's reason — not wrapped with the captured stderr.
+  // The sanitizers fail this test if the child outlives the rejection.
+  const error = await assertRejects(() => pending);
+  assertStrictEquals(error, reason);
 });

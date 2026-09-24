@@ -92,6 +92,11 @@ export async function connect(
     // an implementation detail this seam must not depend on (ADR 0002).
     await client.close().catch(() => {});
 
+    // A cancelled connect is not a connection failure: the caller asked
+    // for it, so surface the signal's reason untouched instead of wrapping
+    // it with whatever the child printed to stderr before the abort.
+    if (signal?.aborted) throw error;
+
     // Enhance the error with captured stderr to aid diagnosis. The child's
     // stderr often contains the real reason the process exited before the
     // MCP handshake (missing binary, missing library, network error, etc.).
