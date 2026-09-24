@@ -86,16 +86,20 @@ export async function connect(
       signal,
     );
   } catch (error) {
+    // A cancelled connect is not a connection failure: the caller asked
+    // for it, so the signal's reason surfaces untouched instead of being
+    // wrapped with whatever the child printed to stderr. Classify before
+    // awaiting cleanup — an abort arriving during close() must not turn a
+    // genuine connection failure into one without its diagnostics.
+    const cancelled = signal?.aborted ?? false;
+
     // A stdio transport may have already spawned the child process when the
     // MCP handshake fails; close so it doesn't outlive the rejected connect.
     // SDK v1 fires an unawaited close() itself on init failure, but that is
     // an implementation detail this seam must not depend on (ADR 0002).
     await client.close().catch(() => {});
 
-    // A cancelled connect is not a connection failure: the caller asked
-    // for it, so surface the signal's reason untouched instead of wrapping
-    // it with whatever the child printed to stderr before the abort.
-    if (signal?.aborted) throw error;
+    if (cancelled) throw error;
 
     // Enhance the error with captured stderr to aid diagnosis. The child's
     // stderr often contains the real reason the process exited before the
