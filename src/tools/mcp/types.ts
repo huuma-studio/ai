@@ -85,15 +85,20 @@ export interface McpInputRequiredResult extends McpCallResult {
   resultType: "input_required";
 }
 
-/** Narrow client handle the factory builds tools from. */
+/** Narrow client handle the factory builds tools from.
+ *
+ * Methods taking a `signal` cancel the in-flight request when it aborts —
+ * the server is sent `notifications/cancelled` — and reject with the
+ * signal's reason. */
 export interface McpClient {
   /** List all tools, following pagination cursors to the end. */
-  listTools(): Promise<McpToolDef[]>;
+  listTools(options?: { signal?: AbortSignal }): Promise<McpToolDef[]>;
   /** Call a tool by its original server-side name. */
   callTool(
     name: string,
     args: Record<string, unknown>,
     timeout?: number,
+    signal?: AbortSignal,
   ): Promise<McpCallResult>;
   /** Close the connection (terminates a stdio child process). */
   close(): Promise<void>;

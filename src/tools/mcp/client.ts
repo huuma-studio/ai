@@ -44,10 +44,12 @@ const LIST_TOOLS_MAX_PAGES = 100;
  * `url` → Streamable HTTP, or a pre-built transport).
  * @param serverName Namespace the caller configured for this server —
  * used to attribute pagination-abuse errors to the right server.
+ * @param signal Cancels the initialize handshake.
  */
 export async function connect(
   options: McpTransportOptions,
   serverName: string,
+  signal?: AbortSignal,
 ): Promise<McpClient> {
   // Sent to every server in the initialize handshake; sourced from
   // deno.json so version bumps can't leave it behind.
@@ -79,7 +81,10 @@ export async function connect(
   }
 
   try {
-    await client.connect(transport);
+    await withAbortReason(
+      client.connect(transport, signal ? { signal } : undefined),
+      signal,
+    );
   } catch (error) {
     // A stdio transport may have already spawned the child process when the
     // MCP handshake fails; close so it doesn't outlive the rejected connect.
@@ -122,13 +127,20 @@ export async function connect(
   }
 
   return {
-    async listTools() {
+    async listTools({ signal } = {}) {
       const tools: McpToolDef[] = [];
       const seenCursors = new Set<string>();
       let cursor: string | undefined;
       let pages = 0;
       do {
-        const page = await client.listTools(cursor ? { cursor } : undefined);
+        const page: Awaited<ReturnType<typeof client.listTools>> =
+          await withAbortReason(
+          client.listTools(
+            cursor ? { cursor } : undefined,
+            signal ? { signal } : undefined,
+          ),
+          signal,
+        );
         pages++;
         for (const tool of page.tools) {
           const { name, description, inputSchema, title, icons } = tool;
@@ -166,11 +178,17 @@ export async function connect(
       } while (cursor);
       return tools;
     },
-    async callTool(name, args, timeout) {
-      const result = await client.callTool(
-        { name, arguments: args },
-        undefined,
-        timeout === undefined ? undefined : { timeout },
+    async callTool(name, args, timeout, signal) {
+      // Unset options stay absent so the request shape is unchanged.
+      const requestOptions = timeout === undefined && !signal
+        ? undefined
+        : {
+          ...(timeout === undefined ? {} : { timeout }),
+          ...(signal ? { signal } : {}),
+        };
+      const result = await withAbortReason(
+        client.callTool({ name, arguments: args }, undefined, requestOptions),
+        signal,
       );
       const callResult = result as McpCallResult;
 
@@ -200,6 +218,24 @@ export async function connect(
     },
     close: () => client.close(),
   };
+}
+
+/**
+ * On abort the SDK cancels the request (sending the server
+ * `notifications/cancelled`) but rejects with a generic `McpError`
+ * carrying the reason as a string. Rethrow the signal's own reason so
+ * callers see the same abort error as everywhere else in the library.
+ */
+async function withAbortReason<T>(
+  request: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  try {
+    return await request;
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    throw error;
+  }
 }
 
 function transportFrom(options: McpTransportOptions): Transport {
