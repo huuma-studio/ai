@@ -62,6 +62,39 @@ Deno.test("mcp - stdio child is cleaned up when the handshake fails", async () =
   );
 });
 
+/**
+ * Resolves once the child behind `transport` writes to stderr. If it has
+ * not done so within the deadline, aborts and settles the connection
+ * attempt — so no child outlives the test — and rejects with how that
+ * attempt ended, so a broken fixture fails with its real error instead of
+ * stalling the run.
+ */
+async function firstStderrOutput(
+  transport: StdioClientTransport,
+  pending: Promise<unknown>,
+  controller: AbortController,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      transport.stderr?.once("data", () => resolve());
+      timer = setTimeout(
+        () => reject(new Error("child never wrote to stderr")),
+        10_000,
+      );
+    });
+  } catch (error) {
+    controller.abort();
+    const outcome = await pending.then(
+      () => "connected",
+      (reason) => `failed: ${reason}`,
+    );
+    throw new Error(`${(error as Error).message} (connection ${outcome})`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // A child that prints to stderr, then reads stdin forever without ever
 // answering `initialize`, holding the handshake open until the caller aborts.
 const STALLING_SERVER = `
@@ -91,23 +124,7 @@ Deno.test("mcp - aborting the stdio handshake rejects with the reason and cleans
   });
   pending.catch(() => {});
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await new Promise<void>((resolve, reject) => {
-      transport.stderr?.once("data", () => resolve());
-      timer = setTimeout(
-        () => reject(new Error("stalling child never wrote to stderr")),
-        10_000,
-      );
-    });
-  } catch (error) {
-    // Still abort and settle the attempt so no child outlives the failure.
-    controller.abort();
-    await pending.catch(() => {});
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
+  await firstStderrOutput(transport, pending, controller);
   controller.abort(reason);
 
   // Exactly the caller's reason — not wrapped with the captured stderr.
@@ -143,18 +160,14 @@ Deno.test("mcp - an abort during cleanup keeps a failed handshake's stderr diagn
     controller.abort(new Error("late abort"));
     return await close();
   };
-  // Make sure the diagnostic is captured before the handshake fails.
-  const printed = new Promise((resolve) =>
-    transport.stderr?.once("data", resolve)
-  );
-
   const pending = mcp({
     name: "failing",
     transport: transport as McpTransport,
     signal: controller.signal,
   });
   pending.catch(() => {});
-  await printed;
+  // Make sure the diagnostic was captured, bounded like the test above.
+  await firstStderrOutput(transport, pending, controller);
 
   const error = await assertRejects(() => pending, Error);
   assertStringIncludes(error.message, "not an MCP server");
