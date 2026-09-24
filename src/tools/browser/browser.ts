@@ -8,8 +8,14 @@ export interface FetchWebsiteOptions {
   /** Maximum duration of each fetch in milliseconds. Defaults to 30s. */
   timeout?: number;
   /**
-   * Maximum number of response-body bytes read per fetch. Larger pages are
-   * cut off at this size and marked as truncated. Defaults to 2 MiB.
+   * Maximum number of response-body bytes kept per fetch. Larger pages are
+   * cut off at this size and marked as truncated, and the rest of the
+   * download is cancelled. Defaults to 2 MiB.
+   *
+   * The cap applies to the content kept and returned, not to the network:
+   * the body arrives in chunks of the transport's choosing, so up to one
+   * chunk past the cap may be received before the download is cancelled.
+   * Memory stays bounded by `maxBytes` plus that one chunk.
    */
   maxBytes?: number;
 }
@@ -17,7 +23,7 @@ export interface FetchWebsiteOptions {
 /** Default maximum duration of a fetch. */
 export const DEFAULT_FETCH_WEBSITE_TIMEOUT = 30_000;
 
-/** Default maximum number of response-body bytes read per fetch. */
+/** Default maximum number of response-body bytes kept per fetch. */
 export const DEFAULT_FETCH_WEBSITE_MAX_BYTES = 2 * 1024 * 1024;
 
 /** How long a body that reached the cap exactly, with no known length, may
@@ -91,9 +97,12 @@ export function fetchWebsite(
 }
 
 /**
- * Read at most `maxBytes` of the body as UTF-8 text. At the cap the rest
+ * Keep at most `maxBytes` of the body as UTF-8 text. At the cap the rest
  * of the download is cancelled, and a multi-byte character split by the
- * cut is dropped rather than decoded into a replacement character.
+ * cut is dropped rather than decoded into a replacement character. Reads
+ * return whole transport chunks, so the chunk crossing the cap — or the
+ * one read to check for the end below — is received and then discarded
+ * past the cap: at most one chunk beyond `maxBytes` is ever held.
  *
  * A body that reaches the cap exactly may be complete or may continue. A
  * `Content-Length` of exactly `maxBytes` settles it; otherwise the end of
