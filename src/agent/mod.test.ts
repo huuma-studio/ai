@@ -1594,3 +1594,33 @@ Deno.test("agent - duplicate finish_turn batches forward the run signal to sibli
   controller.abort();
   assertEquals(received[0].aborted, true);
 });
+
+Deno.test("agent - aborting while the final message is delivered rejects the run", async () => {
+  for (const finishTurn of [false, true]) {
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    const model = new FnModel(() =>
+      finishTurn
+        ? [finishTurnModelMessage(finishTurnCall("call-1", "completion", "Done."))]
+        : [modelMessage("Done.")]
+    );
+    const finalRole = finishTurn ? "tool" : "model";
+
+    const error = await assertRejects(() =>
+      agent({
+        model,
+        modelId: "stub",
+        systemPrompt: "Be helpful.",
+        finishTurn,
+      }).run("Hi", [], {
+        signal: controller.signal,
+        onMessage: (message) => {
+          if (message.role === finalRole) controller.abort(reason);
+        },
+      })
+    );
+
+    assertStrictEquals(error, reason);
+    assertEquals(model.calls.length, 1);
+  }
+});

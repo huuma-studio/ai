@@ -177,7 +177,7 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
       stream: true,
     }, { signal });
 
-    return streamMessages(stream, modelId);
+    return streamMessages(stream, modelId, signal);
   }
 }
 
@@ -487,10 +487,15 @@ interface StreamState {
  * Mirrors the `generate` error behavior: a stream that ends without usable
  * content for a reason other than a normal stop (e.g. a refusal) throws
  * instead of completing empty.
+ *
+ * The Anthropic SDK ends iteration silently when the request is aborted,
+ * so an aborted `signal` throws its reason once the events run out rather
+ * than passing a truncated response off as complete.
  */
 async function* streamMessages(
   stream: AsyncIterable<Anthropic.RawMessageStreamEvent>,
   modelId: ClaudeModels,
+  signal?: AbortSignal,
 ) {
   const state: StreamState = { toolCalls: {}, thinking: {}, redacted: {} };
   let yielded = false;
@@ -516,6 +521,7 @@ async function* streamMessages(
     }
   }
 
+  signal?.throwIfAborted();
   if (!yielded && stopReason && stopReason !== "end_turn") {
     throw new Error(
       `Claude returned no content (stop reason: ${stopReason})`,

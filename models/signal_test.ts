@@ -59,6 +59,31 @@ function stubHangingFetch(): {
   return { fetched, restore: () => globalThis.fetch = original };
 }
 
+/** Replaces `fetch` with a streaming response whose headers arrive at
+ * once but whose body stalls until the signal aborts — then errors with
+ * the abort reason, as a real fetch body does. `stream()` resolves, so
+ * the abort lands mid-iteration. */
+function stubStalledStreamFetch(contentType: string): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const signal = init?.signal ??
+      (input instanceof Request ? input.signal : undefined);
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal?.addEventListener(
+          "abort",
+          () => controller.error(signal.reason),
+          { once: true },
+        );
+      },
+    });
+    return Promise.resolve(
+      new Response(body, { headers: { "content-type": contentType } }),
+    );
+  };
+  return () => globalThis.fetch = original;
+}
+
 /** Rejects if `promise` has not settled within `ms` — an adapter that
  * drops the signal leaves the stubbed request hanging forever, so the
  * test must fail rather than stall. */
@@ -101,4 +126,31 @@ for (const [name, create, modelId] of adapters) {
       }
     });
   }
+}
+
+const streamContentTypes: Record<string, string> = {
+  ollama: "application/x-ndjson",
+};
+
+for (const [name, create, modelId] of adapters) {
+  Deno.test(`${name} - aborting a stream mid-iteration ends it with an error`, async () => {
+    const restore = stubStalledStreamFetch(
+      streamContentTypes[name] ?? "text/event-stream",
+    );
+    try {
+      const controller = new AbortController();
+      const stream = await within(
+        create().stream({ modelId, messages, signal: controller.signal }),
+        2_000,
+      );
+
+      const next = stream.next();
+      next.catch(() => {});
+      controller.abort(new Error("stop"));
+
+      await within(assertRejects(() => next), 2_000);
+    } finally {
+      restore();
+    }
+  });
 }

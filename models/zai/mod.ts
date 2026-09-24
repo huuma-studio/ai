@@ -181,7 +181,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
       stream_options: { include_usage: true },
     } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal });
 
-    return streamCompletions(stream, modelId);
+    return streamCompletions(stream, modelId, signal);
   }
 }
 

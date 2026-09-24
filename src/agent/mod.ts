@@ -446,6 +446,9 @@ export class Agent<T extends string> {
       if (endsWithSuccessfulFinishTurn(messages.at(-1))) break;
     }
 
+    // An abort during the final onMessage delivery must still reject:
+    // run() settles successfully only if the signal never fired.
+    throwIfAborted(signal);
     return messages;
   }
 
