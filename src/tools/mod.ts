@@ -99,7 +99,12 @@ export {
 
 export { image, type ImageToolOptions } from "@/tools/image/image.ts";
 
-export { fetchWebsite } from "@/tools/browser/browser.ts";
+export {
+  DEFAULT_FETCH_WEBSITE_MAX_BYTES,
+  DEFAULT_FETCH_WEBSITE_TIMEOUT,
+  fetchWebsite,
+  type FetchWebsiteOptions,
+} from "@/tools/browser/browser.ts";
 
 export {
   DEFAULT_SEARCH_TIMEOUT,
