@@ -60,6 +60,12 @@ export interface McpToolsOptions {
   allowedTools?: string[];
   /** Per tool call timeout in milliseconds (SDK default: 60s). */
   timeout?: number;
+  /**
+   * Cancels connecting and the initial tool listing. Only covers
+   * {@link mcp} itself: tool calls are cancelled through their own
+   * `ToolContext` signal, and {@link McpConnection.refresh} takes its own.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -103,10 +109,16 @@ export class McpConnection {
    *
    * Affects subsequent `tools()` calls only; an already-constructed agent
    * keeps its snapshot (agents freeze their toolset at construction).
+   *
+   * @param options.signal Cancels the listing: the in-flight page request
+   * is cancelled, no further pages are fetched, and `refresh()` rejects
+   * with the signal's reason, keeping the previous tools.
    */
-  // deno-lint-ignore no-explicit-any
-  async refresh(): Promise<Tool<any, string | ToolOutput<string>>[]> {
-    this.#tools = this.#wrap(await this.#client.listTools());
+  async refresh(
+    options: { signal?: AbortSignal } = {},
+    // deno-lint-ignore no-explicit-any
+  ): Promise<Tool<any, string | ToolOutput<string>>[]> {
+    this.#tools = this.#wrap(await this.#client.listTools(options));
     return this.tools();
   }
 
@@ -147,14 +159,31 @@ export class McpConnection {
           description,
           input: new PassthroughSchema(def.inputSchema),
           // The server is always called with the original tool name; the
-          // prefixed name exists only for the model.
-          fn: async (props) =>
+          // prefixed name exists only for the model. The call's signal —
+          // caller cancellation plus its timeout — is forwarded so the
+          // server is told to stop, not just abandoned; the SDK deadline
+          // is the shorter of the configured and the per-call timeout.
+          fn: async (props, { signal, timeout }) =>
             flattenResult(
-              await this.#client.callTool(def.name, props, this.#timeout),
+              await this.#client.callTool(
+                def.name,
+                props,
+                shortestTimeout(this.#timeout, timeout),
+                signal,
+              ),
             ),
         });
       });
   }
+}
+
+function shortestTimeout(
+  configured: number | undefined,
+  perCall: number | undefined,
+): number | undefined {
+  if (configured === undefined) return perCall;
+  if (perCall === undefined) return configured;
+  return Math.min(configured, perCall);
 }
 
 /** Connect to an MCP server and expose its tools as huuma {@link Tool}s.
@@ -167,13 +196,14 @@ export class McpConnection {
  * @returns A connected {@link McpConnection} handle.
  */
 export async function mcp(options: McpToolsOptions): Promise<McpConnection> {
-  const { name, transport, allowedTools, timeout } = options;
+  const { name, transport, allowedTools, timeout, signal } = options;
 
   validateServerName(name);
+  signal?.throwIfAborted();
 
-  const client = await connect(transport, name);
+  const client = await connect(transport, name, signal);
   try {
-    const defs = await client.listTools();
+    const defs = await client.listTools({ signal });
     return new McpConnection({ name, client, defs, allowedTools, timeout });
   } catch (error) {
     await client.close().catch(() => {});

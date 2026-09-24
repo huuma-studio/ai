@@ -1,5 +1,7 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
-import { mcp } from "@/tools/mcp/mcp.ts";
+import { assert, assertEquals, assertRejects, assertStrictEquals, assertStringIncludes } from "@std/assert";
+// Dev-only SDK import for the pre-built transport; publish excludes tests.
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { mcp, type McpTransport } from "@/tools/mcp/mcp.ts";
 
 const FIXTURE = new URL("./testdata/server.ts", import.meta.url).pathname;
 
@@ -58,4 +60,116 @@ Deno.test("mcp - stdio child is cleaned up when the handshake fails", async () =
       },
     })
   );
+});
+
+/**
+ * Resolves once the child behind `transport` writes to stderr. If it has
+ * not done so within the deadline, aborts and settles the connection
+ * attempt — so no child outlives the test — and rejects with how that
+ * attempt ended, so a broken fixture fails with its real error instead of
+ * stalling the run.
+ */
+async function firstStderrOutput(
+  transport: StdioClientTransport,
+  pending: Promise<unknown>,
+  controller: AbortController,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      transport.stderr?.once("data", () => resolve());
+      timer = setTimeout(
+        () => reject(new Error("child never wrote to stderr")),
+        10_000,
+      );
+    });
+  } catch (error) {
+    controller.abort();
+    const outcome = await pending.then(
+      () => "connected",
+      (reason) => `failed: ${reason}`,
+    );
+    throw new Error(`${(error as Error).message} (connection ${outcome})`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// A child that prints to stderr, then reads stdin forever without ever
+// answering `initialize`, holding the handshake open until the caller aborts.
+const STALLING_SERVER = `
+  await Deno.stderr.write(new TextEncoder().encode("booting slowly\\n"));
+  for await (const _ of Deno.stdin.readable) { /* never reply */ }
+`;
+
+Deno.test("mcp - aborting the stdio handshake rejects with the reason and cleans up the child", async () => {
+  // A pre-built SDK transport (the escape hatch) lets the test watch the
+  // same stderr stream the client captures from. mcp() attaches its
+  // capture listener synchronously, before this test's listener, and
+  // listeners run in registration order — so once the test sees the
+  // output, the client has already captured it and the stderr-enrichment
+  // path is live when the abort lands.
+  const transport = new StdioClientTransport({
+    command: Deno.execPath(),
+    args: ["eval", STALLING_SERVER],
+    stderr: "pipe",
+  });
+  const controller = new AbortController();
+  const reason = new Error("stop");
+
+  const pending = mcp({
+    name: "stalling",
+    transport: transport as McpTransport,
+    signal: controller.signal,
+  });
+  pending.catch(() => {});
+
+  await firstStderrOutput(transport, pending, controller);
+  controller.abort(reason);
+
+  // Exactly the caller's reason — not wrapped with the captured stderr.
+  // The sanitizers fail this test if the child outlives the rejection.
+  const error = await assertRejects(() => pending);
+  assertStrictEquals(error, reason);
+});
+
+// Prints a diagnostic, then rejects the MCP handshake like
+// NOT_AN_MCP_SERVER.
+const FAILING_SERVER = `
+  await Deno.stderr.write(new TextEncoder().encode("missing libnss3\\n"));
+  ${NOT_AN_MCP_SERVER}
+`;
+
+Deno.test("mcp - an abort during cleanup keeps a failed handshake's stderr diagnostics", async () => {
+  const controller = new AbortController();
+  const transport = new StdioClientTransport({
+    command: Deno.execPath(),
+    args: ["eval", FAILING_SERVER],
+    stderr: "pipe",
+  });
+  // The handshake fails on its own; the abort must land while connect()
+  // is cleaning up after that failure. Closing starts as the handshake
+  // fails, and each close first waits for a timer — timers fire only after
+  // every pending microtask, so by then the rejection has reached
+  // connect(), been classified, and connect() is awaiting its own close.
+  // Patched on the instance so the client still sees a stdio transport
+  // and captures its stderr.
+  const close = transport.close.bind(transport);
+  transport.close = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort(new Error("late abort"));
+    return await close();
+  };
+  const pending = mcp({
+    name: "failing",
+    transport: transport as McpTransport,
+    signal: controller.signal,
+  });
+  pending.catch(() => {});
+  // Make sure the diagnostic was captured, bounded like the test above.
+  await firstStderrOutput(transport, pending, controller);
+
+  const error = await assertRejects(() => pending, Error);
+  assertStringIncludes(error.message, "not an MCP server");
+  assertStringIncludes(error.message, "Child stderr: missing libnss3");
 });
