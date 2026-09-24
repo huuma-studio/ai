@@ -26,6 +26,7 @@ import type {
 import OpenAI, { type ClientOptions } from "openai";
 import type { Tool } from "@/tools/mod.ts";
 import type { JSONSchema } from "@huuma/validate";
+import { abortable } from "@/model/abortable.ts";
 
 /** Vendor extension used by reasoning-capable OpenAI-compatible providers. */
 export interface ReasoningExtension {
@@ -150,7 +151,7 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
       stream_options: { include_usage: true },
     }, { signal });
 
-    return streamCompletions(stream, modelId, signal);
+    return abortable(streamCompletions(stream, modelId), signal);
   }
 }
 
@@ -325,15 +326,9 @@ export interface PendingToolCall {
 // complete, instead of re-parsing partial JSON on every delta. A pending
 // call is complete when a fragment for a higher index arrives, when the
 // choice reports a finish reason, or when the stream ends.
-//
-// The OpenAI SDK ends iteration silently when the request is aborted, so
-// `signal` is checked once the chunks run out: an aborted stream throws
-// the abort reason instead of passing a truncated response off as
-// complete, and half-received tool calls are never flushed.
 export async function* streamCompletions<T extends string>(
   stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
   modelId: T,
-  signal?: AbortSignal,
 ): AsyncGenerator<ModelResult<T>> {
   const pendingToolCalls: Record<number, PendingToolCall> = {};
   let usage: ModelUsage | undefined;
@@ -382,7 +377,6 @@ export async function* streamCompletions<T extends string>(
     }
   }
 
-  signal?.throwIfAborted();
   yield* flushPendingToolCalls(pendingToolCalls, modelId);
 
   if (usage) {

@@ -26,6 +26,7 @@ import type {
 import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
+import { abortable } from "@/model/abortable.ts";
 /**
  * Ollama models currently available.
  * This list is not exhaustive as Ollama models can be pulled dynamically.
@@ -209,11 +210,14 @@ export class OllamaModel implements BaseModel<OllamaModels> {
       stream: true,
     });
 
-    return (async function* () {
-      for await (const chunk of stream) {
-        yield modelResultFrom(chunk);
-      }
-    })();
+    return abortable(
+      (async function* () {
+        for await (const chunk of stream) {
+          yield modelResultFrom(chunk);
+        }
+      })(),
+      options.signal,
+    );
   }
 }
 

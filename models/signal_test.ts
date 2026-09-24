@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import type { BaseModel, Message } from "@/model/mod.ts";
 import {
   anthropic,
@@ -154,3 +154,61 @@ for (const [name, create, modelId] of adapters) {
     }
   });
 }
+
+Deno.test("openai - no buffered tool call is delivered after an abort", async () => {
+  // One chunk completes two tool calls, which the adapter yields back to
+  // back without reading the transport again; the body then stalls.
+  const chunk = {
+    id: "c",
+    object: "chat.completion.chunk",
+    created: 0,
+    model: "gpt-5.5",
+    choices: [{
+      index: 0,
+      delta: {
+        tool_calls: [
+          { index: 0, id: "a", type: "function", function: { name: "first", arguments: "{}" } },
+          { index: 1, id: "b", type: "function", function: { name: "second", arguments: "{}" } },
+        ],
+      },
+      finish_reason: "tool_calls",
+    }],
+  };
+  const original = globalThis.fetch;
+  globalThis.fetch = (_input, init) => {
+    const signal = init?.signal;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`),
+        );
+        signal?.addEventListener(
+          "abort",
+          () => controller.error(signal.reason),
+          { once: true },
+        );
+      },
+    });
+    return Promise.resolve(
+      new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    );
+  };
+  try {
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    const stream = await openai({ apiKey: "test", maxRetries: 0 }).stream({
+      modelId: "gpt-5.5",
+      messages,
+      signal: controller.signal,
+    });
+
+    const first = await within(stream.next(), 2_000);
+    assertEquals(first.value?.messages[0].role, "model");
+    controller.abort(reason);
+
+    const error = await within(assertRejects(() => stream.next()), 2_000);
+    assertStrictEquals(error, reason);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

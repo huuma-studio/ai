@@ -38,6 +38,7 @@ import type {
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import { fileSourceFrom } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
+import { abortable } from "@/model/abortable.ts";
 
 // Shutdown date: October 16, 2026
 type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
@@ -161,7 +162,7 @@ export class GoogleGenAIModel implements BaseModel {
         abortSignal: signal,
       },
     });
-    return streamMessages(stream, modelId);
+    return abortable(streamMessages(stream, modelId), signal);
   }
 }
 

@@ -42,6 +42,7 @@ import type {
 } from "@/mod.ts";
 // Tool instances are accepted structurally via ToolLike.
 import type { JSONSchema, Schema } from "@huuma/validate";
+import { abortable } from "@/model/abortable.ts";
 
 type Mistral_Large_Latest = "mistral-large-latest";
 type Mistral_Medium_Latest = "mistral-medium-latest";
@@ -199,7 +200,7 @@ export class MistralModel implements BaseModel<MistralModels> {
       stream: true,
     } as ChatCompletionStreamRequest, { signal });
 
-    return streamCompletions(stream, modelId);
+    return abortable(streamCompletions(stream, modelId), signal);
   }
 }
 

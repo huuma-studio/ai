@@ -31,6 +31,7 @@ import {
   usageFrom,
   type OpenAIRequestOptions,
 } from "../openai/mod.ts";
+import { abortable } from "@/model/abortable.ts";
 
 /** Default base URL for the Z.AI Coding Plan endpoint. */
 const DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/";
@@ -181,7 +182,7 @@ export class ZAIModel implements BaseModel<ZAIModels> {
       stream_options: { include_usage: true },
     } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal });
 
-    return streamCompletions(stream, modelId, signal);
+    return abortable(streamCompletions(stream, modelId), signal);
   }
 }
 
