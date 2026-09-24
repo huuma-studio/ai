@@ -62,10 +62,14 @@ export function fetchWebsite(
             `Failed to fetch ${url}: ${response.status} ${response.statusText}`,
           );
         }
-        const { text, truncated } = await readText(response, maxBytes);
+        const total = Number(response.headers.get("content-length"));
+        const { text, truncated } = await readText(
+          response,
+          maxBytes,
+          Number.isFinite(total) ? total : undefined,
+        );
         const markdown = NodeHtmlMarkdown.translate(text);
         if (!truncated) return markdown;
-        const total = Number(response.headers.get("content-length"));
         const size = Number.isFinite(total) && total > maxBytes
           ? ` of ${formatBytes(total)}`
           : "";
@@ -86,10 +90,16 @@ export function fetchWebsite(
  * Read at most `maxBytes` of the body as UTF-8 text. At the cap the rest
  * of the download is cancelled, and a multi-byte character split by the
  * cut is dropped rather than decoded into a replacement character.
+ *
+ * Reaching the cap exactly stops reading too: waiting for one more chunk
+ * to learn whether the body continues would hang on a server that holds
+ * the connection open. Only a `Content-Length` of exactly `maxBytes`
+ * vouches that the body ends there, so only then is the end awaited.
  */
 async function readText(
   response: Response,
   maxBytes: number,
+  contentLength: number | undefined,
 ): Promise<{ text: string; truncated: boolean }> {
   if (!response.body) return { text: "", truncated: false };
   const reader = response.body.getReader();
@@ -98,6 +108,10 @@ async function readText(
   let received = 0;
   try {
     while (true) {
+      if (received === maxBytes && contentLength !== maxBytes) {
+        await reader.cancel();
+        return { text, truncated: true };
+      }
       const { done, value } = await reader.read();
       if (done) return { text: text + decoder.decode(), truncated: false };
       const remaining = maxBytes - received;

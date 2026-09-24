@@ -203,3 +203,46 @@ Deno.test("fetchWebsite - aborting mid-download cancels the request and rejects 
 Deno.test("fetchWebsite - default maxBytes is 2 MiB", () => {
   assertEquals(DEFAULT_FETCH_WEBSITE_MAX_BYTES, 2 * 1024 * 1024);
 });
+
+Deno.test("fetchWebsite - a body that stalls exactly at the cap still resolves with a notice", async () => {
+  // Exactly maxBytes, then the connection stays open with nothing more —
+  // no Content-Length, so the tool cannot know whether the body continues.
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("c".repeat(1_000)));
+    },
+  });
+  await withServer(() => new Response(body), async (url) => {
+    const result = fetchWebsite({ maxBytes: 1_000 }).call({ url });
+    await within(result, "the read waited past the cap");
+    assertEquals(
+      await result,
+      "c".repeat(1_000) + "\n\n…[truncated: showing the first 1000 bytes]",
+    );
+  });
+});
+
+Deno.test("fetchWebsite - the deadline stops a slow download", async () => {
+  let resolveCancelled!: () => void;
+  const cancelled = new Promise<void>((resolve) => {
+    resolveCancelled = resolve;
+  });
+  const chunk = new TextEncoder().encode("<p>slow</p>");
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      resolveCancelled();
+    },
+  });
+
+  await withServer(() => new Response(body), async (url) => {
+    const error = await assertRejects(() =>
+      fetchWebsite({ timeout: 100 }).call({ url })
+    );
+    assertEquals((error as DOMException).name, "TimeoutError");
+    await within(cancelled, "the download kept running past the deadline");
+  });
+});
