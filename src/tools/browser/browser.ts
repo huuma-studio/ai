@@ -20,6 +20,10 @@ export const DEFAULT_FETCH_WEBSITE_TIMEOUT = 30_000;
 /** Default maximum number of response-body bytes read per fetch. */
 export const DEFAULT_FETCH_WEBSITE_MAX_BYTES = 2 * 1024 * 1024;
 
+/** How long a body that reached the cap exactly, with no known length, may
+ * take to end before it is treated as truncated. */
+const END_OF_BODY_GRACE_MS = 100;
+
 /** Create a tool that fetches a website and converts HTML to Markdown.
  *
  * The download is bounded in time and size: the call is cancelled after
@@ -91,10 +95,12 @@ export function fetchWebsite(
  * of the download is cancelled, and a multi-byte character split by the
  * cut is dropped rather than decoded into a replacement character.
  *
- * Reaching the cap exactly stops reading too: waiting for one more chunk
- * to learn whether the body continues would hang on a server that holds
- * the connection open. Only a `Content-Length` of exactly `maxBytes`
- * vouches that the body ends there, so only then is the end awaited.
+ * A body that reaches the cap exactly may be complete or may continue. A
+ * `Content-Length` of exactly `maxBytes` settles it; otherwise the end of
+ * the stream is awaited only briefly — a complete page closes right after
+ * its last chunk, while waiting indefinitely would hang on a server that
+ * holds the connection open. More data, or none within the grace period,
+ * counts as truncated.
  */
 async function readText(
   response: Response,
@@ -109,6 +115,8 @@ async function readText(
   try {
     while (true) {
       if (received === maxBytes && contentLength !== maxBytes) {
+        const ended = await endsWithin(reader, END_OF_BODY_GRACE_MS);
+        if (ended) return { text: text + decoder.decode(), truncated: false };
         await reader.cancel();
         return { text, truncated: true };
       }
@@ -125,6 +133,25 @@ async function readText(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+/** Whether the stream reports its end within `ms`. A chunk arriving
+ * instead, or nothing at all, means it continues. */
+async function endsWithin(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ms: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read().then(({ done }) => done),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

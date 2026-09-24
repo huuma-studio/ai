@@ -246,3 +246,18 @@ Deno.test("fetchWebsite - the deadline stops a slow download", async () => {
     await within(cancelled, "the download kept running past the deadline");
   });
 });
+
+Deno.test("fetchWebsite - a body of exactly maxBytes without Content-Length is not truncated", async () => {
+  // A streamed body is sent chunked, so the tool learns the size only
+  // when the stream ends right after the last byte.
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("d".repeat(1_000)));
+      controller.close();
+    },
+  });
+  await withServer(() => new Response(body), async (url) => {
+    const result = await fetchWebsite({ maxBytes: 1_000 }).call({ url });
+    assertEquals(result, "d".repeat(1_000));
+  });
+});
