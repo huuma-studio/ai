@@ -12,10 +12,11 @@ export interface FetchWebsiteOptions {
    * cut off at this size and marked as truncated, and the rest of the
    * download is cancelled. Defaults to 2 MiB.
    *
-   * The cap applies to the content kept and returned, not to the network:
-   * the body arrives in chunks of the transport's choosing, so up to one
-   * chunk past the cap may be received before the download is cancelled.
-   * Memory stays bounded by `maxBytes` plus that one chunk.
+   * The cap applies to retained response-body bytes, not to network traffic
+   * or the returned Markdown: the body arrives in chunks of the transport's
+   * choosing, so up to one chunk past the cap may be received before the
+   * download is cancelled. Decoding and Markdown conversion use additional
+   * memory, and the returned Markdown and truncation notice may exceed the cap.
    */
   maxBytes?: number;
 }
