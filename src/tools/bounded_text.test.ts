@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
+  cappedLine,
   fitJsonString,
   formatBytes,
   readLines,
@@ -196,7 +197,7 @@ async function collect(lines: AsyncIterable<string>): Promise<string[]> {
 
 Deno.test("readLines - splits lines across chunks", async () => {
   const { stream } = chunked(["one\ntw", "o\n\nthr", "ee"]);
-  assertEquals(await collect(readLines(stream, 100)), [
+  assertEquals(await collect(readLines(stream, cappedLine(100))), [
     "one",
     "two",
     "",
@@ -207,12 +208,16 @@ Deno.test("readLines - splits lines across chunks", async () => {
 Deno.test("readLines - decodes a character split across chunks", async () => {
   const bytes = encoder.encode("é\n");
   const { stream } = chunked([bytes.subarray(0, 1), bytes.subarray(1)]);
-  assertEquals(await collect(readLines(stream, 100)), ["é"]);
+  assertEquals(await collect(readLines(stream, cappedLine(100))), ["é"]);
 });
 
 Deno.test("readLines - keeps only the start of a long line", async () => {
   const { stream } = chunked(["abcdef", "ghij\nshort\n", "x".repeat(50)]);
-  assertEquals(await collect(readLines(stream, 4)), ["abcd", "shor", "xxxx"]);
+  assertEquals(await collect(readLines(stream, cappedLine(4))), [
+    "abcd",
+    "shor",
+    "xxxx",
+  ]);
 });
 
 Deno.test("readLines - holds only the cap of an endless line", async () => {
@@ -225,12 +230,14 @@ Deno.test("readLines - holds only the cap of an endless line", async () => {
       else controller.close();
     },
   });
-  assertEquals(await collect(readLines(stream, 10)), ["x".repeat(10)]);
+  assertEquals(await collect(readLines(stream, cappedLine(10))), [
+    "x".repeat(10),
+  ]);
 });
 
 Deno.test("readLines - stopping early cancels the stream", async () => {
   const { stream, state } = chunked(["a\nb\nc\n"], { stall: true });
-  for await (const line of readLines(stream, 100)) {
+  for await (const line of readLines(stream, cappedLine(100))) {
     if (line === "b") break;
   }
   assert(state.cancelled, "the stream was not cancelled");

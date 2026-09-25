@@ -127,21 +127,50 @@ export async function readTextBounded(
 }
 
 /**
- * Read a byte stream as UTF-8 lines, split at `\n`, keeping at most
- * `maxLineLength` characters of each line — the rest of a longer line is
- * discarded as it arrives, so one huge line cannot exhaust memory either.
+ * Builds one line at a time for {@linkcode readLines} from the pieces of it
+ * that arrive, deciding what of the line to keep.
+ */
+export interface LineBuilder<T> {
+  /** Add the next piece of the current line. */
+  append(text: string): void;
+  /** The finished line; the builder then starts on the next one. */
+  finish(): T;
+}
+
+/** A {@linkcode LineBuilder} keeping at most `maxLength` characters of each
+ * line and discarding the rest as it arrives. */
+export function cappedLine(maxLength: number): LineBuilder<string> {
+  let line = "";
+  return {
+    append(text) {
+      if (line.length < maxLength) {
+        line += text.slice(0, maxLength - line.length);
+      }
+    },
+    finish() {
+      const finished = line;
+      line = "";
+      return finished;
+    },
+  };
+}
+
+/**
+ * Read a byte stream as UTF-8 lines, split at `\n`. `builder` receives each
+ * line in pieces as they arrive and keeps what it needs, so a huge line is
+ * never held whole — see {@linkcode cappedLine}.
  *
  * Lines are produced as the stream delivers them, so a consumer can stop
  * early: breaking out of the loop cancels the stream. A last line without a
  * trailing newline is produced too.
  */
-export async function* readLines(
+export async function* readLines<T>(
   stream: ReadableStream<Uint8Array>,
-  maxLineLength: number,
-): AsyncGenerator<string> {
+  builder: LineBuilder<T>,
+): AsyncGenerator<T> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let line = "";
+  let pending = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -151,17 +180,18 @@ export async function* readLines(
       let start = 0;
       while (true) {
         const end = text.indexOf("\n", start);
-        if (line.length < maxLineLength) {
-          line += text.slice(start, end === -1 ? text.length : end);
-          line = line.slice(0, maxLineLength);
+        const piece = text.slice(start, end === -1 ? text.length : end);
+        if (piece !== "") {
+          builder.append(piece);
+          pending = true;
         }
         if (end === -1) break;
-        yield line;
-        line = "";
+        yield builder.finish();
+        pending = false;
         start = end + 1;
       }
       if (done) {
-        if (line !== "") yield line;
+        if (pending) yield builder.finish();
         return;
       }
     }

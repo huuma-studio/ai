@@ -1,6 +1,10 @@
 import { boolean, object, string } from "@huuma/validate";
 import { Tool } from "@/tools/mod.ts";
-import { readLines } from "@/tools/bounded_text.ts";
+import {
+  cappedLine,
+  type LineBuilder,
+  readLines,
+} from "@/tools/bounded_text.ts";
 
 /** A single grep match with line number and content. */
 export interface GrepMatch {
@@ -52,14 +56,11 @@ const MAX_MATCHES = 100;
 const MAX_PER_FILE = 10;
 /** Most characters of a matching line returned. */
 const MAX_LINE_LENGTH = 200;
-/**
- * Most characters of a line of grep's output kept while reading it. The
- * line holds the file name and line number before the content, whose
- * leading whitespace is trimmed before it is cut to `MAX_LINE_LENGTH` —
- * so this leaves ample room, while a huge line (minified code, say) never
- * has to be held whole.
- */
-const MAX_OUTPUT_LINE_LENGTH = 64 * 1024;
+/** Most characters kept of the file name or line number in grep's output. */
+const MAX_FIELD_LENGTH = 64 * 1024;
+/** Most lines of grep's error output reported, and characters of each. */
+const MAX_ERROR_LINES = 5;
+const MAX_ERROR_LINE_LENGTH = 500;
 
 /** Create a tool that searches files with grep.
  *
@@ -90,22 +91,19 @@ export function grep(options?: GrepOptions): Tool<any, GrepResult> {
         .catch(() => false);
 
       const collector = isDir ? directoryMatches(path) : fileMatches(path);
-      const { code, stopped } = await runGrep(
+      const run = await runGrep(
         grepArgs({ pattern, path, glob, caseSensitive, isDir }),
+        isDir ? 2 : 1,
         collector,
         signal,
       );
 
-      // A search stopped at the cap was killed; its exit code means nothing.
-      if (!stopped) {
-        if (code === 1) {
-          return { path, results: [], message: "No matches found" };
-        }
-        if (code !== 0) {
-          throw new Error(`grep exited with code ${code}`);
-        }
+      const failure = searchFailure(run);
+      if (failure) throw new Error(failure);
+      if (!run.stopped && run.code === 1) {
+        return { path, results: [], message: "No matches found" };
       }
-      return collector.result(stopped);
+      return collector.result(run.stopped);
     },
   });
 }
@@ -148,37 +146,110 @@ function grepArgs(
   return args;
 }
 
+/** One line of grep's output: the fields before the content — the file
+ * and line number, or just the line number — and the content. */
+interface OutputLine {
+  fields: string[];
+  content: string;
+}
+
+/**
+ * A {@linkcode LineBuilder} parsing grep's output lines as they arrive:
+ * `fieldCount` colon-terminated fields, then the matching line's content.
+ * The content's leading whitespace is skipped before anything is kept, and
+ * only `MAX_LINE_LENGTH` characters of it are, so neither deep indentation
+ * nor a huge line can crowd out the match. A line without all its fields is
+ * finished as `undefined`.
+ */
+function outputLine(fieldCount: number): LineBuilder<OutputLine | undefined> {
+  let fields: string[] = [];
+  let field = "";
+  let content = "";
+  let more = false;
+
+  return {
+    append(text) {
+      let index = 0;
+      while (fields.length < fieldCount) {
+        const colon = text.indexOf(":", index);
+        const end = colon === -1 ? text.length : colon;
+        field += text.slice(index, end).slice(
+          0,
+          MAX_FIELD_LENGTH - field.length,
+        );
+        if (colon === -1) return;
+        fields.push(field);
+        field = "";
+        index = colon + 1;
+      }
+      if (more) return;
+      if (content === "") {
+        while (index < text.length && /\s/.test(text[index])) index++;
+      }
+      const room = MAX_LINE_LENGTH - content.length;
+      content += text.slice(index, index + room);
+      // Anything but whitespace past the kept part means the line is cut.
+      if (/\S/.test(text.slice(index + room))) more = true;
+    },
+    finish() {
+      const line = fields.length === fieldCount
+        ? { fields, content: more ? `${content}…` : content.trimEnd() }
+        : undefined;
+      fields = [];
+      field = "";
+      content = "";
+      more = false;
+      return line;
+    },
+  };
+}
+
 /** Collects matches from grep's output lines, one line at a time. */
 interface MatchCollector {
   /** Add one output line. Returns false once the match cap is reached and
    * the line did not fit, so the search can stop. */
-  add(line: string): boolean;
+  add(line: OutputLine): boolean;
   /** The result, marked truncated when the search stopped at the cap. */
   result(stopped: boolean): GrepResult;
 }
 
+/** How a grep run ended. */
+export interface GrepRun {
+  /** grep's exit code; meaningless when the search was stopped. */
+  code: number;
+  /** Whether the search was stopped once the match cap was reached. */
+  stopped: boolean;
+  /** The start of grep's error output. */
+  errors: string[];
+}
+
 /**
  * Run grep and feed its output to `collector` line by line, stopping grep
- * as soon as the collector is full. Only the collected matches and one
- * output line are ever held. The signal kills grep and rejects the call.
+ * as soon as the collector is full. Only the collected matches and the
+ * kept part of one output line are ever held. grep's error output is read
+ * alongside, keeping only its start. The signal kills grep and rejects the
+ * call.
  */
 async function runGrep(
   args: string[],
+  fieldCount: number,
   collector: MatchCollector,
   signal: AbortSignal,
-): Promise<{ code: number; stopped: boolean }> {
+): Promise<GrepRun> {
   const child = new Deno.Command("grep", {
     args,
     signal,
     stdin: "null",
     stdout: "piped",
-    stderr: "null",
+    stderr: "piped",
   }).spawn();
+  // Drained to the end, so grep never blocks on a full error pipe.
+  const errors = errorLines(child.stderr);
 
   let stopped = false;
   try {
-    for await (const line of readLines(child.stdout, MAX_OUTPUT_LINE_LENGTH)) {
-      if (line.length === 0) continue;
+    for await (const line of readLines(child.stdout, outputLine(fieldCount))) {
+      if (line === undefined) continue;
       if (!collector.add(line)) {
         stopped = true;
         break;
@@ -186,16 +257,50 @@ async function runGrep(
     }
   } catch (error) {
     killQuietly(child);
-    await child.status;
+    await Promise.all([child.status, errors]);
     throw error;
   }
   // grep that ran to the end exits on its own; one stopped at the cap is
   // still searching. An abort has killed it already.
   if (stopped) killQuietly(child);
-  const { code } = await child.status;
+  const [{ code }, errorOutput] = await Promise.all([child.status, errors]);
   signal.throwIfAborted();
-  return { code, stopped };
+  return { code, stopped, errors: errorOutput };
 }
+
+/** The first lines of grep's error output. */
+async function errorLines(
+  stream: ReadableStream<Uint8Array>,
+): Promise<string[]> {
+  const lines: string[] = [];
+  const builder = cappedLine(MAX_ERROR_LINE_LENGTH);
+  for await (const line of readLines(stream, builder)) {
+    if (lines.length < MAX_ERROR_LINES) lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * Why a grep run failed, or `undefined` if it did not. Exit code 1 means no
+ * matches and anything above it an error. A search stopped at the cap was
+ * killed, so its exit code means nothing; errors grep reported before it
+ * was stopped — an unreadable file, say — still fail it rather than being
+ * hidden behind the matches found elsewhere. Warnings, which grep prints
+ * for searches that succeed, do not.
+ */
+export function searchFailure(
+  { code, stopped, errors }: GrepRun,
+): string | undefined {
+  const detail = errors.length > 0 ? `: ${errors.join("; ")}` : "";
+  if (stopped) {
+    const failed = errors.some((line) => !WARNING.test(line));
+    return failed ? `grep reported errors${detail}` : undefined;
+  }
+  return code > 1 ? `grep exited with code ${code}${detail}` : undefined;
+}
+
+/** A warning line from grep, whatever program name it is prefixed with. */
+const WARNING = /^[^:]*: warning: /;
 
 /** Kill `child` unless it has already exited. */
 function killQuietly(child: Deno.ChildProcess): void {
@@ -212,27 +317,15 @@ function directoryMatches(path: string): MatchCollector {
   let total = 0;
 
   return {
-    add(line) {
+    add({ fields: [file, lineNum], content }) {
       if (total >= MAX_MATCHES) return false;
-
-      const firstColon = line.indexOf(":");
-      if (firstColon === -1) return true;
-      const secondColon = line.indexOf(":", firstColon + 1);
-      if (secondColon === -1) return true;
-
-      const file = line.slice(0, firstColon);
-      const lineNum = parseInt(line.slice(firstColon + 1, secondColon), 10);
-      const content = line.slice(secondColon + 1).trim();
 
       if (!fileMap.has(file)) fileMap.set(file, []);
       const matches = fileMap.get(file)!;
 
       if (matches.length >= MAX_PER_FILE) return true;
 
-      matches.push({
-        line: lineNum,
-        content: truncateLine(content, MAX_LINE_LENGTH),
-      });
+      matches.push({ line: parseInt(lineNum, 10), content });
       total++;
       return true;
     },
@@ -259,14 +352,9 @@ function fileMatches(path: string): MatchCollector {
   const matches: GrepMatch[] = [];
 
   return {
-    add(line) {
+    add({ fields: [lineNum], content }) {
       if (matches.length >= MAX_MATCHES) return false;
-      const colonIndex = line.indexOf(":");
-      const content = line.slice(colonIndex + 1).trim();
-      matches.push({
-        line: parseInt(line.slice(0, colonIndex), 10),
-        content: truncateLine(content, MAX_LINE_LENGTH),
-      });
+      matches.push({ line: parseInt(lineNum, 10), content });
       return true;
     },
     result(stopped) {
@@ -281,8 +369,4 @@ function fileMatches(path: string): MatchCollector {
       };
     },
   };
-}
-
-function truncateLine(content: string, max: number): string {
-  return content.length > max ? content.slice(0, max) + "…" : content;
 }

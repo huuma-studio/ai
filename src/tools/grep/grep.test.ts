@@ -1,6 +1,10 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
-import { DEFAULT_GREP_TIMEOUT, grep } from "@/tools/grep/grep.ts";
+import {
+  DEFAULT_GREP_TIMEOUT,
+  grep,
+  searchFailure,
+} from "@/tools/grep/grep.ts";
 
 /** Run `fn` in a temp directory holding `files` (relative path → content). */
 async function withTree(
@@ -215,6 +219,121 @@ Deno.test("grep - a huge matching line is cut without being held whole", async (
         { line: 1, content: "x".repeat(200) + "…" },
       ]);
     },
+  );
+});
+
+Deno.test("grep - deep indentation does not crowd out the match", async () => {
+  await withTree(
+    { "deep.txt": " ".repeat(100 * 1024) + "needle\n" },
+    async (dir) => {
+      const result = await grep().call({ pattern: "needle", path: dir });
+      assertEquals(result.results[0].matches, [{ line: 1, content: "needle" }]);
+    },
+  );
+});
+
+Deno.test("grep - whitespace around the cut is handled as trimming would", async () => {
+  await withTree({
+    "a.txt": "abc" + " ".repeat(300) + "x\n" + "abc" + " ".repeat(300) + "\n",
+  }, async (dir) => {
+    const path = join(dir, "a.txt");
+    const result = await grep().call({ pattern: "abc", path });
+    assertEquals(result.results[0].matches, [
+      // More text after the cut: cut at 200 characters and marked.
+      { line: 1, content: "abc" + " ".repeat(197) + "…" },
+      // Only whitespace after the cut: trimmed, not marked.
+      { line: 2, content: "abc" },
+    ]);
+  });
+});
+
+/** Whether `path` can be read — permission bits do not stop root. */
+async function readable(path: string): Promise<boolean> {
+  return await Deno.readFile(path).then(() => true, () => false);
+}
+
+Deno.test({
+  name: "grep - an unreadable file fails the search with grep's message",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withTree(
+      { "ok.txt": "needle\n", "locked.txt": "needle\n" },
+      async (dir) => {
+        const locked = join(dir, "locked.txt");
+        await Deno.chmod(locked, 0o000);
+        if (await readable(locked)) return;
+        const error = await assertRejects(() =>
+          grep().call({ pattern: "needle", path: dir })
+        );
+        assert(error instanceof Error);
+        // grep names itself by the path it was started as, e.g. /usr/bin/grep.
+        assertEquals(
+          error.message.replace(/: \S*grep: /, ": grep: "),
+          `grep exited with code 2: grep: ${locked}: Permission denied`,
+        );
+      },
+    );
+  },
+});
+
+// grep is killed at the cap only after its error output is read in full, so
+// an error must not stall the search by filling the error pipe.
+Deno.test({
+  name: "grep - many errors neither stall the search nor flood the message",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 2000; i++) files[`f${i}.txt`] = "needle\n";
+    await withTree(files, async (dir) => {
+      for (const name of Object.keys(files)) {
+        await Deno.chmod(join(dir, name), 0o000);
+      }
+      if (await readable(join(dir, "f0.txt"))) return;
+      const error = await assertRejects(() =>
+        grep({ timeout: 10_000 }).call({ pattern: "needle", path: dir })
+      );
+      assert(error instanceof Error);
+      assertEquals(error.message.split("; ").length, 5);
+    });
+  },
+});
+
+Deno.test("searchFailure - decides from the exit code unless the search was stopped", () => {
+  const errors = ["grep: x: Permission denied"];
+  assertEquals(
+    searchFailure({ code: 0, stopped: false, errors: [] }),
+    undefined,
+  );
+  assertEquals(
+    searchFailure({ code: 1, stopped: false, errors: [] }),
+    undefined,
+  );
+  assertEquals(
+    searchFailure({ code: 2, stopped: false, errors }),
+    "grep exited with code 2: grep: x: Permission denied",
+  );
+  assertEquals(
+    searchFailure({ code: 2, stopped: false, errors: [] }),
+    "grep exited with code 2",
+  );
+  // Stopped at the cap: the kill's exit code means nothing, errors still do.
+  assertEquals(
+    searchFailure({ code: 143, stopped: true, errors: [] }),
+    undefined,
+  );
+  assertEquals(
+    searchFailure({ code: 143, stopped: true, errors }),
+    "grep reported errors: grep: x: Permission denied",
+  );
+  // Warnings never fail a search.
+  const warning = "/usr/bin/grep: warning: stray \\ before -";
+  assertEquals(
+    searchFailure({ code: 143, stopped: true, errors: [warning] }),
+    undefined,
+  );
+  assertEquals(
+    searchFailure({ code: 143, stopped: true, errors: [warning, ...errors] }),
+    `grep reported errors: ${warning}; grep: x: Permission denied`,
   );
 });
 
