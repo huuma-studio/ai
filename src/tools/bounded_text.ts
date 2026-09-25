@@ -34,6 +34,12 @@ export interface ReadTextBoundedOptions {
    * a file, or a response whose length is known.
    */
   endOfStreamGrace?: number;
+  /**
+   * Keep a byte-order mark at the start of the stream as U+FEFF instead of
+   * dropping it, as `Deno.readTextFile` does. Then every byte of the stream
+   * is in the text.
+   */
+  ignoreBOM?: boolean;
 }
 
 /** Validate a `maxBytes` option when a tool is created.
@@ -71,7 +77,7 @@ export function validateMaxBytes(maxBytes: number): void {
 export async function readTextBounded(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
-  { signal, endOfStreamGrace }: ReadTextBoundedOptions = {},
+  { signal, endOfStreamGrace, ignoreBOM = false }: ReadTextBoundedOptions = {},
 ): Promise<BoundedText> {
   const reader = stream.getReader();
   // Cancelling ends a read that is waiting on a stalled source, so an
@@ -85,7 +91,7 @@ export async function readTextBounded(
     signal?.throwIfAborted();
     return result;
   };
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { ignoreBOM });
   let text = "";
   let received = 0;
   try {
