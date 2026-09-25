@@ -90,6 +90,19 @@ Deno.test("readTextBounded - decodes a character split across chunks", async () 
   });
 });
 
+Deno.test("readTextBounded - drops a byte-order mark unless told to keep it", async () => {
+  assertEquals(await readTextBounded(chunked(["\ufeffhi"]).stream, 100), {
+    text: "hi",
+    truncated: false,
+  });
+  assertEquals(
+    await readTextBounded(chunked(["\ufeffhi"]).stream, 100, {
+      ignoreBOM: true,
+    }),
+    { text: "\ufeffhi", truncated: false },
+  );
+});
+
 Deno.test("readTextBounded - a stream ending exactly at the cap is complete", async () => {
   const { stream } = chunked(["abc", "def"]);
   assertEquals(await readTextBounded(stream, 6), {
