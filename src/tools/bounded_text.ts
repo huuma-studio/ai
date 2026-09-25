@@ -4,10 +4,10 @@
  *
  * Each tool keeps its source-specific policy (how to open the source,
  * what its size is, how long to wait for its end); this module owns the
- * parts that are the same for every source: validating the cap, reading
- * a byte stream into text without holding more than the cap, fitting text
- * into what it may take up in a model request, and telling the model that
- * the result was cut short.
+ * parts that are the same for every source: validating the cap, reading a
+ * byte stream into text or lines without holding more than the cap,
+ * fitting text into what it may take up in a model request, and telling
+ * the model that the result was cut short.
  *
  * @module
  */
@@ -122,6 +122,52 @@ export async function readTextBounded(
     throw error;
   } finally {
     signal?.removeEventListener("abort", cancelOnAbort);
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Read a byte stream as UTF-8 lines, split at `\n`, keeping at most
+ * `maxLineLength` characters of each line — the rest of a longer line is
+ * discarded as it arrives, so one huge line cannot exhaust memory either.
+ *
+ * Lines are produced as the stream delivers them, so a consumer can stop
+ * early: breaking out of the loop cancels the stream. A last line without a
+ * trailing newline is produced too.
+ */
+export async function* readLines(
+  stream: ReadableStream<Uint8Array>,
+  maxLineLength: number,
+): AsyncGenerator<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let line = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      const text = done
+        ? decoder.decode()
+        : decoder.decode(value, { stream: true });
+      let start = 0;
+      while (true) {
+        const end = text.indexOf("\n", start);
+        if (line.length < maxLineLength) {
+          line += text.slice(start, end === -1 ? text.length : end);
+          line = line.slice(0, maxLineLength);
+        }
+        if (end === -1) break;
+        yield line;
+        line = "";
+        start = end + 1;
+      }
+      if (done) {
+        if (line !== "") yield line;
+        return;
+      }
+    }
+  } finally {
+    // Stopping early, or a failed read, leaves the stream open.
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

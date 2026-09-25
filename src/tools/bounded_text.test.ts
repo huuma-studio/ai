@@ -2,6 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   fitJsonString,
   formatBytes,
+  readLines,
   readTextBounded,
   validateMaxBytes,
   withTruncationNotice,
@@ -185,6 +186,54 @@ Deno.test("readTextBounded - a failing stream rejects with its error", async () 
     },
   });
   assertEquals(await assertRejects(() => readTextBounded(stream, 10)), failure);
+});
+
+async function collect(lines: AsyncIterable<string>): Promise<string[]> {
+  const all: string[] = [];
+  for await (const line of lines) all.push(line);
+  return all;
+}
+
+Deno.test("readLines - splits lines across chunks", async () => {
+  const { stream } = chunked(["one\ntw", "o\n\nthr", "ee"]);
+  assertEquals(await collect(readLines(stream, 100)), [
+    "one",
+    "two",
+    "",
+    "three",
+  ]);
+});
+
+Deno.test("readLines - decodes a character split across chunks", async () => {
+  const bytes = encoder.encode("é\n");
+  const { stream } = chunked([bytes.subarray(0, 1), bytes.subarray(1)]);
+  assertEquals(await collect(readLines(stream, 100)), ["é"]);
+});
+
+Deno.test("readLines - keeps only the start of a long line", async () => {
+  const { stream } = chunked(["abcdef", "ghij\nshort\n", "x".repeat(50)]);
+  assertEquals(await collect(readLines(stream, 4)), ["abcd", "shor", "xxxx"]);
+});
+
+Deno.test("readLines - holds only the cap of an endless line", async () => {
+  // 64 MiB of one line, delivered in 64 KiB chunks.
+  const chunk = encoder.encode("x".repeat(64 * 1024));
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent++ < 1024) controller.enqueue(chunk);
+      else controller.close();
+    },
+  });
+  assertEquals(await collect(readLines(stream, 10)), ["x".repeat(10)]);
+});
+
+Deno.test("readLines - stopping early cancels the stream", async () => {
+  const { stream, state } = chunked(["a\nb\nc\n"], { stall: true });
+  for await (const line of readLines(stream, 100)) {
+    if (line === "b") break;
+  }
+  assert(state.cancelled, "the stream was not cancelled");
 });
 
 /** UTF-8 size of `text` as a JSON string, without the quotes. */
