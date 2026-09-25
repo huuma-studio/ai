@@ -2,6 +2,12 @@ import { object } from "@huuma/validate/object";
 import { type Tool, tool } from "@/tools/mod.ts";
 import { string } from "@huuma/validate/string";
 import { NodeHtmlMarkdown } from "node-html-markdown";
+import {
+  formatBytes,
+  readTextBounded,
+  validateMaxBytes,
+  withTruncationNotice,
+} from "@/tools/bounded_text.ts";
 
 /** Options for configuring the fetch-website tool. */
 export interface FetchWebsiteOptions {
@@ -48,9 +54,7 @@ export function fetchWebsite(
 ): Tool<any, string> {
   const timeout = options?.timeout ?? DEFAULT_FETCH_WEBSITE_TIMEOUT;
   const maxBytes = options?.maxBytes ?? DEFAULT_FETCH_WEBSITE_MAX_BYTES;
-  if (!Number.isInteger(maxBytes) || maxBytes < 1) {
-    throw new TypeError("maxBytes must be a positive integer");
-  }
+  validateMaxBytes(maxBytes);
 
   return tool({
     name: "fetch_website",
@@ -74,19 +78,16 @@ export function fetchWebsite(
           );
         }
         const total = Number(response.headers.get("content-length"));
-        const { text, truncated } = await readText(
-          response,
+        const contentLength = Number.isFinite(total) ? total : undefined;
+        const { text, truncated } = await readTextBounded(
+          response.body ?? ReadableStream.from([]),
           maxBytes,
-          Number.isFinite(total) ? total : undefined,
+          { endOfStreamGrace: endOfBodyGrace(contentLength, maxBytes) },
         );
         const markdown = NodeHtmlMarkdown.translate(text);
-        if (!truncated) return markdown;
-        const size = Number.isFinite(total) && total > maxBytes
-          ? ` of ${formatBytes(total)}`
-          : "";
-        return `${markdown}\n\n…[truncated: showing the first ${
-          formatBytes(maxBytes)
-        }${size}]`;
+        return truncated
+          ? withTruncationNotice(markdown, maxBytes, contentLength)
+          : markdown;
       } catch (error) {
         if (error instanceof Error) {
           throw new Error(`Error fetching ${url}: ${error.message}`);
@@ -98,77 +99,17 @@ export function fetchWebsite(
 }
 
 /**
- * Keep at most `maxBytes` of the body as UTF-8 text. At the cap the rest
- * of the download is cancelled, and a multi-byte character split by the
- * cut is dropped rather than decoded into a replacement character. Reads
- * return whole transport chunks, so the chunk crossing the cap — or the
- * one read to check for the end below — is received and then discarded
- * past the cap: at most one chunk beyond `maxBytes` is ever held.
- *
- * A body that reaches the cap exactly may be complete or may continue. A
- * `Content-Length` of exactly `maxBytes` settles it; otherwise the end of
- * the stream is awaited only briefly — a complete page closes right after
- * its last chunk, while waiting indefinitely would hang on a server that
- * holds the connection open. More data, or none within the grace period,
- * counts as truncated.
+ * How long a body that reached the cap exactly may take to end. A
+ * `Content-Length` of exactly `maxBytes` proves it is complete, so its end
+ * is simply awaited; otherwise it is awaited only briefly — a complete page
+ * closes right after its last chunk, while waiting indefinitely would hang
+ * on a server that holds the connection open.
  */
-async function readText(
-  response: Response,
-  maxBytes: number,
+function endOfBodyGrace(
   contentLength: number | undefined,
-): Promise<{ text: string; truncated: boolean }> {
-  if (!response.body) return { text: "", truncated: false };
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let received = 0;
-  try {
-    while (true) {
-      if (received === maxBytes && contentLength !== maxBytes) {
-        const ended = await endsWithin(reader, END_OF_BODY_GRACE_MS);
-        if (ended) return { text: text + decoder.decode(), truncated: false };
-        await reader.cancel();
-        return { text, truncated: true };
-      }
-      const { done, value } = await reader.read();
-      if (done) return { text: text + decoder.decode(), truncated: false };
-      const remaining = maxBytes - received;
-      if (value.byteLength > remaining) {
-        text += decoder.decode(value.subarray(0, remaining), { stream: true });
-        await reader.cancel();
-        return { text, truncated: true };
-      }
-      received += value.byteLength;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-/** Whether the stream reports its end within `ms`. A chunk arriving
- * instead, or nothing at all, means it continues. */
-async function endsWithin(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  ms: number,
-): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      reader.read().then(({ done }) => done),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${+(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-  if (bytes >= 1024) return `${+(bytes / 1024).toFixed(1)} KiB`;
-  return `${bytes} bytes`;
+  maxBytes: number,
+): number | undefined {
+  return contentLength === maxBytes ? undefined : END_OF_BODY_GRACE_MS;
 }
 
 function formatDuration(ms: number): string {

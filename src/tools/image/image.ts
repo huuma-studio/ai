@@ -2,6 +2,7 @@ import { encodeBase64 } from "@std/encoding/base64";
 import { object } from "@huuma/validate/object";
 import { string } from "@huuma/validate/string";
 import { type Tool, tool, type ToolOutput, toolOutput } from "../mod.ts";
+import { mapReadError, openRegularFile } from "../regular_file.ts";
 
 /** Options for configuring the image tool. */
 export interface ImageToolOptions {
@@ -86,35 +87,20 @@ export function image(
     fn: async ({ path }, context) => {
       throwIfAborted(context.signal);
 
-      let stat: Deno.FileInfo;
+      // Rejects directories, FIFOs, and devices, which could block or never
+      // end; the size comes from the opened handle.
+      const { file, size } = await openRegularFile(path, "Image");
+      let bytes: Uint8Array;
       try {
-        stat = await Deno.stat(path);
-      } catch (error) {
-        throw mapFileSystemError(error, path);
+        if (size > maxBytes) {
+          throw new Error(
+            `Image too large: ${path} is ${size} bytes, which exceeds the ${maxBytes} byte limit.`,
+          );
+        }
+        bytes = await readBounded(file, path, maxBytes, context.signal);
+      } finally {
+        file.close();
       }
-
-      if (stat.isDirectory) {
-        throw new Error(`Path is a directory, not a file: ${path}`);
-      }
-
-      // FIFOs and device nodes stat as non-regular files. Reading one is
-      // unbounded — a FIFO with no writer never reaches EOF and a device
-      // like /dev/zero never ends — so they are rejected before any byte
-      // is read instead of blocking or exhausting memory.
-      if (!stat.isFile) {
-        throw new Error(`Path is not a regular file: ${path}`);
-      }
-
-      if (stat.size > maxBytes) {
-        throw new Error(
-          `Image too large: ${path} is ${stat.size} bytes, which exceeds the ${maxBytes} byte limit.`,
-        );
-      }
-
-      // readBounded re-validates the opened handle itself, closing the
-      // race where the path is swapped for a special file between stat
-      // and open, and caps the read at maxBytes.
-      const bytes = await readBounded(path, maxBytes, context.signal);
 
       const mimeType = sniffImageMime(bytes);
       if (mimeType === undefined) {
@@ -146,43 +132,19 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
 }
 
-/** Read at most `maxBytes` bytes from a regular file.
+/** Read at most `maxBytes` bytes from an opened file.
  *
- * The path is stat-verified before opening, but the path can be
- * replaced between stat and open — so the opened handle is re-validated
- * through `file.stat()` and every read below runs against the verified
- * handle, immune to further path replacement. Reading stops as soon as
- * the limit is exceeded, and the abort signal is checked between reads.
+ * The size was checked when the file was opened, but the file can grow
+ * after that, so reading stops as soon as the limit is exceeded. The
+ * abort signal is checked between reads.
  */
 async function readBounded(
+  file: Deno.FsFile,
   path: string,
   maxBytes: number,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
-  let file: Deno.FsFile;
   try {
-    file = await Deno.open(path, { read: true });
-  } catch (error) {
-    throw mapFileSystemError(error, path);
-  }
-
-  try {
-    // Validate the handle, not the path: this is the inode the reads
-    // below actually touch, so a special file swapped into the path
-    // between stat and open cannot get past the checks.
-    const info = await file.stat();
-    if (info.isDirectory) {
-      throw new Error(`Path is a directory, not a file: ${path}`);
-    }
-    if (!info.isFile) {
-      throw new Error(`Path is not a regular file: ${path}`);
-    }
-    if (info.size > maxBytes) {
-      throw new Error(
-        `Image too large: ${path} is ${info.size} bytes, which exceeds the ${maxBytes} byte limit.`,
-      );
-    }
-
     const chunks: Uint8Array[] = [];
     let total = 0;
     const buffer = new Uint8Array(64 * 1024);
@@ -200,9 +162,7 @@ async function readBounded(
     }
     return concatBytes(chunks, total);
   } catch (error) {
-    throw mapFileSystemError(error, path);
-  } finally {
-    file.close();
+    throw mapReadError(error, path, "Image");
   }
 }
 
@@ -242,20 +202,4 @@ function hasPrefix(
 ): boolean {
   if (bytes.length < offset + signature.length) return false;
   return signature.every((byte, index) => bytes[offset + index] === byte);
-}
-
-/** Map file-system errors to descriptive tool errors, mirroring readFile(). */
-function mapFileSystemError(error: unknown, path: string): unknown {
-  if (error instanceof Deno.errors.NotFound) {
-    return new Error(`Image not found: ${path}`);
-  }
-  if (error instanceof Deno.errors.PermissionDenied) {
-    return new Error(
-      `Permission denied: ${path}. Make sure to run with --allow-read.`,
-    );
-  }
-  if (error instanceof Deno.errors.IsADirectory) {
-    return new Error(`Path is a directory, not a file: ${path}`);
-  }
-  return error;
 }

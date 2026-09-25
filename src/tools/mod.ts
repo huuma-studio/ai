@@ -90,10 +90,12 @@ export {
 
 export {
   createDirectory,
+  DEFAULT_READ_FILE_MAX_BYTES,
   deleteFile,
   editFile,
   files,
   readFile,
+  type ReadFileOptions,
   writeFile,
 } from "@/tools/file/file.ts";
 
