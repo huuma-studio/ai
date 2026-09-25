@@ -297,6 +297,41 @@ and `allowedMimeTypes` to tighten or loosen the defaults.
   website fetching, web search, skill loading, sub-agent delegation, and MCP
   servers in `@huuma/ai/tools`.
 
+## Bounded tool results
+
+Tools that return text from sources of unknown size keep their results
+bounded, so one large file or page cannot exhaust memory or produce a tool
+result too large to send to the model. Each cut-off result ends with a note
+telling the model what it got.
+
+**`readFile()`** returns at most `maxBytes` of a file per call (512 KiB by
+default, half of a 1 MiB request limit). The cap also covers the content's
+size once JSON-escaped in the model request, so a file full of quotes or
+control characters is cut earlier rather than growing past it. Larger files
+stay fully readable: the model passes optional byte `offset` and `limit`
+inputs, and each partial result ends with a note such as
+`…[truncated: showing bytes 0–524287 of 3145728 bytes (3 MiB). Call read_file with offset 524288 to continue.]`
+Files that fit in one read come back unchanged. FIFOs and devices are
+rejected, since reading them may never end.
+
+**`fetchWebsite()`** times out after `timeout` (30 s by default) and keeps
+at most `maxBytes` of the page (2 MiB by default), cancelling the rest of
+the download.
+
+```typescript
+import { fetchWebsite, readFile } from "jsr:@huuma/ai/tools";
+
+const tools = [
+  readFile({ maxBytes: 256 * 1024 }),
+  fetchWebsite({ timeout: 10_000, maxBytes: 1024 * 1024 }),
+];
+```
+
+Tool calls also honour cancellation: for `cli`, `readFile`, `fetchWebsite`,
+web search, and MCP tools, the agent run's `signal` and the tool's `timeout`
+stop the underlying process, read, download, or request rather than only
+rejecting the call.
+
 ## MCP servers
 
 `mcp()` connects to a Model Context Protocol server and exposes its tools as
@@ -321,6 +356,12 @@ content blocks land on the tool result's `files` field and are delivered
 per provider exactly like media from tools above; execution failures
 reported by the server surface as regular tool errors. stdio transports need
 `--allow-run --allow-read --allow-env`; HTTP transports need `--allow-net`.
+
+Cancellation reaches the server: aborting a tool call, or its `timeout`
+firing, cancels the MCP request (the server receives
+`notifications/cancelled`). `mcp({ signal })` cancels connecting and the
+initial tool listing, and `refresh({ signal })` cancels a re-listing,
+keeping the previous tools.
 
 The client implements the **MCP 2026-07-28** specification revision via
 `@modelcontextprotocol/sdk@^1.30.0`. Tool definitions with a `title` field
