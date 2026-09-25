@@ -2,6 +2,7 @@ import { encodeBase64 } from "@std/encoding/base64";
 import { object } from "@huuma/validate/object";
 import { string } from "@huuma/validate/string";
 import { type Tool, tool, type ToolOutput, toolOutput } from "../mod.ts";
+import { mapReadError } from "../read_errors.ts";
 
 /** Options for configuring the image tool. */
 export interface ImageToolOptions {
@@ -90,7 +91,7 @@ export function image(
       try {
         stat = await Deno.stat(path);
       } catch (error) {
-        throw mapFileSystemError(error, path);
+        throw mapReadError(error, path, "Image");
       }
 
       if (stat.isDirectory) {
@@ -163,7 +164,7 @@ async function readBounded(
   try {
     file = await Deno.open(path, { read: true });
   } catch (error) {
-    throw mapFileSystemError(error, path);
+    throw mapReadError(error, path, "Image");
   }
 
   try {
@@ -200,7 +201,7 @@ async function readBounded(
     }
     return concatBytes(chunks, total);
   } catch (error) {
-    throw mapFileSystemError(error, path);
+    throw mapReadError(error, path, "Image");
   } finally {
     file.close();
   }
@@ -242,20 +243,4 @@ function hasPrefix(
 ): boolean {
   if (bytes.length < offset + signature.length) return false;
   return signature.every((byte, index) => bytes[offset + index] === byte);
-}
-
-/** Map file-system errors to descriptive tool errors, mirroring readFile(). */
-function mapFileSystemError(error: unknown, path: string): unknown {
-  if (error instanceof Deno.errors.NotFound) {
-    return new Error(`Image not found: ${path}`);
-  }
-  if (error instanceof Deno.errors.PermissionDenied) {
-    return new Error(
-      `Permission denied: ${path}. Make sure to run with --allow-read.`,
-    );
-  }
-  if (error instanceof Deno.errors.IsADirectory) {
-    return new Error(`Path is a directory, not a file: ${path}`);
-  }
-  return error;
 }
