@@ -83,9 +83,12 @@ export {
 } from "@/tools/cli/cli.ts";
 
 export {
+  DEFAULT_GREP_TIMEOUT,
   grep,
   type GrepFileResult,
   type GrepMatch,
+  type GrepOptions,
+  type GrepResult,
 } from "@/tools/grep/grep.ts";
 
 export {
