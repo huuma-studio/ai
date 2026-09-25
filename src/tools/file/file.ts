@@ -5,12 +5,13 @@ import { dirname } from "@std/path/dirname";
 import { editFile } from "./edit_file.ts";
 import {
   type BoundedText,
+  fitJsonString,
   formatBytes,
   readTextBounded,
   validateMaxBytes,
   withTruncationNotice,
 } from "../bounded_text.ts";
-import { mapReadError } from "../read_errors.ts";
+import { mapReadError, openRegularFile } from "../regular_file.ts";
 
 export { editFile } from "./edit_file.ts";
 
@@ -25,8 +26,12 @@ export interface FileOperationResult {
 /** Options for configuring the read-file tool. */
 export interface ReadFileOptions {
   /**
-   * Maximum number of bytes of a file returned per read. Larger files are
-   * cut off at this size and marked as truncated. Defaults to 512 KiB.
+   * Maximum size of a read's content, in bytes. Larger files are cut off
+   * and marked as truncated. Defaults to 512 KiB.
+   *
+   * The cap applies both to the bytes read and to the content's size once
+   * JSON-escaped for the model request, so a file of quotes or control
+   * characters is cut earlier rather than growing past the cap on the wire.
    */
   maxBytes?: number;
 }
@@ -40,9 +45,11 @@ export const DEFAULT_READ_FILE_MAX_BYTES = 512 * 1024;
 
 /** Create a tool that reads a text file.
  *
- * At most `maxBytes` of the file are read — the result then ends with a
- * truncation notice naming the file's full size — so a huge file cannot
- * exhaust memory or produce a tool result too large to send to the model.
+ * At most `maxBytes` of the file are read, and the content is cut so that
+ * JSON-escaped it takes at most `maxBytes` in the model request. A cut
+ * result ends with a truncation notice naming how much is shown and the
+ * file's full size, so a huge file can neither exhaust memory nor produce a
+ * tool result too large to send to the model.
  *
  * @param options Optional size cap.
  * @returns A {@link Tool} that returns the contents of the requested file path.
@@ -62,12 +69,11 @@ export function readFile(options?: ReadFileOptions): Tool<any, string> {
       path: string(),
     }),
     fn: async ({ path }, { signal }) => {
-      const { text, truncated, size } = await readTextFileBounded(
-        path,
-        maxBytes,
-        signal,
-      );
-      return truncated ? withTruncationNotice(text, maxBytes, size) : text;
+      const read = await readTextFileBounded(path, maxBytes, signal);
+      const { text, trimmed } = fitJsonString(read.text, maxBytes);
+      if (!read.truncated && !trimmed) return text;
+      const shownBytes = new TextEncoder().encode(text).byteLength;
+      return withTruncationNotice(text, shownBytes, read.size);
     },
   });
 }
@@ -79,19 +85,7 @@ async function readTextFileBounded(
   maxBytes: number,
   signal: AbortSignal,
 ): Promise<BoundedText & { size: number }> {
-  let file: Deno.FsFile;
-  try {
-    file = await Deno.open(path, { read: true });
-  } catch (error) {
-    throw mapReadError(error, path);
-  }
-  let size: number;
-  try {
-    size = (await file.stat()).size;
-  } catch (error) {
-    file.close();
-    throw mapReadError(error, path);
-  }
+  const { file, size } = await openRegularFile(path);
   try {
     // The stream owns the handle from here: it closes the file when it is
     // read to the end, cancelled at the cap, or fails.

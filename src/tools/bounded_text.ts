@@ -5,8 +5,9 @@
  * Each tool keeps its source-specific policy (how to open the source,
  * what its size is, how long to wait for its end); this module owns the
  * parts that are the same for every source: validating the cap, reading
- * a byte stream into text without holding more than the cap, and telling
- * the model that the result was cut short.
+ * a byte stream into text without holding more than the cap, fitting text
+ * into what it may take up in a model request, and telling the model that
+ * the result was cut short.
  *
  * @module
  */
@@ -21,7 +22,10 @@ export interface BoundedText {
 
 /** Options for {@linkcode readTextBounded}. */
 export interface ReadTextBoundedOptions {
-  /** Stops reading: the stream is cancelled and the signal's reason thrown. */
+  /**
+   * Stops reading: the stream is cancelled at once, even while a read is
+   * waiting on it, and the signal's reason thrown.
+   */
   signal?: AbortSignal;
   /**
    * How long a stream that reached the cap exactly may take to report its
@@ -60,6 +64,9 @@ export function validateMaxBytes(maxBytes: number): void {
  *
  * The stream is always released: read to its end, cancelled at the cap, or
  * cancelled when reading fails or is aborted.
+ *
+ * The cap bounds bytes, not the text's size once escaped for a model
+ * request; see {@linkcode fitJsonString} for that.
  */
 export async function readTextBounded(
   stream: ReadableStream<Uint8Array>,
@@ -67,6 +74,17 @@ export async function readTextBounded(
   { signal, endOfStreamGrace }: ReadTextBoundedOptions = {},
 ): Promise<BoundedText> {
   const reader = stream.getReader();
+  // Cancelling ends a read that is waiting on a stalled source, so an
+  // abort releases the source right away instead of at its next chunk.
+  const cancelOnAbort = () => reader.cancel(signal?.reason).catch(() => {});
+  signal?.addEventListener("abort", cancelOnAbort, { once: true });
+  // A read ended by that cancel reports `done`: the abort must win over
+  // treating the stream as complete.
+  const next = async () => {
+    const result = await reader.read();
+    signal?.throwIfAborted();
+    return result;
+  };
   const decoder = new TextDecoder();
   let text = "";
   let received = 0;
@@ -74,13 +92,13 @@ export async function readTextBounded(
     while (true) {
       signal?.throwIfAborted();
       if (received === maxBytes) {
-        if (await endsWithin(reader, endOfStreamGrace)) {
+        if (await endsWithin(next, endOfStreamGrace)) {
           return { text: text + decoder.decode(), truncated: false };
         }
         await reader.cancel();
         return { text, truncated: true };
       }
-      const { done, value } = await reader.read();
+      const { done, value } = await next();
       if (done) return { text: text + decoder.decode(), truncated: false };
       const remaining = maxBytes - received;
       if (value.byteLength > remaining) {
@@ -97,25 +115,85 @@ export async function readTextBounded(
     await reader.cancel(error).catch(() => {});
     throw error;
   } finally {
+    signal?.removeEventListener("abort", cancelOnAbort);
     reader.releaseLock();
   }
 }
 
-/** Append the note that tells the model a result was cut at `maxBytes`.
+/**
+ * Cut `text` so that, encoded as a JSON string, it takes at most `maxBytes`
+ * UTF-8 bytes, not counting the surrounding quotes.
  *
+ * A tool's text result is JSON-escaped once in the model request, and
+ * escaping inflates it: a quote or newline takes 2 bytes and other control
+ * characters take 6. Capping the bytes read alone lets a file of NUL bytes
+ * grow sixfold in the request; this bounds what is actually sent. The cut
+ * never splits a surrogate pair.
+ */
+export function fitJsonString(
+  text: string,
+  maxBytes: number,
+): { text: string; trimmed: boolean } {
+  let size = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    let cost: number;
+    let units = 1;
+    if (code === 0x22 || code === 0x5c || SHORT_ESCAPES.has(code)) {
+      cost = 2;
+    } else if (code < 0x20) {
+      cost = 6;
+    } else if (code < 0x80) {
+      cost = 1;
+    } else if (code < 0x800) {
+      cost = 2;
+    } else if (
+      isHighSurrogate(code) && isLowSurrogate(text.charCodeAt(index + 1))
+    ) {
+      cost = 4;
+      units = 2;
+    } else if (isHighSurrogate(code) || isLowSurrogate(code)) {
+      // A lone surrogate is escaped as \uXXXX.
+      cost = 6;
+    } else {
+      cost = 3;
+    }
+    if (size + cost > maxBytes) {
+      return { text: text.slice(0, index), trimmed: true };
+    }
+    size += cost;
+    index += units - 1;
+  }
+  return { text, trimmed: false };
+}
+
+/** Control characters JSON escapes in two bytes: \b \t \n \f \r. */
+const SHORT_ESCAPES = new Set([0x08, 0x09, 0x0a, 0x0c, 0x0d]);
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/** Append the note that tells the model a result was cut short.
+ *
+ * @param shownBytes How much of the source the result shows.
  * @param total The source's full size, named in the note when it is known
- * to exceed the cap.
+ * to exceed what is shown.
  */
 export function withTruncationNotice(
   text: string,
-  maxBytes: number,
+  shownBytes: number,
   total?: number,
 ): string {
-  const size = total !== undefined && total > maxBytes
+  const size = total !== undefined && total > shownBytes
     ? ` of ${formatBytes(total)}`
     : "";
   return `${text}\n\n…[truncated: showing the first ${
-    formatBytes(maxBytes)
+    formatBytes(shownBytes)
   }${size}]`;
 }
 
@@ -123,22 +201,25 @@ export function withTruncationNotice(
 export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${+(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   if (bytes >= 1024) return `${+(bytes / 1024).toFixed(1)} KiB`;
-  return `${bytes} bytes`;
+  return bytes === 1 ? "1 byte" : `${bytes} bytes`;
 }
 
 /** Whether the stream reports its end within `ms`, or at its next read when
  * `ms` is omitted. A chunk arriving instead, or nothing at all, means it
  * continues. */
 async function endsWithin(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
+  next: () => Promise<ReadableStreamReadResult<Uint8Array>>,
   ms: number | undefined,
 ): Promise<boolean> {
-  const next = reader.read().then(({ done }) => done);
-  if (ms === undefined) return await next;
+  const ended = next().then(({ done }) => done);
+  if (ms === undefined) return await ended;
+  // Once the grace period wins, the read is settled only by the caller's
+  // cancel — or rejected by an abort nobody awaits any more.
+  ended.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      next,
+      ended,
       new Promise<boolean>((resolve) => {
         timer = setTimeout(() => resolve(false), ms);
       }),

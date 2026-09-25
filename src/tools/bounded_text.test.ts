@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
+  fitJsonString,
   formatBytes,
   readTextBounded,
   validateMaxBytes,
@@ -136,6 +137,33 @@ Deno.test("readTextBounded - an abort stops reading and cancels the stream", asy
   assert(state.cancelled, "the stream was not cancelled on abort");
 });
 
+Deno.test("readTextBounded - an abort ends a read waiting on a stalled stream", async () => {
+  const controller = new AbortController();
+  const reason = new DOMException("stop", "AbortError");
+  const { stream, state } = chunked(["abc"], { stall: true });
+  const reading = readTextBounded(stream, 1_000, {
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(reason), 10);
+  const error = await within(assertRejects(() => reading));
+  assertEquals(error, reason);
+  assert(state.cancelled, "the stalled stream was not cancelled on abort");
+});
+
+Deno.test("readTextBounded - an abort during the end-of-stream grace wins", async () => {
+  const controller = new AbortController();
+  const reason = new DOMException("stop", "AbortError");
+  const { stream, state } = chunked(["abcdef"], { stall: true });
+  const reading = readTextBounded(stream, 6, {
+    signal: controller.signal,
+    endOfStreamGrace: 1_000,
+  });
+  setTimeout(() => controller.abort(reason), 10);
+  const error = await within(assertRejects(() => reading), 500);
+  assertEquals(error, reason);
+  assert(state.cancelled, "the stalled stream was not cancelled on abort");
+});
+
 Deno.test("readTextBounded - a failing stream rejects with its error", async () => {
   const failure = new Error("disk gone");
   const stream = new ReadableStream<Uint8Array>({
@@ -144,6 +172,57 @@ Deno.test("readTextBounded - a failing stream rejects with its error", async () 
     },
   });
   assertEquals(await assertRejects(() => readTextBounded(stream, 10)), failure);
+});
+
+/** UTF-8 size of `text` as a JSON string, without the quotes. */
+function jsonBytes(text: string): number {
+  return encoder.encode(JSON.stringify(text)).byteLength - 2;
+}
+
+Deno.test("fitJsonString - keeps text that fits unchanged", () => {
+  assertEquals(fitJsonString("hello", 5), { text: "hello", trimmed: false });
+});
+
+Deno.test("fitJsonString - counts escaped characters at their escaped size", () => {
+  // A quote and a newline escape to 2 bytes, NUL to 6 (\u0000).
+  assertEquals(fitJsonString('a"b', 3), { text: 'a"', trimmed: true });
+  assertEquals(fitJsonString('a"b', 2), { text: "a", trimmed: true });
+  assertEquals(fitJsonString("a\nb", 4), { text: "a\nb", trimmed: false });
+  assertEquals(fitJsonString("\0\0", 11), { text: "\0", trimmed: true });
+});
+
+Deno.test("fitJsonString - never splits a surrogate pair", () => {
+  // "😀" is one surrogate pair: 4 UTF-8 bytes.
+  assertEquals(fitJsonString("a😀", 4), { text: "a", trimmed: true });
+  assertEquals(fitJsonString("a😀", 5), { text: "a😀", trimmed: false });
+});
+
+Deno.test("fitJsonString - agrees with JSON.stringify on mixed text", () => {
+  const samples = [
+    'const s = "q\\"uote\\\\";\n\t',
+    "\0\x01\x1f\b\f\r plain",
+    "é ü ß 中文 😀 \u2028",
+    "lone \ud800 and \udc00 surrogates",
+  ];
+  for (const sample of samples) {
+    const text = sample.repeat(20);
+    const full = jsonBytes(text);
+    assertEquals(fitJsonString(text, full), { text, trimmed: false });
+    for (const budget of [1, 7, 50, full - 1]) {
+      const fitted = fitJsonString(text, budget);
+      assert(fitted.trimmed);
+      assert(jsonBytes(fitted.text) <= budget, `over budget at ${budget}`);
+      // The cut is as late as the budget allows: one more character (or
+      // surrogate pair) would exceed it.
+      const rest = text.slice(fitted.text.length);
+      const nextChar = String.fromCodePoint(rest.codePointAt(0)!);
+      const nextUnits = /^[\ud800-\udbff][\udc00-\udfff]/.test(rest) ? 2 : 1;
+      assert(
+        jsonBytes(text.slice(0, fitted.text.length + nextUnits)) > budget,
+        `cut early at ${budget} before ${JSON.stringify(nextChar)}`,
+      );
+    }
+  }
 });
 
 Deno.test("withTruncationNotice - names the cap and a larger total", () => {
@@ -160,6 +239,7 @@ Deno.test("withTruncationNotice - omits an unknown or smaller total", () => {
 });
 
 Deno.test("formatBytes - picks a readable unit", () => {
+  assertEquals(formatBytes(1), "1 byte");
   assertEquals(formatBytes(512), "512 bytes");
   assertEquals(formatBytes(1536), "1.5 KiB");
   assertEquals(formatBytes(2 * 1024 * 1024), "2 MiB");

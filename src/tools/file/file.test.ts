@@ -272,7 +272,7 @@ Deno.test("readFile - drops a character split by the cap", async () => {
   await withTempFile("aé", async (path) => {
     assertEquals(
       await readFile({ maxBytes: 2 }).call({ path }),
-      "a\n\n…[truncated: showing the first 2 bytes of 3 bytes]",
+      "a\n\n…[truncated: showing the first 1 byte of 3 bytes]",
     );
   });
 });
@@ -293,33 +293,67 @@ Deno.test("readFile - the description names the cap", () => {
 
 // The cap exists so a read_file result can never be the reason the next
 // request exceeds the Huuma API's 1 MiB message size. JSON escaping inflates
-// quotes, backslashes, and newlines, so source-like text is used here.
-Deno.test("readFile - a capped result serializes well below 1 MiB", async () => {
-  const line = '  const value = "a \\"quoted\\" string\\n";\n';
-  const content = line.repeat(Math.ceil(3 * 1024 * 1024 / line.length));
-  await withTempFile(content, async (path) => {
-    const result = await readFile().call({ path });
-    const serialized = new TextEncoder().encode(JSON.stringify(result));
-    assert(
-      serialized.byteLength < 768 * 1024,
-      `serialized result is ${serialized.byteLength} bytes`,
+// quotes, backslashes, and newlines to 2 bytes and other control characters
+// to 6, so the content is cut to fit the cap once escaped.
+for (
+  const [name, unit] of [
+    ["source-like text", '  const value = "a \\"quoted\\" string\\n";\n'],
+    ["NUL bytes", "\0"],
+    ["quotes", '"'],
+  ]
+) {
+  Deno.test(`readFile - ${name} stay within the cap once serialized`, async () => {
+    const content = unit.repeat(
+      Math.ceil((DEFAULT_READ_FILE_MAX_BYTES + 1) / unit.length),
     );
+    await withTempFile(content, async (path) => {
+      const result = await readFile().call({ path });
+      const notice = result.slice(result.lastIndexOf("\n\n…[truncated:"));
+      assertStringIncludes(notice, "of 512 KiB]");
+      const serialized = new TextEncoder().encode(JSON.stringify(result));
+      assert(
+        serialized.byteLength <= DEFAULT_READ_FILE_MAX_BYTES + 2 +
+            JSON.stringify(notice).length,
+        `serialized result is ${serialized.byteLength} bytes`,
+      );
+    });
   });
-});
+}
 
-// An endless source ends at the cap instead of buffering until memory
-// runs out; its size is unknown, so the notice names only the cap.
+// A device may never end, and a read waiting on one cannot be interrupted,
+// so special files are rejected rather than read.
 Deno.test({
-  name: "readFile - an endless file is read only up to the cap",
+  name: "readFile - rejects a device",
   ignore: Deno.build.os === "windows",
   fn: async () => {
-    const result = await readFile({ maxBytes: 1024 }).call({
-      path: "/dev/zero",
-    });
-    assertEquals(
-      result,
-      `${"\0".repeat(1024)}\n\n…[truncated: showing the first 1 KiB]`,
+    await assertRejects(
+      () => readFile().call({ path: "/dev/zero" }),
+      Error,
+      "Path is not a regular file: /dev/zero",
     );
+  },
+});
+
+// Opening a FIFO blocks until a writer appears; it is rejected before it
+// is opened, so the call cannot hang.
+Deno.test({
+  name: "readFile - rejects a FIFO without blocking",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const tempDir = await Deno.makeTempDir();
+    const fifo = join(tempDir, "fifo");
+    try {
+      const { success } = await new Deno.Command("mkfifo", { args: [fifo] })
+        .output();
+      assert(success, "mkfifo failed");
+      await assertRejects(
+        () => readFile().call({ path: fifo }, { timeout: 2_000 }),
+        Error,
+        `Path is not a regular file: ${fifo}`,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
   },
 });
 

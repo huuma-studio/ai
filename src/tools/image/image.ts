@@ -2,7 +2,7 @@ import { encodeBase64 } from "@std/encoding/base64";
 import { object } from "@huuma/validate/object";
 import { string } from "@huuma/validate/string";
 import { type Tool, tool, type ToolOutput, toolOutput } from "../mod.ts";
-import { mapReadError } from "../read_errors.ts";
+import { mapReadError, openRegularFile } from "../regular_file.ts";
 
 /** Options for configuring the image tool. */
 export interface ImageToolOptions {
@@ -87,35 +87,20 @@ export function image(
     fn: async ({ path }, context) => {
       throwIfAborted(context.signal);
 
-      let stat: Deno.FileInfo;
+      // Rejects directories, FIFOs, and devices, which could block or never
+      // end; the size comes from the opened handle.
+      const { file, size } = await openRegularFile(path, "Image");
+      let bytes: Uint8Array;
       try {
-        stat = await Deno.stat(path);
-      } catch (error) {
-        throw mapReadError(error, path, "Image");
+        if (size > maxBytes) {
+          throw new Error(
+            `Image too large: ${path} is ${size} bytes, which exceeds the ${maxBytes} byte limit.`,
+          );
+        }
+        bytes = await readBounded(file, path, maxBytes, context.signal);
+      } finally {
+        file.close();
       }
-
-      if (stat.isDirectory) {
-        throw new Error(`Path is a directory, not a file: ${path}`);
-      }
-
-      // FIFOs and device nodes stat as non-regular files. Reading one is
-      // unbounded — a FIFO with no writer never reaches EOF and a device
-      // like /dev/zero never ends — so they are rejected before any byte
-      // is read instead of blocking or exhausting memory.
-      if (!stat.isFile) {
-        throw new Error(`Path is not a regular file: ${path}`);
-      }
-
-      if (stat.size > maxBytes) {
-        throw new Error(
-          `Image too large: ${path} is ${stat.size} bytes, which exceeds the ${maxBytes} byte limit.`,
-        );
-      }
-
-      // readBounded re-validates the opened handle itself, closing the
-      // race where the path is swapped for a special file between stat
-      // and open, and caps the read at maxBytes.
-      const bytes = await readBounded(path, maxBytes, context.signal);
 
       const mimeType = sniffImageMime(bytes);
       if (mimeType === undefined) {
@@ -147,43 +132,19 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason;
 }
 
-/** Read at most `maxBytes` bytes from a regular file.
+/** Read at most `maxBytes` bytes from an opened file.
  *
- * The path is stat-verified before opening, but the path can be
- * replaced between stat and open — so the opened handle is re-validated
- * through `file.stat()` and every read below runs against the verified
- * handle, immune to further path replacement. Reading stops as soon as
- * the limit is exceeded, and the abort signal is checked between reads.
+ * The size was checked when the file was opened, but the file can grow
+ * after that, so reading stops as soon as the limit is exceeded. The
+ * abort signal is checked between reads.
  */
 async function readBounded(
+  file: Deno.FsFile,
   path: string,
   maxBytes: number,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
-  let file: Deno.FsFile;
   try {
-    file = await Deno.open(path, { read: true });
-  } catch (error) {
-    throw mapReadError(error, path, "Image");
-  }
-
-  try {
-    // Validate the handle, not the path: this is the inode the reads
-    // below actually touch, so a special file swapped into the path
-    // between stat and open cannot get past the checks.
-    const info = await file.stat();
-    if (info.isDirectory) {
-      throw new Error(`Path is a directory, not a file: ${path}`);
-    }
-    if (!info.isFile) {
-      throw new Error(`Path is not a regular file: ${path}`);
-    }
-    if (info.size > maxBytes) {
-      throw new Error(
-        `Image too large: ${path} is ${info.size} bytes, which exceeds the ${maxBytes} byte limit.`,
-      );
-    }
-
     const chunks: Uint8Array[] = [];
     let total = 0;
     const buffer = new Uint8Array(64 * 1024);
@@ -202,8 +163,6 @@ async function readBounded(
     return concatBytes(chunks, total);
   } catch (error) {
     throw mapReadError(error, path, "Image");
-  } finally {
-    file.close();
   }
 }
 
