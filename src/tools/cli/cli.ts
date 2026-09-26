@@ -5,7 +5,11 @@ import {
   type Schema,
   string,
 } from "@huuma/validate";
-import { formatBytes, validateMaxBytes } from "@/tools/bounded_text.ts";
+import {
+  fitJsonString,
+  formatBytes,
+  validateMaxBytes,
+} from "@/tools/bounded_text.ts";
 import { Tool } from "@/tools/mod.ts";
 
 /** Options for configuring the CLI tool. */
@@ -24,13 +28,17 @@ export interface CliToolOptions {
    */
   allowUnsafeEnvironmentVariables?: boolean;
   /**
-   * Maximum number of command-output bytes kept per call, combined across
-   * stdout and stderr. Output is read as it arrives; once the cap is reached
-   * the rest is discarded while the command runs to its exit — the command
-   * is never killed for writing too much, so its exit code stays meaningful —
-   * and the kept prefix is returned with a truncation note. Defaults to
-   * 512 KiB, half the Huuma API's 1 MiB message limit, leaving room for JSON
-   * escaping and the rest of the conversation in the same request.
+   * Maximum size of the tool result, counted once JSON-escaped for the
+   * model request and shared by stdout and stderr. Output is read as it
+   * arrives and at most this many bytes of each pipe are kept; past that,
+   * bytes are discarded while the command runs to its exit — the command
+   * is never killed for writing too much, so its exit code stays
+   * meaningful. The kept output is cut to the cap however the bytes
+   * escape, and returned with a truncation note.
+   *
+   * Defaults to 512 KiB, half the Huuma API's 1 MiB message limit,
+   * leaving room for the truncation note and the rest of the conversation
+   * in the same request.
    */
   maxOutputBytes?: number;
 }
@@ -39,10 +47,10 @@ export interface CliToolOptions {
 export const DEFAULT_CLI_TIMEOUT = 120_000;
 
 /**
- * Default maximum number of command-output bytes kept per call: 512 KiB,
- * half the Huuma API's 1 MiB message limit, leaving room for JSON escaping,
- * the truncation note, and the rest of the conversation in the same request,
- * so an oversized result cannot fail the next model call.
+ * Default maximum size of the cli tool's result: 512 KiB — half the Huuma
+ * API's 1 MiB message limit, leaving room for the truncation note and the
+ * rest of the conversation in the same request — counted once JSON-escaped,
+ * so an output that escapes large cannot grow past it on the wire.
  */
 export const DEFAULT_CLI_MAX_OUTPUT_BYTES = 512 * 1024;
 
@@ -122,10 +130,17 @@ export function cli(
       signal.throwIfAborted();
 
       if (code !== 0) {
-        const error = output.stderr.join("");
-        const message = error || `Command exited with code ${code}`;
+        // stderr keeps its own share of the cap, so the diagnostic reaches
+        // the model however chatty the command's stdout was.
+        const errorText = output.stderr.join("");
+        const fitted = fitJsonString(
+          errorText || `Command exited with code ${code}`,
+          maxOutputBytes,
+        );
         throw new Error(
-          output.truncated ? message + truncationNote(maxOutputBytes) : message,
+          output.truncated || fitted.trimmed
+            ? fitted.text + truncationNote(maxOutputBytes)
+            : fitted.text,
         );
       }
       return assembleOutput(output, maxOutputBytes);
@@ -134,7 +149,7 @@ export function cli(
 }
 
 /** The output kept from a command's pipes: decoded pieces of stdout and
- * stderr in arrival order, and whether the pipes carried more than the cap. */
+ * stderr in arrival order, and whether either pipe discarded bytes. */
 interface CommandOutput {
   stdout: string[];
   stderr: string[];
@@ -143,15 +158,16 @@ interface CommandOutput {
 
 /**
  * Read both output pipes of a running command, keeping at most `maxBytes`
- * bytes of combined stdout and stderr as UTF-8 text.
+ * bytes of each as UTF-8 text.
  *
  * The pipes are read concurrently — a command writing to one while the
- * other's buffer is full must not wait on it — under one shared byte
- * budget: once the budget is spent, further bytes are discarded as they
- * arrive while both pipes are drained to their end, so the command is
+ * other's buffer is full must not wait on it — and each keeps its own
+ * first `maxBytes` bytes, so stderr's diagnostics are captured even when
+ * stdout floods its cap. Past a pipe's cap its bytes are discarded as
+ * they arrive while the pipe is drained to its end, so the command is
  * never killed for writing too much and its exit code stays meaningful.
- * Only the kept pieces are held, so memory stays O(maxBytes) however much
- * the command emits.
+ * Only the kept pieces are held, so memory stays O(maxBytes) per pipe
+ * however much the command emits.
  *
  * A multi-byte character split by the cut is dropped rather than decoded
  * into a replacement character.
@@ -160,55 +176,58 @@ async function readCommandOutput(
   child: Deno.ChildProcess,
   maxBytes: number,
 ): Promise<CommandOutput> {
-  const budget: OutputBudget = { remaining: maxBytes, truncated: false };
   const [stdout, stderr] = await Promise.all([
-    readPipe(child.stdout, budget),
-    readPipe(child.stderr, budget),
+    readPipe(child.stdout, maxBytes),
+    readPipe(child.stderr, maxBytes),
   ]);
-  return { stdout, stderr, truncated: budget.truncated };
+  return {
+    stdout: stdout.pieces,
+    stderr: stderr.pieces,
+    truncated: stdout.discarded || stderr.discarded,
+  };
 }
 
-/** Byte budget shared by a command's output pipes: how many more bytes are
- * kept, and whether any arrived past the cap. */
-interface OutputBudget {
-  remaining: number;
-  truncated: boolean;
+/** The pieces of one pipe kept under its cap, and whether bytes past the
+ * cap were discarded. */
+interface KeptPipe {
+  pieces: string[];
+  discarded: boolean;
 }
 
-/** Read one pipe, keeping its first bytes under the shared budget and
- * discarding the rest as they arrive. The pipe is always read to its end
- * (or cancelled on failure), and only the kept pieces are returned. */
+/** Read one pipe, keeping at most `maxBytes` of it and discarding the rest
+ * as it arrives. The pipe is always read to its end (or cancelled on
+ * failure), and only the kept pieces are returned. */
 async function readPipe(
   stream: ReadableStream<Uint8Array>,
-  budget: OutputBudget,
-): Promise<string[]> {
+  maxBytes: number,
+): Promise<KeptPipe> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const pieces: string[] = [];
+  let received = 0;
+  let discarded = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (budget.remaining === 0) {
+      if (received === maxBytes) {
         // Drain-discard: past the cap, read on so the command never blocks
         // on a full pipe, holding nothing.
-        if (value.byteLength > 0) budget.truncated = true;
+        if (value.byteLength > 0) discarded = true;
         continue;
       }
-      const kept = Math.min(value.byteLength, budget.remaining);
-      if (kept < value.byteLength) {
-        budget.remaining = 0;
-        budget.truncated = true;
-      } else {
-        budget.remaining -= kept;
-      }
+      const kept = Math.min(value.byteLength, maxBytes - received);
+      received += kept;
+      if (kept < value.byteLength) discarded = true;
       const text = decoder.decode(value.subarray(0, kept), { stream: true });
       if (text !== "") pieces.push(text);
     }
-    // The stream was read to its end under the cap: finish any character it
-    // split. Past the cap the decoder's trailing partial character is the
-    // cut, and is dropped instead of decoded into a replacement character.
-    if (budget.remaining > 0) {
+    // The stream was read to its end: finish any character it split — or,
+    // when nothing was discarded (an output ending exactly at the cap),
+    // replace its own trailing partial character as a plain decode would.
+    // A cut at the cap leaves a partial character in the decoder that is
+    // dropped instead.
+    if (!discarded) {
       const text = decoder.decode();
       if (text !== "") pieces.push(text);
     }
@@ -216,23 +235,27 @@ async function readPipe(
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  return pieces;
+  return { pieces, discarded };
 }
 
-/** Assemble the tool result from the kept pieces in one pass: the kept
- * stdout, the kept stderr on a new line when there is any, and the note
- * when the command kept emitting past the cap. */
+/** Assemble the tool result in one pass: the kept stdout, the kept stderr
+ * on a new line when there is any, cut to `maxOutputBytes` once JSON-escaped
+ * so the result fits a model request however the bytes escape — and the
+ * note when the pipes or that cut lost output. */
 function assembleOutput(
   { stdout, stderr, truncated }: CommandOutput,
   maxOutputBytes: number,
 ): string {
   const parts = [...stdout];
   if (stderr.length > 0) parts.push("\n", ...stderr);
-  if (truncated) parts.push(truncationNote(maxOutputBytes));
-  return parts.join("");
+  const fitted = fitJsonString(parts.join(""), maxOutputBytes);
+  return truncated || fitted.trimmed
+    ? fitted.text + truncationNote(maxOutputBytes)
+    : fitted.text;
 }
 
-/** The note appended when a command kept emitting past the cap. */
+/** The note appended when output was lost: a pipe kept emitting past its
+ * cap, or the kept output escapes past the cap. */
 function truncationNote(maxOutputBytes: number): string {
   return `\n\n…[output truncated at ${formatBytes(maxOutputBytes)}]`;
 }

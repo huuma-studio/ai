@@ -205,15 +205,59 @@ Deno.test("cli - returns output that fills the cap exactly without a note", asyn
   assertEquals(result, "a".repeat(cap));
 });
 
-Deno.test("cli - shares the cap across stdout and stderr", async () => {
+Deno.test("cli - finishes a trailing partial character of untruncated output", async () => {
   const executable = Deno.execPath();
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
   const result = await cliTool.call({
     command: executable,
-    // stdout is written and read long before stderr is written, so the
-    // shared budget is spent on stdout and stderr is discarded whole.
+    // Exactly the cap, ending mid-character: nothing was discarded, so the
+    // tail is replaced like a plain decode would and nothing is truncated.
+    // The incomplete sequence takes three bytes, so its replacement
+    // character still fits the cap once escaped.
+    args: ["eval", [
+      "const bytes = new Uint8Array(1000)",
+      "bytes.fill(97)",
+      "bytes[997] = 0xf0",
+      "bytes[998] = 0x9f",
+      "bytes[999] = 0x92",
+      "await Deno.stdout.write(bytes)",
+    ].join("; ")],
+  });
+
+  assertEquals(result, `${"a".repeat(997)}\uFFFD`);
+});
+
+Deno.test("cli - drops a character split by the cut", async () => {
+  const executable = Deno.execPath();
+  const cap = 999;
+  const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
+
+  const result = await cliTool.call({
+    command: executable,
+    // The same output with one byte less of cap: the cut falls inside the
+    // character, and its kept prefix ends without a replacement character.
+    args: ["eval", [
+      "const bytes = new Uint8Array(1000)",
+      "bytes.fill(97)",
+      "bytes[999] = 0xc3",
+      "await Deno.stdout.write(bytes)",
+    ].join("; ")],
+  });
+
+  assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 999 bytes]`);
+});
+
+Deno.test("cli - bounds the result to the cap across stdout and stderr", async () => {
+  const executable = Deno.execPath();
+  const cap = 1000;
+  const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
+
+  const result = await cliTool.call({
+    command: executable,
+    // Each pipe keeps up to the cap, and the assembled result is cut to
+    // the cap once escaped — dropping stderr's tail here.
     args: ["eval", [
       "await Deno.stdout.write(new Uint8Array(1500).fill(97))",
       "await new Promise((resolve) => setTimeout(resolve, 100))",
@@ -222,6 +266,45 @@ Deno.test("cli - shares the cap across stdout and stderr", async () => {
   });
 
   assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 1000 bytes]`);
+});
+
+Deno.test("cli - keeps the result at the cap for output that escapes large", async () => {
+  const executable = Deno.execPath();
+  const cap = 1000;
+  const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
+
+  const result = await cliTool.call({
+    command: executable,
+    // NUL bytes escape to 6 bytes each in the model request: 1500 of them
+    // must be cut to what escapes within the cap, not kept whole.
+    args: ["eval", "await Deno.stdout.write(new Uint8Array(1500))"],
+  });
+
+  assertEquals(
+    result,
+    `${"\0".repeat(166)}\n\n…[output truncated at 1000 bytes]`,
+  );
+});
+
+Deno.test("cli - keeps a failing command's stderr diagnostic beside flooded stdout", async () => {
+  const executable = Deno.execPath();
+  const cap = 1000;
+  const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
+
+  const failure = await cliTool.call({
+    command: executable,
+    // stdout spends its pipe's cap long before the diagnostic is written,
+    // so the failure's reason must survive the stdout flood.
+    args: ["eval", [
+      "await Deno.stdout.write(new Uint8Array(1500).fill(97))",
+      "await new Promise((resolve) => setTimeout(resolve, 100))",
+      'await Deno.stderr.write(new TextEncoder().encode("boom"))',
+      "Deno.exit(3)",
+    ].join("; ")],
+  }).catch((error: unknown) => error);
+
+  assertInstanceOf(failure, Error);
+  assertEquals(failure.message, `boom\n\n…[output truncated at 1000 bytes]`);
 });
 
 Deno.test("cli - reports a truncated stderr prefix when a command fails", async () => {
