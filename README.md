@@ -38,7 +38,12 @@ await assistant.run("Upgrade the dependencies.", [], {
 });
 ```
 
-CLI commands run with stdin closed. Tools that can prompt or open a pager should
+CLI commands run with stdin closed, and their output is streamed under a size
+cap: the tool keeps at most 512 KiB of combined stdout and stderr
+(`maxOutputBytes`), discards the rest while the command runs to its exit, and
+returns the kept prefix with a `…[output truncated at 512 KiB]` note — a chatty
+command can neither exhaust memory nor produce a tool result too large for the
+next model request. Tools that can prompt or open a pager should
 also receive their command-specific non-interactive environment settings. For
 example, configure GitHub CLI like this:
 
