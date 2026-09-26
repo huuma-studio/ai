@@ -79,6 +79,7 @@ export interface ToolCallOptions {
 export {
   cli,
   type CliToolOptions,
+  DEFAULT_CLI_MAX_OUTPUT_BYTES,
   DEFAULT_CLI_TIMEOUT,
 } from "@/tools/cli/cli.ts";
 
