@@ -26,7 +26,12 @@ that keeps requesting tools cannot loop and bill without bound. Set
 `maxModelCalls` on the agent to change the cap (`Infinity` disables it), or on a
 single run to lower it. Pass a `signal` to stop a run early: `run()` rejects with
 the abort reason, and the signal reaches the model adapter, every tool call,
-and any `subagent` run the agent started.
+and any `subagent` run the agent started. A model call has no timeout of its
+own — a provider that accepts the request but never responds would hold the
+run forever — so pass `modelTimeout` (agent-level or per run, the per-run value
+lowering the agent-level one) to bound each model call: the run rejects with a
+`TimeoutError` when a call outlives the deadline, and the deadline reaches the
+model adapter so the request is cancelled, not abandoned.
 
 ```typescript
 const controller = new AbortController();
@@ -35,6 +40,7 @@ setTimeout(() => controller.abort(), 60_000);
 await assistant.run("Upgrade the dependencies.", [], {
   signal: controller.signal,
   maxModelCalls: 20,
+  modelTimeout: 30_000,
 });
 ```
 

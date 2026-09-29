@@ -42,7 +42,13 @@ import {
   ToolOutput,
   Tools,
 } from "@/tools/mod.ts";
-import { type BaseModel, type ModelUsage, sumModelUsage } from "@/model/mod.ts";
+import {
+  type BaseModel,
+  type ModelResult,
+  type ModelUsage,
+  sumModelUsage,
+} from "@/model/mod.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 export type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 export { sumModelUsage } from "@/model/mod.ts";
 export type { JSONSchema, Schema, Tool } from "@/tools/mod.ts";
@@ -149,6 +155,19 @@ function validateMaxModelCalls(maxModelCalls: number | undefined): void {
   }
 }
 
+/** Validate a `modelTimeout` option. `undefined` means "not configured";
+ * anything else must be a finite, non-negative number. */
+function validateModelTimeout(modelTimeout: number | undefined): void {
+  if (
+    modelTimeout !== undefined &&
+    (!Number.isFinite(modelTimeout) || modelTimeout < 0)
+  ) {
+    throw new TypeError(
+      "modelTimeout must be a finite, non-negative number",
+    );
+  }
+}
+
 /** Reason a run rejects with once its signal aborts, following the
  * `AbortError` convention of {@linkcode Tool.call}. */
 function runAbortReason(signal: AbortSignal): unknown {
@@ -238,6 +257,14 @@ export interface RunOptions {
    * agent-level {@link AgentOptions.maxModelCalls} is also set, the
    * smaller of the two applies. */
   maxModelCalls?: number;
+  /** Maximum duration of a single model call in milliseconds. A provider
+   * that accepts the request but never responds would otherwise hold the
+   * run forever. When the deadline expires first, the run rejects with a
+   * `TimeoutError`, and the deadline reaches the adapter so the in-flight
+   * provider request can be cancelled, not abandoned. When the agent-level
+   * {@link AgentOptions.modelTimeout} is also set, the smaller of the two
+   * applies. Unset means unlimited. */
+  modelTimeout?: number;
   /** Cancels the run. Once aborted, {@link Agent.run} rejects with the
    * signal's reason and starts no further model call or tool execution.
    * The signal is forwarded to the model adapter and to every tool call,
@@ -294,6 +321,15 @@ export interface AgentOptions<T extends string> {
    * {@link RunOptions.maxModelCalls} can only lower it.
    */
   maxModelCalls?: number;
+  /**
+   * Maximum duration of a single model call in milliseconds. A provider
+   * that accepts the request but never responds would otherwise hold a
+   * run forever. Exceeding the deadline rejects {@link Agent.run} with a
+   * `TimeoutError`, and the deadline reaches the adapter so the in-flight
+   * provider request can be cancelled, not abandoned. Defaults to
+   * unlimited; per-run {@link RunOptions.modelTimeout} can only lower it.
+   */
+  modelTimeout?: number;
 }
 
 /** Agent that loops over model responses and tool calls. */
@@ -307,6 +343,7 @@ export class Agent<T extends string> {
   #finishTurn: boolean;
   #maxConcurrency?: number;
   #maxModelCalls?: number;
+  #modelTimeout?: number;
   /** Create an agent instance. */
   constructor(
     {
@@ -319,6 +356,7 @@ export class Agent<T extends string> {
       finishTurn,
       maxConcurrency,
       maxModelCalls,
+      modelTimeout,
     }: AgentOptions<T>,
   ) {
     this.#model = model;
@@ -331,6 +369,8 @@ export class Agent<T extends string> {
     this.#maxConcurrency = maxConcurrency;
     validateMaxModelCalls(maxModelCalls);
     this.#maxModelCalls = maxModelCalls;
+    validateModelTimeout(modelTimeout);
+    this.#modelTimeout = modelTimeout;
     tools?.forEach((tool) => {
       if (tool.name === FINISH_TURN_TOOL) {
         throw new Error(
@@ -353,7 +393,8 @@ export class Agent<T extends string> {
    * or a cancellation signal.
    * @returns The full conversation history including tool results.
    * @throws The signal's abort reason when {@link RunOptions.signal}
-   * aborts, or an `Error` when the run exceeds its `maxModelCalls` cap.
+   * aborts, a `TimeoutError` when {@link RunOptions.modelTimeout} expires,
+   * or an `Error` when the run exceeds its `maxModelCalls` cap.
    */
   async run(
     prompt: string | (TextContent | FileContent)[],
@@ -369,6 +410,14 @@ export class Agent<T extends string> {
     const maxModelCalls = configuredCaps.length > 0
       ? Math.min(...configuredCaps)
       : DEFAULT_MAX_MODEL_CALLS;
+    validateModelTimeout(options?.modelTimeout);
+    const configuredModelTimeouts = [
+      this.#modelTimeout,
+      options?.modelTimeout,
+    ].filter((timeout): timeout is number => timeout !== undefined);
+    const modelTimeout = configuredModelTimeouts.length > 0
+      ? Math.min(...configuredModelTimeouts)
+      : undefined;
     const signal = options?.signal;
     throwIfAborted(signal);
     const onMessage = options?.onMessage ?? this.#onMessage;
@@ -414,16 +463,27 @@ export class Agent<T extends string> {
         );
       }
       modelCalls += 1;
-      const result = await raceAbort(
-        this.#model.generate({
-          modelId: this.#modelId,
-          system: this.#systemPrompt,
-          messages,
-          tools,
-          signal,
-        }),
-        signal,
-      );
+      // The deadline bounds this model call only, so a provider that
+      // accepts the request but never responds cannot hold the run
+      // forever. The race additionally bounds adapters that ignore the
+      // options entirely.
+      const deadline = deadlineFrom({ signal, timeout: modelTimeout });
+      let result: ModelResult<T>;
+      try {
+        result = await raceAbort(
+          this.#model.generate({
+            modelId: this.#modelId,
+            system: this.#systemPrompt,
+            messages,
+            tools,
+            signal,
+            timeout: modelTimeout,
+          }),
+          deadline.signal,
+        );
+      } finally {
+        deadline.clear();
+      }
       runUsage = sumModelUsage(runUsage, result.usage);
       await emit(...result.messages);
       messages = [...messages, ...result.messages];
