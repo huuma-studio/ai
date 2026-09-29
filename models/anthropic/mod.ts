@@ -26,7 +26,7 @@ import type {
 } from "@/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { JSONSchema } from "@huuma/validate";
-import { abortable } from "@/model/abortable.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 
 type Claude_Fable_5 = "claude-fable-5";
 type Claude_Opus_4_8 = "claude-opus-4-8";
@@ -92,6 +92,25 @@ export interface AnthropicGenerateOptions {
    * streams, ends iteration with the abort error.
    */
   signal?: AbortSignal;
+
+  /**
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   *
+   * The SDK's own per-request timeout (10 minutes by default) and retries
+   * still run inside this deadline. A deadline above the SDK timeout lets
+   * the SDK's `APIConnectionTimeoutError` fire first; raise the client's
+   * `timeout` option alongside it.
+   */
+  timeout?: number;
 }
 
 /**
@@ -129,24 +148,31 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       AnthropicGenerateOptions,
   ): Promise<ModelResult<ClaudeModels>> {
-    const response = await this.#client.messages.create({
-      model: modelId,
-      max_tokens: options?.maxTokens ?? DEFAULT_GENERATE_MAX_TOKENS,
-      thinking: options?.thinking,
-      system,
-      tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
-      messages: anthropicMessagesFrom(messages),
-      stream: false,
-    }, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const response = await this.#client.messages.create({
+        model: modelId,
+        max_tokens: options?.maxTokens ?? DEFAULT_GENERATE_MAX_TOKENS,
+        thinking: options?.thinking,
+        system,
+        tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
+        messages: anthropicMessagesFrom(messages),
+        stream: false,
+      }, { signal: deadline.signal });
 
-    return modelResultFrom(
-      modelId,
-      modelMessagesFrom(response),
-      anthropicUsageFrom(response.usage),
-    );
+      return modelResultFrom(
+        modelId,
+        modelMessagesFrom(response),
+        anthropicUsageFrom(response.usage),
+      );
+    } catch (error) {
+      throw deadline.errorFrom(error);
+    } finally {
+      deadline.clear();
+    }
   }
 
   /**
@@ -165,20 +191,26 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       AnthropicGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<ClaudeModels>>> {
-    const stream = await this.#client.messages.create({
-      model: modelId,
-      max_tokens: options?.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS,
-      thinking: options?.thinking,
-      system,
-      tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
-      messages: anthropicMessagesFrom(messages),
-      stream: true,
-    }, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const stream = await this.#client.messages.create({
+        model: modelId,
+        max_tokens: options?.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS,
+        thinking: options?.thinking,
+        system,
+        tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
+        messages: anthropicMessagesFrom(messages),
+        stream: true,
+      }, { signal: deadline.signal });
 
-    return abortable(streamMessages(stream, modelId), signal);
+      return deadline.guard(streamMessages(stream, modelId));
+    } catch (error) {
+      deadline.clear();
+      throw deadline.errorFrom(error);
+    }
   }
 }
 

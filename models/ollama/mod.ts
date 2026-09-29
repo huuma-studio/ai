@@ -26,7 +26,7 @@ import type {
 import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
-import { abortable } from "@/model/abortable.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 /**
  * Ollama models currently available.
  * This list is not exhaustive as Ollama models can be pulled dynamically.
@@ -107,6 +107,20 @@ export interface OllamaGenerateOptions {
    * streams, ends iteration with the abort error.
    */
   signal?: AbortSignal;
+
+  /**
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   */
+  timeout?: number;
 }
 
 /**
@@ -170,17 +184,27 @@ export class OllamaModel implements BaseModel<OllamaModels> {
 
     const tools = options.tools ? ollamaToolsFrom(options.tools) : undefined;
 
-    const response = await this.clientFor(options.signal).chat({
-      model: options.modelId,
-      messages,
-      tools,
-      options: options.options,
-      format: options.format,
-      keep_alive: options.keep_alive,
-      stream: false,
+    const deadline = deadlineFrom({
+      signal: options.signal,
+      timeout: options.timeout,
     });
+    try {
+      const response = await this.clientFor(deadline.signal).chat({
+        model: options.modelId,
+        messages,
+        tools,
+        options: options.options,
+        format: options.format,
+        keep_alive: options.keep_alive,
+        stream: false,
+      });
 
-    return modelResultFrom(response);
+      return modelResultFrom(response);
+    } catch (error) {
+      throw deadline.errorFrom(error);
+    } finally {
+      deadline.clear();
+    }
   }
 
   /**
@@ -200,24 +224,32 @@ export class OllamaModel implements BaseModel<OllamaModels> {
 
     const tools = options.tools ? ollamaToolsFrom(options.tools) : undefined;
 
-    const stream = await this.clientFor(options.signal).chat({
-      model: options.modelId,
-      messages,
-      tools,
-      options: options.options,
-      format: options.format,
-      keep_alive: options.keep_alive,
-      stream: true,
+    const deadline = deadlineFrom({
+      signal: options.signal,
+      timeout: options.timeout,
     });
+    try {
+      const stream = await this.clientFor(deadline.signal).chat({
+        model: options.modelId,
+        messages,
+        tools,
+        options: options.options,
+        format: options.format,
+        keep_alive: options.keep_alive,
+        stream: true,
+      });
 
-    return abortable(
-      (async function* () {
-        for await (const chunk of stream) {
-          yield modelResultFrom(chunk);
-        }
-      })(),
-      options.signal,
-    );
+      return deadline.guard(
+        (async function* () {
+          for await (const chunk of stream) {
+            yield modelResultFrom(chunk);
+          }
+        })(),
+      );
+    } catch (error) {
+      deadline.clear();
+      throw deadline.errorFrom(error);
+    }
   }
 }
 

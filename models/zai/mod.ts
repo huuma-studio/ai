@@ -31,7 +31,7 @@ import {
   usageFrom,
   type OpenAIRequestOptions,
 } from "../openai/mod.ts";
-import { abortable } from "@/model/abortable.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 
 /** Default base URL for the Z.AI Coding Plan endpoint. */
 const DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/";
@@ -110,6 +110,24 @@ export interface ZAIGenerateOptions {
    * streams, ends iteration with the abort error.
    */
   signal?: AbortSignal;
+
+  /**
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   *
+   * The OpenAI SDK's own per-request timeout (10 minutes) and retries
+   * still run inside this deadline, so a deadline above 10 minutes lets
+   * the SDK's `APIConnectionTimeoutError` fire first.
+   */
+  timeout?: number;
 }
 
 /**
@@ -138,26 +156,36 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options, signal }: ZAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal, timeout }:
+      ZAIGenerateOptions,
   ): Promise<ModelResult<ZAIModels>> {
-    const response = await this.#client.chat.completions.create({
-      ...options,
-      model: modelId,
-      messages: zaiMessagesFrom(messages, system),
-      tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-      stream: false,
-    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const response = await this.#client.chat.completions.create({
+        ...options,
+        model: modelId,
+        messages: zaiMessagesFrom(messages, system),
+        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+        stream: false,
+      } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, {
+        signal: deadline.signal,
+      });
 
-    const choice = response.choices[0];
-    if (!choice) {
-      throw new Error("No choices returned from Z.AI");
+      const choice = response.choices[0];
+      if (!choice) {
+        throw new Error("No choices returned from Z.AI");
+      }
+
+      return {
+        modelId,
+        messages: [modelMessageFrom(choice.message)],
+        usage: usageFrom(response.usage),
+      };
+    } catch (error) {
+      throw deadline.errorFrom(error);
+    } finally {
+      deadline.clear();
     }
-
-    return {
-      modelId,
-      messages: [modelMessageFrom(choice.message)],
-      usage: usageFrom(response.usage),
-    };
   }
 
   /**
@@ -171,18 +199,27 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options, signal }: ZAIGenerateOptions,
+    { modelId, messages, tools, system, options, signal, timeout }:
+      ZAIGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<ZAIModels>>> {
-    const stream = await this.#client.chat.completions.create({
-      ...options,
-      model: modelId,
-      messages: zaiMessagesFrom(messages, system),
-      tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-      stream: true,
-      stream_options: { include_usage: true },
-    } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const stream = await this.#client.chat.completions.create({
+        ...options,
+        model: modelId,
+        messages: zaiMessagesFrom(messages, system),
+        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+        stream: true,
+        stream_options: { include_usage: true },
+      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, {
+        signal: deadline.signal,
+      });
 
-    return abortable(streamCompletions(stream, modelId), signal);
+      return deadline.guard(streamCompletions(stream, modelId));
+    } catch (error) {
+      deadline.clear();
+      throw deadline.errorFrom(error);
+    }
   }
 }
 

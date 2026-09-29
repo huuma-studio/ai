@@ -38,7 +38,7 @@ import type {
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import { fileSourceFrom } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
-import { abortable } from "@/model/abortable.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 
 // Shutdown date: October 16, 2026
 type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
@@ -103,6 +103,21 @@ export interface GoogleGenAiGenerateOptions {
    * server may keep processing and billing the request.
    */
   signal?: AbortSignal;
+
+  /**
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the client's request is cancelled. Like `signal`, the server
+   * may keep processing and billing the request. When `signal` aborts
+   * first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   */
+  timeout?: number;
 }
 
 /** Google Gemini adapter implementing the common model interface. */
@@ -121,25 +136,32 @@ export class GoogleGenAIModel implements BaseModel {
 
   /** Generate a complete Gemini response. */
   async generate(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       GoogleGenAiGenerateOptions,
   ): Promise<ModelResult<GeminiModels>> {
-    const response = await this.#model.models
-      .generateContent({
-        model: modelId,
-        contents: genAIContentsFrom(messages),
-        config: {
-          thinkingConfig: options?.thinkingConfig,
-          systemInstruction: system,
-          tools: tools?.length ? googleToolsFrom(tools) : undefined,
-          abortSignal: signal,
-        },
-      });
-    return modelResultFrom(
-      modelId,
-      modelMessagesFrom(response),
-      googleUsageFrom(response.usageMetadata),
-    );
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const response = await this.#model.models
+        .generateContent({
+          model: modelId,
+          contents: genAIContentsFrom(messages),
+          config: {
+            thinkingConfig: options?.thinkingConfig,
+            systemInstruction: system,
+            tools: tools?.length ? googleToolsFrom(tools) : undefined,
+            abortSignal: deadline.signal,
+          },
+        });
+      return modelResultFrom(
+        modelId,
+        modelMessagesFrom(response),
+        googleUsageFrom(response.usageMetadata),
+      );
+    } catch (error) {
+      throw deadline.errorFrom(error);
+    } finally {
+      deadline.clear();
+    }
   }
 
   /** Stream Gemini responses as normalized model results.
@@ -149,20 +171,26 @@ export class GoogleGenAIModel implements BaseModel {
    * that reported usage metadata.
    */
   async stream(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       GoogleGenAiGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
-    const stream = await this.#model.models.generateContentStream({
-      model: modelId,
-      contents: genAIContentsFrom(messages),
-      config: {
-        systemInstruction: system,
-        thinkingConfig: options?.thinkingConfig,
-        tools: tools?.length ? googleToolsFrom(tools) : undefined,
-        abortSignal: signal,
-      },
-    });
-    return abortable(streamMessages(stream, modelId), signal);
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const stream = await this.#model.models.generateContentStream({
+        model: modelId,
+        contents: genAIContentsFrom(messages),
+        config: {
+          systemInstruction: system,
+          thinkingConfig: options?.thinkingConfig,
+          tools: tools?.length ? googleToolsFrom(tools) : undefined,
+          abortSignal: deadline.signal,
+        },
+      });
+      return deadline.guard(streamMessages(stream, modelId));
+    } catch (error) {
+      deadline.clear();
+      throw deadline.errorFrom(error);
+    }
   }
 }
 

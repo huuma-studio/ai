@@ -42,7 +42,7 @@ import type {
 } from "@/mod.ts";
 // Tool instances are accepted structurally via ToolLike.
 import type { JSONSchema, Schema } from "@huuma/validate";
-import { abortable } from "@/model/abortable.ts";
+import { deadlineFrom } from "@/model/deadline.ts";
 
 type Mistral_Large_Latest = "mistral-large-latest";
 type Mistral_Medium_Latest = "mistral-medium-latest";
@@ -116,6 +116,20 @@ export interface MistralGenerateOptions {
    * streams, ends iteration with the abort error.
    */
   signal?: AbortSignal;
+
+  /**
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   */
+  timeout?: number;
 }
 
 /**
@@ -155,27 +169,34 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @returns A normalized {@link ModelResult}.
    */
   async generate(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       MistralGenerateOptions,
   ): Promise<ModelResult<MistralModels>> {
-    const response = await this.#client.chat.complete({
-      ...options,
-      model: modelId,
-      messages: mistralMessagesFrom(messages, system),
-      tools: tools?.length ? mistralToolsFrom(tools) : undefined,
-      stream: false,
-    } as ChatCompletionRequest, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const response = await this.#client.chat.complete({
+        ...options,
+        model: modelId,
+        messages: mistralMessagesFrom(messages, system),
+        tools: tools?.length ? mistralToolsFrom(tools) : undefined,
+        stream: false,
+      } as ChatCompletionRequest, { signal: deadline.signal });
 
-    const choice = response.choices[0];
-    if (!choice) {
-      throw new Error("No choices returned from Mistral");
+      const choice = response.choices[0];
+      if (!choice) {
+        throw new Error("No choices returned from Mistral");
+      }
+
+      return {
+        modelId,
+        messages: [modelMessageFrom(choice.message)],
+        usage: mistralUsageFrom(response.usage),
+      };
+    } catch (error) {
+      throw deadline.errorFrom(error);
+    } finally {
+      deadline.clear();
     }
-
-    return {
-      modelId,
-      messages: [modelMessageFrom(choice.message)],
-      usage: mistralUsageFrom(response.usage),
-    };
   }
 
   /**
@@ -189,18 +210,24 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
   async stream(
-    { modelId, messages, tools, system, options, signal }:
+    { modelId, messages, tools, system, options, signal, timeout }:
       MistralGenerateOptions,
   ): Promise<AsyncGenerator<ModelResult<MistralModels>>> {
-    const stream = await this.#client.chat.stream({
-      ...options,
-      model: modelId,
-      messages: mistralMessagesFrom(messages, system),
-      tools: tools?.length ? mistralToolsFrom(tools) : undefined,
-      stream: true,
-    } as ChatCompletionStreamRequest, { signal });
+    const deadline = deadlineFrom({ signal, timeout });
+    try {
+      const stream = await this.#client.chat.stream({
+        ...options,
+        model: modelId,
+        messages: mistralMessagesFrom(messages, system),
+        tools: tools?.length ? mistralToolsFrom(tools) : undefined,
+        stream: true,
+      } as ChatCompletionStreamRequest, { signal: deadline.signal });
 
-    return abortable(streamCompletions(stream, modelId), signal);
+      return deadline.guard(streamCompletions(stream, modelId));
+    } catch (error) {
+      deadline.clear();
+      throw deadline.errorFrom(error);
+    }
   }
 }
 
