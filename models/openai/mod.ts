@@ -26,7 +26,6 @@ import type {
 import OpenAI, { type ClientOptions } from "openai";
 import type { Tool } from "@/tools/mod.ts";
 import type { JSONSchema } from "@huuma/validate";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 
 /** Vendor extension used by reasoning-capable OpenAI-compatible providers. */
@@ -83,10 +82,21 @@ export interface OpenAIGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the provider request is cancelled, not
-   * abandoned.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   *
+   * The SDK's own per-request timeout (10 minutes by default) and retries
+   * still run inside this deadline. A deadline above the SDK timeout lets
+   * the SDK's `APIConnectionTimeoutError` fire first; raise the client's
+   * `timeout` option alongside it.
    */
   timeout?: number;
 }
@@ -137,6 +147,8 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
         messages: [modelMessageFrom(choice.message)],
         usage: usageFrom(response.usage),
       };
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -167,16 +179,10 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
         stream_options: { include_usage: true },
       }, { signal: deadline.signal });
 
-      return (async function* () {
-        try {
-          yield* abortable(streamCompletions(stream, modelId), deadline.signal);
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

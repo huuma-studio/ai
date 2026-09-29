@@ -42,7 +42,6 @@ import type {
 } from "@/mod.ts";
 // Tool instances are accepted structurally via ToolLike.
 import type { JSONSchema, Schema } from "@huuma/validate";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 
 type Mistral_Large_Latest = "mistral-large-latest";
@@ -119,10 +118,16 @@ export interface MistralGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the provider request is cancelled, not
-   * abandoned.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
    */
   timeout?: number;
 }
@@ -187,6 +192,8 @@ export class MistralModel implements BaseModel<MistralModels> {
         messages: [modelMessageFrom(choice.message)],
         usage: mistralUsageFrom(response.usage),
       };
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -216,16 +223,10 @@ export class MistralModel implements BaseModel<MistralModels> {
         stream: true,
       } as ChatCompletionStreamRequest, { signal: deadline.signal });
 
-      return (async function* () {
-        try {
-          yield* abortable(streamCompletions(stream, modelId), deadline.signal);
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

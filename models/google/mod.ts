@@ -38,7 +38,6 @@ import type {
 import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
 import { fileSourceFrom } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 
 // Shutdown date: October 16, 2026
@@ -106,10 +105,17 @@ export interface GoogleGenAiGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the client's request is cancelled. Like
-   * `signal`, the server may keep processing and billing the request.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the client's request is cancelled. Like `signal`, the server
+   * may keep processing and billing the request. When `signal` aborts
+   * first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
    */
   timeout?: number;
 }
@@ -151,6 +157,8 @@ export class GoogleGenAIModel implements BaseModel {
         modelMessagesFrom(response),
         googleUsageFrom(response.usageMetadata),
       );
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -178,16 +186,10 @@ export class GoogleGenAIModel implements BaseModel {
           abortSignal: deadline.signal,
         },
       });
-      return (async function* () {
-        try {
-          yield* abortable(streamMessages(stream, modelId), deadline.signal);
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(streamMessages(stream, modelId));
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

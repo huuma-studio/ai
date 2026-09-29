@@ -1644,38 +1644,71 @@ Deno.test("agent - modelTimeout bounds a model call that never settles", async (
   );
 
   assertEquals(error.name, "TimeoutError");
-  assertEquals(error.message, "The operation was aborted due to timeout");
+  assertEquals(error.message, "The model call timed out");
   assertEquals(model.calls.length, 1);
 });
 
-Deno.test("agent - modelTimeout is forwarded to the model adapter", async () => {
-  const model = new FnModel(() => [modelMessage("Hi")]);
-  const timeouts: (number | undefined)[] = [];
-  const originalGenerate = model.generate.bind(model);
-  model.generate = (args: unknown) => {
-    const { timeout } = args as { timeout?: number };
-    timeouts.push(timeout);
-    return originalGenerate(args);
-  };
+Deno.test("agent - modelTimeout aborts the signal of an adapter that honours only signal", async () => {
+  // A custom adapter that ignores `timeout` must still see its request
+  // cancelled when the deadline expires, not left running and billing
+  // after the run has rejected.
+  let adapterSignal: AbortSignal | undefined;
+  const model = new FnModel(() => {
+    adapterSignal = model.calls[0].signal;
+    return new Promise<Message[]>((_, reject) => {
+      adapterSignal?.addEventListener(
+        "abort",
+        () => reject(new Error("request cancelled")),
+        { once: true },
+      );
+    });
+  });
 
-  await loopingAgent(model, { modelTimeout: 4_000 }).run("Hi");
+  const error = await assertRejects(
+    () => loopingAgent(model, { modelTimeout: 50 }).run("Hi"),
+    DOMException,
+  );
 
-  assertEquals(timeouts, [4_000]);
+  assertEquals(error.name, "TimeoutError");
+  assert(adapterSignal);
+  assertEquals(adapterSignal.aborted, true);
+  assertStrictEquals(adapterSignal.reason, error);
 });
 
-Deno.test("agent - no deadline reaches the adapter without modelTimeout", async () => {
+Deno.test("agent - the caller's abort reason wins over a pending modelTimeout", async () => {
+  const controller = new AbortController();
+  const reason = new Error("managed turn deadline");
+  const model = new FnModel(() => {
+    controller.abort(reason);
+    return new Promise<Message[]>(() => {});
+  });
+
+  const error = await assertRejects(() =>
+    loopingAgent(model, { modelTimeout: 10_000 }).run("Hi", [], {
+      signal: controller.signal,
+    })
+  );
+
+  assertStrictEquals(error, reason);
+  assertStrictEquals(model.calls[0].signal?.reason, reason);
+});
+
+Deno.test("agent - no signal reaches the adapter without modelTimeout or a run signal", async () => {
   const model = new FnModel(() => [modelMessage("Hi")]);
-  const timeouts: (number | undefined)[] = [];
+  const received: unknown[] = [];
   const originalGenerate = model.generate.bind(model);
   model.generate = (args: unknown) => {
-    const { timeout } = args as { timeout?: number };
-    timeouts.push(timeout);
+    const { signal, timeout } = args as {
+      signal?: AbortSignal;
+      timeout?: number;
+    };
+    received.push(signal, timeout);
     return originalGenerate(args);
   };
 
   await loopingAgent(model).run("Hi");
 
-  assertEquals(timeouts, [undefined]);
+  assertEquals(received, [undefined, undefined]);
 });
 
 Deno.test("agent - the smaller of agent and per-run modelTimeout applies", async () => {

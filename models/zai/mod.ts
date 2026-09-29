@@ -31,7 +31,6 @@ import {
   usageFrom,
   type OpenAIRequestOptions,
 } from "../openai/mod.ts";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 
 /** Default base URL for the Z.AI Coding Plan endpoint. */
@@ -113,10 +112,20 @@ export interface ZAIGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the provider request is cancelled, not
-   * abandoned.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   *
+   * The OpenAI SDK's own per-request timeout (10 minutes) and retries
+   * still run inside this deadline, so a deadline above 10 minutes lets
+   * the SDK's `APIConnectionTimeoutError` fire first.
    */
   timeout?: number;
 }
@@ -172,6 +181,8 @@ export class ZAIModel implements BaseModel<ZAIModels> {
         messages: [modelMessageFrom(choice.message)],
         usage: usageFrom(response.usage),
       };
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -204,16 +215,10 @@ export class ZAIModel implements BaseModel<ZAIModels> {
         signal: deadline.signal,
       });
 
-      return (async function* () {
-        try {
-          yield* abortable(streamCompletions(stream, modelId), deadline.signal);
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

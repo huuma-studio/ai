@@ -26,7 +26,6 @@ import type {
 } from "@/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { JSONSchema } from "@huuma/validate";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 
 type Claude_Fable_5 = "claude-fable-5";
@@ -95,10 +94,21 @@ export interface AnthropicGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the provider request is cancelled, not
-   * abandoned.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
+   *
+   * The SDK's own per-request timeout (10 minutes by default) and retries
+   * still run inside this deadline. A deadline above the SDK timeout lets
+   * the SDK's `APIConnectionTimeoutError` fire first; raise the client's
+   * `timeout` option alongside it.
    */
   timeout?: number;
 }
@@ -158,6 +168,8 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
         modelMessagesFrom(response),
         anthropicUsageFrom(response.usage),
       );
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -194,16 +206,10 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
         stream: true,
       }, { signal: deadline.signal });
 
-      return (async function* () {
-        try {
-          yield* abortable(streamMessages(stream, modelId), deadline.signal);
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(streamMessages(stream, modelId));
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

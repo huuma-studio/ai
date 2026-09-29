@@ -1,11 +1,18 @@
-import { assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import type { BaseModel, Message } from "@/model/mod.ts";
 import { anthropic, google, mistral, ollama, openai, zai } from "./mod.ts";
 
 /**
  * A deadline must reject a model call that never responds within bounds
- * and cancel it at the transport — the same contract signal_test.ts
- * requires for caller signals. Each case stubs `fetch` with a request
+ * with a `TimeoutError` and cancel it at the transport — the same contract
+ * signal_test.ts requires for caller signals. The SDKs translate aborts
+ * into their own error types, so these tests also pin that every adapter
+ * surfaces the deadline's reason, and the caller's when it aborts first. Each case stubs `fetch` with a request
  * that only ever settles by aborting, exactly like a real fetch on a
  * stalled connection, and asserts the deadline fires and the abort
  * reaches the transport.
@@ -96,6 +103,14 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+/** Asserts `error` is the deadline's own reason, not an SDK translation
+ * of the abort such as `APIUserAbortError`. */
+function assertTimeoutError(error: unknown): void {
+  assertInstanceOf(error, DOMException);
+  assertEquals(error.name, "TimeoutError");
+  assertEquals(error.message, "The model call timed out");
+}
+
 const streamContentTypes: Record<string, string> = {
   ollama: "application/x-ndjson",
 };
@@ -109,7 +124,31 @@ for (const [name, create, modelId] of adapters) {
         pending.catch(() => {});
         const transportSignal = await within(fetched, 2_000);
 
-        await within(assertRejects(() => pending), 2_000);
+        const error = await within(assertRejects(() => pending), 2_000);
+        assertTimeoutError(error);
+        assertEquals(transportSignal.aborted, true);
+      } finally {
+        restore();
+      }
+    });
+
+    Deno.test(`${name} - ${method} rejects with the caller's reason when the caller aborts first`, async () => {
+      const { fetched, restore } = stubHangingFetch();
+      try {
+        const controller = new AbortController();
+        const pending = create()[method]({
+          modelId,
+          messages,
+          signal: controller.signal,
+          timeout: 10_000,
+        });
+        pending.catch(() => {});
+        const transportSignal = await within(fetched, 2_000);
+        const reason = new Error("caller stopped");
+        controller.abort(reason);
+
+        const error = await within(assertRejects(() => pending), 2_000);
+        assertStrictEquals(error, reason);
         assertEquals(transportSignal.aborted, true);
       } finally {
         restore();
@@ -130,63 +169,41 @@ for (const [name, create, modelId] of adapters) {
       );
 
       const next = stream.next();
-      await within(assertRejects(() => next), 2_000);
+      const error = await within(assertRejects(() => next), 2_000);
+      assertTimeoutError(error);
+    } finally {
+      restore();
+    }
+  });
+
+  Deno.test(`${name} - a caller abort ends a stalled stream with the caller's reason`, async () => {
+    const restore = stubStalledStreamFetch(
+      streamContentTypes[name] ?? "text/event-stream",
+    );
+    try {
+      const controller = new AbortController();
+      const stream = await within(
+        create().stream({
+          modelId,
+          messages,
+          signal: controller.signal,
+          timeout: 10_000,
+        }),
+        2_000,
+      );
+
+      const next = stream.next();
+      const reason = new Error("caller stopped");
+      controller.abort(reason);
+      const error = await within(assertRejects(() => next), 2_000);
+      assertStrictEquals(error, reason);
     } finally {
       restore();
     }
   });
 }
 
-// --- deadline reasons reaching the consumer ---
-
-/**
- * The SDK-translated error types vary by provider, so the general cases
- * above assert only the bounded rejection and the transport abort. The
- * Ollama transport is abort-faithful (the adapter owns its fetch), so its
- * tests additionally pin that the deadline's reason reaches the caller.
- */
-Deno.test("ollama - the deadline rejects generate with its TimeoutError reason", async () => {
-  const { fetched, restore } = stubHangingFetch();
-  try {
-    const pending = ollama().generate({
-      modelId: "llama3",
-      messages,
-      timeout: 50,
-    });
-    pending.catch(() => {});
-    const transportSignal = await within(fetched, 2_000);
-
-    const error = await within(assertRejects(() => pending), 2_000);
-    assertInstanceOf(error, DOMException);
-    assertEquals(error.name, "TimeoutError");
-    assertEquals(error.message, "The operation was aborted due to timeout");
-    assertEquals(transportSignal.aborted, true);
-  } finally {
-    restore();
-  }
-});
-
-Deno.test("ollama - the deadline ends a stalled stream with its TimeoutError reason", async () => {
-  const restore = stubStalledStreamFetch("application/x-ndjson");
-  try {
-    const stream = await within(
-      ollama().stream({ modelId: "llama3", messages, timeout: 50 }),
-      2_000,
-    );
-
-    const error = await within(
-      assertRejects(() => stream.next()),
-      2_000,
-    );
-    assertInstanceOf(error, DOMException);
-    assertEquals(error.name, "TimeoutError");
-    assertEquals(error.message, "The operation was aborted due to timeout");
-  } finally {
-    restore();
-  }
-});
-
-Deno.test("ollama - a timeout of 0 rejects with the instant-timeout reason", async () => {
+Deno.test("ollama - a timeout of 0 rejects with a TimeoutError", async () => {
   const { restore } = stubHangingFetch();
   try {
     const error = await within(
@@ -195,9 +212,7 @@ Deno.test("ollama - a timeout of 0 rejects with the instant-timeout reason", asy
       ),
       2_000,
     );
-    assertInstanceOf(error, DOMException);
-    assertEquals(error.name, "TimeoutError");
-    assertEquals(error.message, "The model call timed out");
+    assertTimeoutError(error);
   } finally {
     restore();
   }

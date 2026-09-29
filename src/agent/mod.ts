@@ -260,8 +260,10 @@ export interface RunOptions {
   /** Maximum duration of a single model call in milliseconds. A provider
    * that accepts the request but never responds would otherwise hold the
    * run forever. When the deadline expires first, the run rejects with a
-   * `TimeoutError`, and the deadline reaches the adapter so the in-flight
-   * provider request can be cancelled, not abandoned. When the agent-level
+   * `TimeoutError`, and the adapter's `signal` aborts with it so the
+   * in-flight provider request can be cancelled, not abandoned. When
+   * {@link RunOptions.signal} aborts first, the run rejects with its
+   * reason instead. When the agent-level
    * {@link AgentOptions.modelTimeout} is also set, the smaller of the two
    * applies. Unset means unlimited. */
   modelTimeout?: number;
@@ -325,8 +327,8 @@ export interface AgentOptions<T extends string> {
    * Maximum duration of a single model call in milliseconds. A provider
    * that accepts the request but never responds would otherwise hold a
    * run forever. Exceeding the deadline rejects {@link Agent.run} with a
-   * `TimeoutError`, and the deadline reaches the adapter so the in-flight
-   * provider request can be cancelled, not abandoned. Defaults to
+   * `TimeoutError`, and the adapter's `signal` aborts with it so the
+   * in-flight provider request can be cancelled, not abandoned. Defaults to
    * unlimited; per-run {@link RunOptions.modelTimeout} can only lower it.
    */
   modelTimeout?: number;
@@ -465,8 +467,11 @@ export class Agent<T extends string> {
       modelCalls += 1;
       // The deadline bounds this model call only, so a provider that
       // accepts the request but never responds cannot hold the run
-      // forever. The race additionally bounds adapters that ignore the
-      // options entirely.
+      // forever. The adapter receives the combined signal rather than a
+      // separate `timeout`: an adapter that honours only `signal` still
+      // cancels its request on expiry, and built-in adapters do not arm a
+      // second timer. The race additionally bounds adapters that ignore
+      // the signal entirely.
       const deadline = deadlineFrom({ signal, timeout: modelTimeout });
       let result: ModelResult<T>;
       try {
@@ -476,8 +481,7 @@ export class Agent<T extends string> {
             system: this.#systemPrompt,
             messages,
             tools,
-            signal,
-            timeout: modelTimeout,
+            signal: deadline.signal,
           }),
           deadline.signal,
         );

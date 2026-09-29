@@ -26,7 +26,6 @@ import type {
 import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
 import type { Tool } from "@/tools/mod.ts";
 import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
-import { abortable } from "@/model/abortable.ts";
 import { deadlineFrom } from "@/model/deadline.ts";
 /**
  * Ollama models currently available.
@@ -110,10 +109,16 @@ export interface OllamaGenerateOptions {
   signal?: AbortSignal;
 
   /**
-   * Deadline for the call in milliseconds. When the deadline expires
-   * first, the call rejects with a `TimeoutError` — and, for streams,
-   * iteration ends with it — and the provider request is cancelled, not
-   * abandoned.
+   * Deadline for the call in milliseconds: the total duration of the
+   * call, including — for streams — the full body, not an idle timeout.
+   * When the deadline expires first, the call rejects with a
+   * `TimeoutError` DOMException — and, for streams, iteration ends with
+   * it — and the provider request is cancelled, not abandoned. When
+   * `signal` aborts first, its reason wins.
+   *
+   * A stream's deadline keeps running until the stream is fully iterated
+   * or closed with `return()`; callers that abandon a stream early should
+   * call `return()` so its request and timer end at once.
    */
   timeout?: number;
 }
@@ -195,6 +200,8 @@ export class OllamaModel implements BaseModel<OllamaModels> {
       });
 
       return modelResultFrom(response);
+    } catch (error) {
+      throw deadline.errorFrom(error);
     } finally {
       deadline.clear();
     }
@@ -232,23 +239,16 @@ export class OllamaModel implements BaseModel<OllamaModels> {
         stream: true,
       });
 
-      return (async function* () {
-        try {
-          yield* abortable(
-            (async function* () {
-              for await (const chunk of stream) {
-                yield modelResultFrom(chunk);
-              }
-            })(),
-            deadline.signal,
-          );
-        } finally {
-          deadline.clear();
-        }
-      })();
+      return deadline.guard(
+        (async function* () {
+          for await (const chunk of stream) {
+            yield modelResultFrom(chunk);
+          }
+        })(),
+      );
     } catch (error) {
       deadline.clear();
-      throw error;
+      throw deadline.errorFrom(error);
     }
   }
 }

@@ -10,11 +10,18 @@
  * @module
  */
 
+import { abortable } from "@/model/abortable.ts";
+
+/** Message of the `TimeoutError` a model call rejects with once its
+ * deadline expires. */
+export const MODEL_TIMEOUT_MESSAGE = "The model call timed out";
+
 /** Deadline inputs shared by every model adapter's generate options. */
 export interface DeadlineOptions {
   /** Aborted when the caller cancels the call. */
   signal?: AbortSignal;
-  /** Maximum duration of the call in milliseconds. */
+  /** Maximum total duration of the call in milliseconds — for streams,
+   * including the full body. */
   timeout?: number;
 }
 
@@ -22,8 +29,10 @@ export interface DeadlineOptions {
 export interface Deadline {
   /**
    * Caller cancellation and the deadline combined with `AbortSignal.any` —
-   * whichever fires first aborts it. `undefined` when neither is given, so
-   * the request runs exactly as before deadlines existed.
+   * whichever fires first aborts it, and its reason is that first one.
+   * The caller's own signal when no timeout is given, and `undefined`
+   * when neither is given, so the request runs exactly as before
+   * deadlines existed.
    */
   signal: AbortSignal | undefined;
 
@@ -33,6 +42,22 @@ export interface Deadline {
    * timer until the deadline elapses; a no-op without a timeout.
    */
   clear(): void;
+
+  /**
+   * The error a failed call should reject with: the signal's reason once
+   * it has aborted, `error` otherwise. Provider SDKs translate an abort
+   * into their own error types (e.g. `APIUserAbortError`), which would
+   * hide whether the deadline or the caller ended the call.
+   */
+  errorFrom(error: unknown): unknown;
+
+  /**
+   * Re-yields `stream` under the deadline: iteration throws the signal's
+   * reason once it aborts — also when the SDK raises its own error
+   * mid-read — and the deadline is disarmed when iteration completes,
+   * fails, or is closed with `return()`.
+   */
+  guard<T>(stream: AsyncIterable<T>): AsyncGenerator<T>;
 }
 
 /**
@@ -52,27 +77,35 @@ export function deadlineFrom(options: DeadlineOptions): Deadline {
   let clear: () => void = () => {};
   if (options.timeout !== undefined) {
     const controller = new AbortController();
-    if (options.timeout === 0) {
+    const expire = () =>
       controller.abort(
-        new DOMException("The model call timed out", "TimeoutError"),
+        new DOMException(MODEL_TIMEOUT_MESSAGE, "TimeoutError"),
       );
+    if (options.timeout === 0) {
+      expire();
     } else {
-      const timerId = setTimeout(() => {
-        controller.abort(
-          new DOMException(
-            "The operation was aborted due to timeout",
-            "TimeoutError",
-          ),
-        );
-      }, options.timeout);
+      const timerId = setTimeout(expire, options.timeout);
       clear = () => clearTimeout(timerId);
     }
     signals.push(controller.signal);
   }
 
+  const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+  const errorFrom = (error: unknown) => signal?.aborted ? signal.reason : error;
+
   return {
-    signal: signals.length > 0 ? AbortSignal.any(signals) : undefined,
+    signal,
     clear,
+    errorFrom,
+    async *guard<T>(stream: AsyncIterable<T>): AsyncGenerator<T> {
+      try {
+        yield* abortable(stream, signal);
+      } catch (error) {
+        throw errorFrom(error);
+      } finally {
+        clear();
+      }
+    },
   };
 }
 
