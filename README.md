@@ -54,6 +54,66 @@ and retries underneath the deadline; with a `modelTimeout` above 10 minutes,
 the SDK's `APIConnectionTimeoutError` ("Request timed out.") fires first. Raise
 the client's `timeout` option (Anthropic, OpenAI) to go beyond it.
 
+## Model call retry
+
+Every adapter makes exactly one provider request per `generate()` and
+`stream()` call, so one transient blip — a 429, a 5xx, a connection reset —
+rejects the call and fails an `Agent.run`. `withRetries()` wraps any adapter
+and retries those transient failures with bounded exponential backoff; the
+agent takes a wrapped model unchanged, and keeps its typing:
+
+```typescript
+import { agent } from "jsr:@huuma/ai/agent";
+import { withRetries } from "jsr:@huuma/ai/model";
+import { openai } from "jsr:@huuma/ai/models/openai";
+
+const assistant = agent({
+  model: withRetries(openai({
+    apiKey: Deno.env.get("OPENAI_API_KEY"),
+    maxRetries: 0, // do not stack the SDK's retries on the decorator's
+  })),
+  modelId: "gpt-5.5",
+  systemPrompt: "You are a concise TypeScript assistant.",
+  tools: [cli({ allowedCommands: ["deno"] })],
+});
+```
+
+`retries` (default `2`) is the number of additional attempts after the
+initial call — `0` disables retrying, and the last error propagates
+unchanged either way. The backoff doubles per attempt from `baseDelayMs`
+(250) up to `capDelayMs` (5,000), each delay jittered by a factor in
+`[0.5, 1.0)`, and a `Retry-After` hint on the error is honored as the
+minimum delay (capped at 60 s). `shouldRetry(error, attempt)` replaces the
+built-in classification entirely.
+
+Classification is provider-agnostic. A duck-typed status decides first —
+the OpenAI and Anthropic SDKs put it on `status`, Mistral on `statusCode`,
+Ollama on `status_code` — with 408, 409, 429, and 5xx transient and other
+4xx permanent. Message heuristics cover plain errors: `timed out`,
+`connection reset`, `fetch failed`, and `overloaded` are transient;
+`unauthorized`, `invalid api key`, and `invalid request` are permanent.
+Anything unrecognized is transient — attempts are bounded, so a wasted
+retry is cheaper than an avoidable failure. Cancellation is never retried:
+errors named `AbortError` or `TimeoutError` (the model-deadline convention
+above) fail fast, so a run's `modelTimeout` contract holds with a wrapped
+model too.
+
+Streams retry only until the first chunk is forwarded: a failing connection
+retries the `stream()` promise, a failure before the first forwarded chunk
+replays the stream, and a failure after it — or inside delivered output —
+propagates unchanged, since re-issuing would duplicate already-delivered
+output.
+
+The wrapped SDK clients retry on their own, so keep attempts from
+multiplying: pass `maxRetries: 0` to the OpenAI and Anthropic adapters'
+options and `retryConfig: { strategy: "none" }` to Mistral. Ollama, Google,
+and the Z.AI adapter expose no retry knobs — the decorator is what gives
+them retries at all. A retried call re-bills its tokens when the provider
+processed the failed attempt before failing; retrying only transient
+classifications mitigates this, but the spend does not disappear.
+
+Design record: `docs/adr/0006-model-call-retry-as-a-base-model-decorator.md`.
+
 CLI commands run with stdin closed, and their output is streamed under a size
 cap: the tool keeps at most 512 KiB of stdout and stderr combined
 (`maxOutputBytes`, counted once JSON-escaped for the model request), discards
@@ -310,7 +370,8 @@ and `allowedMimeTypes` to tighten or loosen the defaults.
 ## What is included
 
 - Shared message and content types in `@huuma/ai`.
-- A common `BaseModel` interface in `@huuma/ai/model`.
+- A common `BaseModel` interface in `@huuma/ai/model`, with library-level
+  model-call retry via `withRetries()`.
 - Model adapters for Anthropic Claude, OpenAI, Google Gemini, Mistral, Ollama,
   and Z.AI (GLM Coding Plan) in `@huuma/ai/models`.
 - Agent orchestration in `@huuma/ai/agent`.
