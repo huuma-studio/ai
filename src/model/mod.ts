@@ -33,6 +33,18 @@ export type {
   ToolResultContent,
   UserMessage,
 } from "../mod.ts";
+export {
+  backoffDelayMs,
+  type BackoffOptions,
+  classifyModelError,
+  DEFAULT_RETRIES,
+  DEFAULT_RETRY_BASE_DELAY_MS,
+  DEFAULT_RETRY_CAP_DELAY_MS,
+  type ModelErrorClass,
+  type RetryDeps,
+  type WithRetriesOptions,
+  withRetries,
+} from "./retry.ts";
 /** Common interface implemented by all model adapters. */
 export interface BaseModel<T extends string = string> {
   /** Generate a complete model response.
