@@ -1,10 +1,8 @@
 import { boolean, object, string } from "@huuma/validate";
-import { Tool } from "@/tools/mod.ts";
-import {
-  cappedLine,
-  type LineBuilder,
-  readLines,
-} from "@/tools/bounded_text.ts";
+import { stat } from "node:fs/promises";
+import { Tool } from "../mod.ts";
+import { type ChildProcess, spawnProcess } from "../process.ts";
+import { cappedLine, type LineBuilder, readLines } from "../bounded_text.ts";
 
 /** A single grep match with line number and content. */
 export interface GrepMatch {
@@ -72,7 +70,6 @@ const MAX_ERROR_LINE_LENGTH = 500;
  * @param options Optional timeout.
  * @returns A {@link Tool} that performs recursive regex searches and returns grouped matches.
  */
-// deno-lint-ignore no-explicit-any
 export function grep(options?: GrepOptions): Tool<any, GrepResult> {
   return new Tool({
     name: "grep",
@@ -86,8 +83,8 @@ export function grep(options?: GrepOptions): Tool<any, GrepResult> {
     }),
     timeout: options?.timeout ?? DEFAULT_GREP_TIMEOUT,
     fn: async ({ pattern, path, glob, caseSensitive }, { signal }) => {
-      const isDir = await Deno.stat(path)
-        .then((s) => s.isDirectory)
+      const isDir = await stat(path)
+        .then((s) => s.isDirectory())
         .catch(() => false);
 
       const collector = isDir ? directoryMatches(path) : fileMatches(path);
@@ -109,15 +106,19 @@ export function grep(options?: GrepOptions): Tool<any, GrepResult> {
 }
 
 /** Build grep's arguments for a search. */
-function grepArgs(
-  { pattern, path, glob, caseSensitive, isDir }: {
-    pattern: string;
-    path: string;
-    glob?: string;
-    caseSensitive?: boolean;
-    isDir: boolean;
-  },
-): string[] {
+function grepArgs({
+  pattern,
+  path,
+  glob,
+  caseSensitive,
+  isDir,
+}: {
+  pattern: string;
+  path: string;
+  glob?: string;
+  caseSensitive?: boolean;
+  isDir: boolean;
+}): string[] {
   const args = ["-n", "--binary-files=without-match"];
 
   if (!caseSensitive) args.push("-i");
@@ -173,10 +174,7 @@ function outputLine(fieldCount: number): LineBuilder<OutputLine | undefined> {
       while (fields.length < fieldCount) {
         const colon = text.indexOf(":", index);
         const end = colon === -1 ? text.length : colon;
-        field += text.slice(index, end).slice(
-          0,
-          MAX_FIELD_LENGTH - field.length,
-        );
+        field += text.slice(index, end).slice(0, MAX_FIELD_LENGTH - field.length);
         if (colon === -1) return;
         fields.push(field);
         field = "";
@@ -192,9 +190,10 @@ function outputLine(fieldCount: number): LineBuilder<OutputLine | undefined> {
       if (/\S/.test(text.slice(index + room))) more = true;
     },
     finish() {
-      const line = fields.length === fieldCount
-        ? { fields, content: more ? `${content}…` : content.trimEnd() }
-        : undefined;
+      const line =
+        fields.length === fieldCount
+          ? { fields, content: more ? `${content}…` : content.trimEnd() }
+          : undefined;
       fields = [];
       field = "";
       content = "";
@@ -236,13 +235,7 @@ async function runGrep(
   collector: MatchCollector,
   signal: AbortSignal,
 ): Promise<GrepRun> {
-  const child = new Deno.Command("grep", {
-    args,
-    signal,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+  const child = await spawnProcess("grep", args, { signal });
   // Drained to the end, so grep never blocks on a full error pipe.
   const errors = errorLines(child.stderr);
 
@@ -269,9 +262,7 @@ async function runGrep(
 }
 
 /** The first lines of grep's error output. */
-async function errorLines(
-  stream: ReadableStream<Uint8Array>,
-): Promise<string[]> {
+async function errorLines(stream: ReadableStream<Uint8Array>): Promise<string[]> {
   const lines: string[] = [];
   const builder = cappedLine(MAX_ERROR_LINE_LENGTH);
   for await (const line of readLines(stream, builder)) {
@@ -288,9 +279,7 @@ async function errorLines(
  * hidden behind the matches found elsewhere. Warnings, which grep prints
  * for searches that succeed, do not.
  */
-export function searchFailure(
-  { code, stopped, errors }: GrepRun,
-): string | undefined {
+export function searchFailure({ code, stopped, errors }: GrepRun): string | undefined {
   const detail = errors.length > 0 ? `: ${errors.join("; ")}` : "";
   if (stopped) {
     const failed = errors.some((line) => !WARNING.test(line));
@@ -303,7 +292,7 @@ export function searchFailure(
 const WARNING = /^[^:]*: warning: /;
 
 /** Kill `child` unless it has already exited. */
-function killQuietly(child: Deno.ChildProcess): void {
+function killQuietly(child: ChildProcess): void {
   try {
     child.kill();
   } catch {
@@ -339,8 +328,7 @@ function directoryMatches(path: string): MatchCollector {
         results,
         ...(stopped && {
           truncated: true,
-          message:
-            `Results truncated to ${MAX_MATCHES} matches. Use a more specific pattern or path to narrow results.`,
+          message: `Results truncated to ${MAX_MATCHES} matches. Use a more specific pattern or path to narrow results.`,
         }),
       };
     },
@@ -363,8 +351,7 @@ function fileMatches(path: string): MatchCollector {
         results: [{ file: path, matches }],
         ...(stopped && {
           truncated: true,
-          message:
-            `Results truncated to the first ${MAX_MATCHES} matches. Use a more specific pattern to narrow results.`,
+          message: `Results truncated to the first ${MAX_MATCHES} matches. Use a more specific pattern to narrow results.`,
         }),
       };
     },

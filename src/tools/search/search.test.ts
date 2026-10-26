@@ -1,18 +1,18 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { expect, test } from "vite-plus/test";
 import { DEFAULT_SEARCH_TIMEOUT, search } from "./search.ts";
 
-Deno.test("search - has a 30 second default timeout", () => {
+test("search - has a 30 second default timeout", () => {
   const tool = search({ engine: "brave", apiKey: "test-key" });
-  assertEquals(tool.timeout, DEFAULT_SEARCH_TIMEOUT);
-  assertEquals(DEFAULT_SEARCH_TIMEOUT, 30_000);
+  expect(tool.timeout).toBe(DEFAULT_SEARCH_TIMEOUT);
+  expect(DEFAULT_SEARCH_TIMEOUT).toBe(30_000);
 });
 
-Deno.test("search - timeout is overridable at the factory", () => {
+test("search - timeout is overridable at the factory", () => {
   const tool = search({ engine: "brave", apiKey: "test-key", timeout: 5_000 });
-  assertEquals(tool.timeout, 5_000);
+  expect(tool.timeout).toBe(5_000);
 });
 
-Deno.test("search - forwards the caller's signal to the provider fetch", async () => {
+test("search - forwards the caller's signal to the provider fetch", async () => {
   let captured: AbortSignal | null | undefined;
 
   const original = globalThis.fetch;
@@ -30,14 +30,15 @@ Deno.test("search - forwards the caller's signal to the provider fetch", async (
     for (let i = 0; i < 200 && captured === undefined; i++) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert(captured != null, "the provider fetch was never called");
+    if (captured == null) {
+      return expect.fail("the provider fetch was never called");
+    }
 
     controller.abort();
-    await assertRejects(() => pending, DOMException);
-    assertEquals(
-      captured.aborted,
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DOMException);
+    expect(captured.aborted, "the aborted caller signal never reached the provider fetch").toBe(
       true,
-      "the aborted caller signal never reached the provider fetch",
     );
   } finally {
     globalThis.fetch = original;

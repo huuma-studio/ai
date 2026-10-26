@@ -3,9 +3,9 @@
  *
  * @example
  * ```typescript
- * import { openai } from "jsr:@huuma/ai/models/openai";
+ * import { openai } from "@huuma/ai/models/openai";
  *
- * const model = openai({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+ * const model = openai({ apiKey: process.env.OPENAI_API_KEY });
  * const result = await model.generate({
  *   modelId: "gpt-4o-mini",
  *   messages: [{ role: "user", contents: "Hello!" }],
@@ -14,19 +14,19 @@
  *
  * @module
  */
-import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "../../src/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "../../src/model/mod.ts";
 import type {
   FileContent,
   Message,
   ModelMessage,
   TextContent,
   ToolCallContent,
-} from "@/mod.ts";
+} from "../../src/mod.ts";
 import OpenAI, { type ClientOptions } from "openai";
-import type { Tool } from "@/tools/mod.ts";
+import type { Tool } from "../../src/tools/tool.ts";
 import type { JSONSchema } from "@huuma/validate";
-import { deadlineFrom } from "@/model/deadline.ts";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 
 /** Vendor extension used by reasoning-capable OpenAI-compatible providers. */
 export interface ReasoningExtension {
@@ -39,7 +39,6 @@ export interface ReasoningExtension {
  * The official SDK type is used for known models, while the open string branch
  * keeps the wrapper usable with newly released and OpenAI-compatible models.
  */
-// deno-lint-ignore ban-types
 export type OpenAIModels = OpenAI.ChatModel | (string & {});
 
 /**
@@ -69,7 +68,6 @@ export interface OpenAIGenerateOptions {
   system?: string;
 
   /** Tools available to the model. */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
 
   /** Additional OpenAI chat completion options. */
@@ -123,19 +121,27 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns A normalized {@link ModelResult}.
    */
-  async generate(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      OpenAIGenerateOptions,
-  ): Promise<ModelResult<OpenAIModels>> {
+  async generate({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: OpenAIGenerateOptions): Promise<ModelResult<OpenAIModels>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const response = await this.#client.chat.completions.create({
-        ...options,
-        model: modelId,
-        messages: openAIMessagesFrom(messages, system),
-        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-        stream: false,
-      }, { signal: deadline.signal });
+      const response = await this.#client.chat.completions.create(
+        {
+          ...options,
+          model: modelId,
+          messages: openAIMessagesFrom(messages, system),
+          tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+          stream: false,
+        },
+        { signal: deadline.signal },
+      );
 
       const choice = response.choices[0];
       if (!choice) {
@@ -164,20 +170,28 @@ export class OpenAIModel implements BaseModel<OpenAIModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
-  async stream(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      OpenAIGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<OpenAIModels>>> {
+  async stream({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: OpenAIGenerateOptions): Promise<AsyncGenerator<ModelResult<OpenAIModels>>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const stream = await this.#client.chat.completions.create({
-        ...options,
-        model: modelId,
-        messages: openAIMessagesFrom(messages, system),
-        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-        stream: true,
-        stream_options: { include_usage: true },
-      }, { signal: deadline.signal });
+      const stream = await this.#client.chat.completions.create(
+        {
+          ...options,
+          model: modelId,
+          messages: openAIMessagesFrom(messages, system),
+          tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        { signal: deadline.signal },
+      );
 
       return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
@@ -235,12 +249,8 @@ export function openAIMessagesFrom(
         content: userContentFrom(message.contents),
       });
     } else if (message.role === "model") {
-      const textParts = message.contents.filter((c) =>
-        "text" in c
-      ) as TextContent[];
-      const content = textParts.length > 0
-        ? textParts.map((c) => c.text).join("")
-        : null;
+      const textParts = message.contents.filter((c) => "text" in c) as TextContent[];
+      const content = textParts.length > 0 ? textParts.map((c) => c.text).join("") : null;
       const toolCalls = modelToolCallsFrom(message).map((tc) => ({
         id: tc.id,
         type: "function" as const,
@@ -261,10 +271,9 @@ export function openAIMessagesFrom(
         continue;
       }
 
-      const assistantMessage: OpenAI.Chat.ChatCompletionAssistantMessageParam =
-        {
-          role: "assistant",
-        };
+      const assistantMessage: OpenAI.Chat.ChatCompletionAssistantMessageParam = {
+        role: "assistant",
+      };
       if (content !== null) {
         assistantMessage.content = content;
       }
@@ -272,8 +281,7 @@ export function openAIMessagesFrom(
         assistantMessage.tool_calls = toolCalls;
       }
       if (preserveThinking && hasThinking) {
-        (assistantMessage as ReasoningExtension).reasoning_content =
-          message.thinking;
+        (assistantMessage as ReasoningExtension).reasoning_content = message.thinking;
       }
       result.push(assistantMessage);
     } else if (message.role === "tool") {
@@ -305,9 +313,7 @@ export function openAIMessagesFrom(
   return result;
 }
 
-export function modelMessageFrom(
-  message: OpenAI.Chat.ChatCompletionMessage,
-): ModelMessage {
+export function modelMessageFrom(message: OpenAI.Chat.ChatCompletionMessage): ModelMessage {
   const result: ModelMessage = {
     role: "model",
     contents: [],
@@ -464,11 +470,13 @@ export function* flushPendingToolCalls<T extends string>(
     };
     yield {
       modelId,
-      messages: [{
-        role: "model",
-        contents: [{ toolCall }],
-        toolCalls: [toolCall],
-      }],
+      messages: [
+        {
+          role: "model",
+          contents: [{ toolCall }],
+          toolCalls: [toolCall],
+        },
+      ],
     };
   }
 }
@@ -499,13 +507,12 @@ export function modelMessageFromDelta(
 }
 
 export function isPopulatedModelMessage(message: ModelMessage): boolean {
-  return message.contents.length > 0 || message.thinking !== undefined ||
-    message.toolCalls.length > 0;
+  return (
+    message.contents.length > 0 || message.thinking !== undefined || message.toolCalls.length > 0
+  );
 }
 
-function modelToolCallsFrom(
-  message: ModelMessage,
-): ToolCallContent["toolCall"][] {
+function modelToolCallsFrom(message: ModelMessage): ToolCallContent["toolCall"][] {
   if (message.toolCalls.length > 0) {
     return message.toolCalls;
   }
@@ -524,9 +531,7 @@ function parseToolArguments(argumentsJSON: string): JSONSchema {
 }
 
 function textFrom(contents: string | TextContent[]): string {
-  return typeof contents === "string"
-    ? contents
-    : contents.map((content) => content.text).join("");
+  return typeof contents === "string" ? contents : contents.map((content) => content.text).join("");
 }
 
 /**
@@ -547,9 +552,7 @@ function userContentFrom(
   }
 
   return contents.map((content) =>
-    "file" in content
-      ? filePartFrom(content.file)
-      : { type: "text" as const, text: content.text }
+    "file" in content ? filePartFrom(content.file) : { type: "text" as const, text: content.text },
   );
 }
 
@@ -568,9 +571,7 @@ const OPENAI_AUDIO_FORMATS = {
  * wire level). Audio and PDFs by URL throw — the API has no URL input
  * for them and adapters never fetch. Any other media type throws.
  */
-function filePartFrom(
-  file: FileContent["file"],
-): OpenAI.Chat.ChatCompletionContentPart {
+function filePartFrom(file: FileContent["file"]): OpenAI.Chat.ChatCompletionContentPart {
   const source = fileSourceFrom(file);
 
   if (file.mimeType.startsWith("image/")) {
@@ -582,13 +583,10 @@ function filePartFrom(
     };
   }
 
-  const audioFormat =
-    OPENAI_AUDIO_FORMATS[file.mimeType as keyof typeof OPENAI_AUDIO_FORMATS];
+  const audioFormat = OPENAI_AUDIO_FORMATS[file.mimeType as keyof typeof OPENAI_AUDIO_FORMATS];
   if (audioFormat) {
     if (source.kind === "url") {
-      throw new RangeError(
-        `OpenAI adapter does not support audio by URL ("${file.mimeType}")`,
-      );
+      throw new RangeError(`OpenAI adapter does not support audio by URL ("${file.mimeType}")`);
     }
     return {
       type: "input_audio",
@@ -598,9 +596,7 @@ function filePartFrom(
 
   if (file.mimeType === "application/pdf") {
     if (source.kind === "url") {
-      throw new RangeError(
-        "OpenAI adapter does not support PDFs by URL",
-      );
+      throw new RangeError("OpenAI adapter does not support PDFs by URL");
     }
     return {
       type: "file",
@@ -611,9 +607,7 @@ function filePartFrom(
     };
   }
 
-  throw new RangeError(
-    `OpenAI adapter does not support file content of type "${file.mimeType}"`,
-  );
+  throw new RangeError(`OpenAI adapter does not support file content of type "${file.mimeType}"`);
 }
 
 /**
@@ -621,9 +615,7 @@ function filePartFrom(
  * `role: "tool"` message requires. Errors take precedence over output,
  * and non-string payloads are JSON-encoded.
  */
-function toolOutputString(
-  result: { output?: unknown; error?: unknown },
-): string {
+function toolOutputString(result: { output?: unknown; error?: unknown }): string {
   const value = result.error ?? result.output;
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
@@ -639,10 +631,7 @@ function toolOutputString(
 /**
  * Converts Huuma {@link Tool}s into OpenAI function-tool definitions.
  */
-export function openAIToolsFrom(
-  // deno-lint-ignore no-explicit-any
-  tools: Tool<any>[],
-): OpenAI.Chat.ChatCompletionTool[] {
+export function openAIToolsFrom(tools: Tool<any>[]): OpenAI.Chat.ChatCompletionTool[] {
   return tools.map((tool) => ({
     type: "function",
     function: {
@@ -661,7 +650,7 @@ export function openAIToolsFrom(
  *
  * @example
  * ```typescript
- * const model = openai({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+ * const model = openai({ apiKey: process.env.OPENAI_API_KEY });
  * ```
  */
 export function openai(options?: ClientOptions): OpenAIModel {

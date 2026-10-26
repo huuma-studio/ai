@@ -1,0 +1,7 @@
+# Their install scripts are no-ops or version warnings.
+allowBuilds:
+  "@google/genai": false
+  protobufjs: false
+overrides:
+  vite@*: npm:@voidzero-dev/vite-plus-core@1.1.0
+  vitest@*: 5.0.3

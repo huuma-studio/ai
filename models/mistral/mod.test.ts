@@ -3,11 +3,11 @@
  *
  * @module
  */
-import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
+import { expect, test } from "vite-plus/test";
 import { HTTPClient } from "@mistralai/mistralai";
 import type { JSONSchema } from "@huuma/validate";
-import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
-import { tool } from "@/tools/mod.ts";
+import type { Message, ModelMessage, ToolMessage } from "../../src/mod.ts";
+import { tool } from "../../src/tools/mod.ts";
 import { object, string } from "@huuma/validate";
 import {
   mistral,
@@ -25,13 +25,12 @@ async function requestBodyFrom(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Record<string, unknown>> {
-  const body = input instanceof Request
-    ? await input.clone().text()
-    : init?.body?.toString() ?? "{}";
+  const body =
+    input instanceof Request ? await input.clone().text() : (init?.body?.toString() ?? "{}");
   return JSON.parse(body) as Record<string, unknown>;
 }
 
-Deno.test("mistralToolsFrom converts tools correctly", () => {
+test("mistralToolsFrom converts tools correctly", () => {
   const testTool = tool({
     name: "test_tool",
     description: "A test tool",
@@ -40,14 +39,14 @@ Deno.test("mistralToolsFrom converts tools correctly", () => {
   });
 
   const mistralTools = mistralToolsFrom([testTool]);
-  assertEquals(mistralTools.length, 1);
-  assertEquals(mistralTools[0].type, "function");
-  assertEquals(mistralTools[0].function.name, "test_tool");
-  assertEquals(mistralTools[0].function.description, "A test tool");
-  assertEquals(mistralTools[0].function.parameters, { type: "string" });
+  expect(mistralTools.length).toStrictEqual(1);
+  expect(mistralTools[0].type).toStrictEqual("function");
+  expect(mistralTools[0].function.name).toStrictEqual("test_tool");
+  expect(mistralTools[0].function.description).toStrictEqual("A test tool");
+  expect(mistralTools[0].function.parameters).toStrictEqual({ type: "string" });
 });
 
-Deno.test("mistralToolsFrom reuses the cached schema of Tool instances", () => {
+test("mistralToolsFrom reuses the cached schema of Tool instances", () => {
   const testTool = tool({
     name: "test_tool",
     description: "A test tool",
@@ -57,166 +56,170 @@ Deno.test("mistralToolsFrom reuses the cached schema of Tool instances", () => {
 
   const [first] = mistralToolsFrom([testTool]);
   const [second] = mistralToolsFrom([testTool]);
-  assertEquals(first.function.parameters === second.function.parameters, true);
-  assertEquals(
-    first.function.parameters === (testTool.jsonSchema as object),
-    true,
-  );
+  expect(first.function.parameters === second.function.parameters).toStrictEqual(true);
+  expect(first.function.parameters === (testTool.jsonSchema as object)).toStrictEqual(true);
 });
 
-Deno.test("mistralToolsFrom converts structural tools without a cached schema", () => {
-  const converted = mistralToolsFrom([{
-    name: "structural",
-    description: "A structural tool",
-    input: object({ query: string() }),
-  }]);
-
-  assertEquals(converted, [{
-    type: "function",
-    function: {
+test("mistralToolsFrom converts structural tools without a cached schema", () => {
+  const converted = mistralToolsFrom([
+    {
       name: "structural",
       description: "A structural tool",
-      parameters: {
-        type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"],
+      input: object({ query: string() }),
+    },
+  ]);
+
+  expect(converted).toStrictEqual([
+    {
+      type: "function",
+      function: {
+        name: "structural",
+        description: "A structural tool",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
       },
     },
-  }]);
+  ]);
 });
 
-Deno.test("mistralMessagesFrom converts user message", () => {
+test("mistralMessagesFrom converts user message", () => {
   const msg: Message = { role: "user", contents: "Hello" };
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result, [{ role: "user", content: "Hello" }]);
+  expect(result).toStrictEqual([{ role: "user", content: "Hello" }]);
 });
 
-Deno.test("mistralMessagesFrom converts user message with array contents", () => {
+test("mistralMessagesFrom converts user message with array contents", () => {
   const msg: Message = {
     role: "user",
     contents: [{ text: "Hello" }, { text: " world!" }],
   };
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result, [{ role: "user", content: "Hello world!" }]);
+  expect(result).toStrictEqual([{ role: "user", content: "Hello world!" }]);
 });
 
-Deno.test("mistralMessagesFrom maps base64 images to data URL chunks", () => {
+test("mistralMessagesFrom maps base64 images to data URL chunks", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ text: "What is this?" }, { file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+  };
+  expect(mistralMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "What is this?" },
+        { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
+      ],
+    },
+  ]);
+});
+
+test("mistralMessagesFrom passes image URLs through", () => {
   const msg: Message = {
     role: "user",
     contents: [
-      { text: "What is this?" },
-      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
+      {
+        file: { mimeType: "image/png", url: "https://example.com/a.png" },
+      },
     ],
   };
-  assertEquals(mistralMessagesFrom([msg]), [{
-    role: "user",
-    content: [
-      { type: "text", text: "What is this?" },
-      { type: "image_url", imageUrl: "data:image/png;base64,aGVsbG8=" },
-    ],
-  }]);
+  expect(mistralMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [{ type: "image_url", imageUrl: "https://example.com/a.png" }],
+    },
+  ]);
 });
 
-Deno.test("mistralMessagesFrom passes image URLs through", () => {
+test("mistralMessagesFrom maps PDF URLs to document_url chunks", () => {
   const msg: Message = {
     role: "user",
-    contents: [{
-      file: { mimeType: "image/png", url: "https://example.com/a.png" },
-    }],
-  };
-  assertEquals(mistralMessagesFrom([msg]), [{
-    role: "user",
-    content: [
-      { type: "image_url", imageUrl: "https://example.com/a.png" },
+    contents: [
+      {
+        file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+      },
     ],
-  }]);
+  };
+  expect(mistralMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [{ type: "document_url", documentUrl: "https://example.com/a.pdf" }],
+    },
+  ]);
 });
 
-Deno.test("mistralMessagesFrom maps PDF URLs to document_url chunks", () => {
-  const msg: Message = {
-    role: "user",
-    contents: [{
-      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
-    }],
-  };
-  assertEquals(mistralMessagesFrom([msg]), [{
-    role: "user",
-    content: [
-      { type: "document_url", documentUrl: "https://example.com/a.pdf" },
-    ],
-  }]);
-});
-
-Deno.test("mistralMessagesFrom throws on base64 PDFs", () => {
+test("mistralMessagesFrom throws on base64 PDFs", () => {
   const msg: Message = {
     role: "user",
     contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
   };
-  assertThrows(
-    () => mistralMessagesFrom([msg]),
-    RangeError,
-    "base64 PDFs",
-  );
+  expect(() => mistralMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => mistralMessagesFrom([msg])).toThrow("base64 PDFs");
 });
 
-Deno.test("mistralMessagesFrom maps audio data and URLs to input_audio chunks", () => {
+test("mistralMessagesFrom maps audio data and URLs to input_audio chunks", () => {
   const data: Message = {
     role: "user",
     contents: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
   };
-  assertEquals(mistralMessagesFrom([data]), [{
-    role: "user",
-    content: [{ type: "input_audio", inputAudio: "aGVsbG8=" }],
-  }]);
+  expect(mistralMessagesFrom([data])).toStrictEqual([
+    {
+      role: "user",
+      content: [{ type: "input_audio", inputAudio: "aGVsbG8=" }],
+    },
+  ]);
 
   const url: Message = {
     role: "user",
-    contents: [{
-      file: { mimeType: "audio/mpeg", url: "https://example.com/a.mp3" },
-    }],
-  };
-  assertEquals(mistralMessagesFrom([url]), [{
-    role: "user",
-    content: [
-      { type: "input_audio", inputAudio: "https://example.com/a.mp3" },
+    contents: [
+      {
+        file: { mimeType: "audio/mpeg", url: "https://example.com/a.mp3" },
+      },
     ],
-  }]);
+  };
+  expect(mistralMessagesFrom([url])).toStrictEqual([
+    {
+      role: "user",
+      content: [{ type: "input_audio", inputAudio: "https://example.com/a.mp3" }],
+    },
+  ]);
 });
 
-Deno.test("mistralMessagesFrom throws on unsupported file types", () => {
+test("mistralMessagesFrom throws on unsupported file types", () => {
   const msg: Message = {
     role: "user",
     contents: [{ file: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
   };
-  assertThrows(
-    () => mistralMessagesFrom([msg]),
-    RangeError,
-    'file content of type "video/mp4"',
-  );
+  expect(() => mistralMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => mistralMessagesFrom([msg])).toThrow('file content of type "video/mp4"');
 });
 
-Deno.test("mistralMessagesFrom converts system message with array contents", () => {
+test("mistralMessagesFrom converts system message with array contents", () => {
   const msg: Message = {
     role: "system",
     contents: [{ text: "You are " }, { text: "an AI." }],
   };
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result, [{ role: "system", content: "You are an AI." }]);
+  expect(result).toStrictEqual([{ role: "system", content: "You are an AI." }]);
 });
 
-Deno.test("mistralMessagesFrom converts system message", () => {
+test("mistralMessagesFrom converts system message", () => {
   const msg: Message = {
     role: "system",
     contents: "You are a helpful assistant.",
   };
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result, [{
-    role: "system",
-    content: "You are a helpful assistant.",
-  }]);
+  expect(result).toStrictEqual([
+    {
+      role: "system",
+      content: "You are a helpful assistant.",
+    },
+  ]);
 });
 
-Deno.test("mistralMessagesFrom converts model message with tool calls", () => {
+test("mistralMessagesFrom converts model message with tool calls", () => {
   const msgWithContent: Message = {
     role: "model",
     contents: [
@@ -227,49 +230,48 @@ Deno.test("mistralMessagesFrom converts model message with tool calls", () => {
   };
 
   const result = mistralMessagesFrom([msgWithContent]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "assistant");
-  assertEquals((result[0] as { content?: string }).content, "Thinking...");
-  assertEquals(
-    (result[0] as { toolCalls?: unknown }).toolCalls,
-    [{
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("assistant");
+  expect((result[0] as { content?: string }).content).toStrictEqual("Thinking...");
+  expect((result[0] as { toolCalls?: unknown }).toolCalls).toStrictEqual([
+    {
       id: "1",
       type: "function",
       function: { name: "tool1", arguments: '{"arg":"val"}' },
-    }],
-  );
+    },
+  ]);
 });
 
-Deno.test("mistralMessagesFrom converts tool message", () => {
+test("mistralMessagesFrom converts tool message", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [
-      { toolResult: { id: "1", name: "tool1", result: { output: "success" } } },
-    ],
+    contents: [{ toolResult: { id: "1", name: "tool1", result: { output: "success" } } }],
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "tool");
-  assertEquals((result[0] as { content?: string }).content, "success");
-  assertEquals((result[0] as { toolCallId?: string }).toolCallId, "1");
-  assertEquals((result[0] as { name?: string }).name, "tool1");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as { content?: string }).content).toStrictEqual("success");
+  expect((result[0] as { toolCallId?: string }).toolCallId).toStrictEqual("1");
+  expect((result[0] as { name?: string }).name).toStrictEqual("tool1");
 });
 
-Deno.test("mistralMessagesFrom appends a synthetic user message for tool result files", () => {
+test("mistralMessagesFrom appends a synthetic user message for tool result files", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [{
-      toolResult: {
-        id: "1",
-        name: "screenshot",
-        result: { output: "captured" },
-        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
       },
-    }],
+    ],
   };
 
-  assertEquals(mistralMessagesFrom([msg]), [
+  expect(mistralMessagesFrom([msg])).toStrictEqual([
     {
       role: "tool",
       content: "captured",
@@ -286,7 +288,7 @@ Deno.test("mistralMessagesFrom appends a synthetic user message for tool result 
   ]);
 });
 
-Deno.test("mistralMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
+test("mistralMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -310,8 +312,8 @@ Deno.test("mistralMessagesFrom aggregates files of multiple tool results into on
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 3);
-  assertEquals(result[2], {
+  expect(result.length).toStrictEqual(3);
+  expect(result[2]).toStrictEqual({
     role: "user",
     content: [
       { type: "text", text: 'Files returned by tool "screenshot" (call 1):' },
@@ -322,23 +324,25 @@ Deno.test("mistralMessagesFrom aggregates files of multiple tool results into on
   });
 });
 
-Deno.test("mistralMessagesFrom folds tool result files into a following user message", () => {
+test("mistralMessagesFrom folds tool result files into a following user message", () => {
   const messages: Message[] = [
     {
       role: "tool",
-      contents: [{
-        toolResult: {
-          id: "1",
-          name: "screenshot",
-          result: { output: "captured" },
-          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      contents: [
+        {
+          toolResult: {
+            id: "1",
+            name: "screenshot",
+            result: { output: "captured" },
+            files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+          },
         },
-      }],
+      ],
     },
     { role: "user", contents: "What do you see?" },
   ];
 
-  assertEquals(mistralMessagesFrom(messages), [
+  expect(mistralMessagesFrom(messages)).toStrictEqual([
     {
       role: "tool",
       content: "captured",
@@ -356,27 +360,26 @@ Deno.test("mistralMessagesFrom folds tool result files into a following user mes
   ]);
 });
 
-Deno.test("mistralMessagesFrom throws on tool result base64 PDFs", () => {
+test("mistralMessagesFrom throws on tool result base64 PDFs", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [{
-      toolResult: {
-        id: "1",
-        name: "report",
-        result: { output: "generated" },
-        files: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "report",
+          result: { output: "generated" },
+          files: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
+        },
       },
-    }],
+    ],
   };
 
-  assertThrows(
-    () => mistralMessagesFrom([msg]),
-    RangeError,
-    "base64 PDFs",
-  );
+  expect(() => mistralMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => mistralMessagesFrom([msg])).toThrow("base64 PDFs");
 });
 
-Deno.test("mistralMessagesFrom converts tool message with non-string output object", () => {
+test("mistralMessagesFrom converts tool message with non-string output object", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -391,16 +394,13 @@ Deno.test("mistralMessagesFrom converts tool message with non-string output obje
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "tool");
-  assertEquals(
-    (result[0] as { content?: string }).content,
-    '{"ok":true,"data":[1,2]}',
-  );
-  assertEquals((result[0] as { toolCallId?: string }).toolCallId, "2");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as { content?: string }).content).toStrictEqual('{"ok":true,"data":[1,2]}');
+  expect((result[0] as { toolCallId?: string }).toolCallId).toStrictEqual("2");
 });
 
-Deno.test("mistralMessagesFrom prefers error over output when both set", () => {
+test("mistralMessagesFrom prefers error over output when both set", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -415,10 +415,10 @@ Deno.test("mistralMessagesFrom prefers error over output when both set", () => {
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals((result[0] as { content?: string }).content, '{"message":"boom"}');
+  expect((result[0] as { content?: string }).content).toStrictEqual('{"message":"boom"}');
 });
 
-Deno.test("mistralMessagesFrom drops fully empty assistant messages", () => {
+test("mistralMessagesFrom drops fully empty assistant messages", () => {
   const msg: Message = {
     role: "model",
     contents: [],
@@ -426,10 +426,10 @@ Deno.test("mistralMessagesFrom drops fully empty assistant messages", () => {
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 0);
+  expect(result.length).toStrictEqual(0);
 });
 
-Deno.test("mistralMessagesFrom keeps assistant with only tool calls", () => {
+test("mistralMessagesFrom keeps assistant with only tool calls", () => {
   const msg: Message = {
     role: "model",
     contents: [{ toolCall: { id: "a", name: "t", props: props({}) } }],
@@ -437,16 +437,13 @@ Deno.test("mistralMessagesFrom keeps assistant with only tool calls", () => {
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "assistant");
-  assertEquals((result[0] as { content?: string }).content, undefined);
-  assertEquals(
-    ((result[0] as { toolCalls?: unknown[] }).toolCalls ?? []).length,
-    1,
-  );
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("assistant");
+  expect((result[0] as { content?: string }).content).toStrictEqual(undefined);
+  expect(((result[0] as { toolCalls?: unknown[] }).toolCalls ?? []).length).toStrictEqual(1);
 });
 
-Deno.test("mistralMessagesFrom converts tool message with multiple tool results", () => {
+test("mistralMessagesFrom converts tool message with multiple tool results", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -456,28 +453,28 @@ Deno.test("mistralMessagesFrom converts tool message with multiple tool results"
   };
 
   const result = mistralMessagesFrom([msg]);
-  assertEquals(result.length, 2);
-  assertEquals(result[0].role, "tool");
-  assertEquals((result[0] as { toolCallId?: string }).toolCallId, "1");
-  assertEquals((result[0] as { content?: string }).content, "result1");
-  assertEquals(result[1].role, "tool");
-  assertEquals((result[1] as { toolCallId?: string }).toolCallId, "2");
-  assertEquals((result[1] as { content?: string }).content, "result2");
+  expect(result.length).toStrictEqual(2);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as { toolCallId?: string }).toolCallId).toStrictEqual("1");
+  expect((result[0] as { content?: string }).content).toStrictEqual("result1");
+  expect(result[1].role).toStrictEqual("tool");
+  expect((result[1] as { toolCallId?: string }).toolCallId).toStrictEqual("2");
+  expect((result[1] as { content?: string }).content).toStrictEqual("result2");
 });
 
-Deno.test("mistralMessagesFrom prepends system prompt if provided", () => {
+test("mistralMessagesFrom prepends system prompt if provided", () => {
   const result = mistralMessagesFrom(
     [{ role: "user", contents: "Hi" }],
     "You are a helpful assistant",
   );
 
-  assertEquals(result, [
+  expect(result).toStrictEqual([
     { role: "system", content: "You are a helpful assistant" },
     { role: "user", content: "Hi" },
   ]);
 });
 
-Deno.test("mistralMessagesFrom handles multi-turn history", () => {
+test("mistralMessagesFrom handles multi-turn history", () => {
   const messages: Message[] = [
     { role: "user", contents: "Hello" },
     {
@@ -489,33 +486,33 @@ Deno.test("mistralMessagesFrom handles multi-turn history", () => {
   ];
 
   const result = mistralMessagesFrom(messages);
-  assertEquals(result, [
+  expect(result).toStrictEqual([
     { role: "user", content: "Hello" },
     { role: "assistant", content: "Hi there" },
     { role: "user", content: "How are you?" },
   ]);
 });
 
-Deno.test("mistralUsageFrom maps usage correctly", () => {
+test("mistralUsageFrom maps usage correctly", () => {
   const usage = mistralUsageFrom({
     promptTokens: 10,
     completionTokens: 5,
     totalTokens: 15,
   });
 
-  assertEquals(usage, {
+  expect(usage).toStrictEqual({
     inputTokens: 10,
     outputTokens: 5,
     totalTokens: 15,
   });
 });
 
-Deno.test("mistralUsageFrom returns undefined for empty usage", () => {
-  assertEquals(mistralUsageFrom(undefined), undefined);
-  assertEquals(mistralUsageFrom({}), undefined);
+test("mistralUsageFrom returns undefined for empty usage", () => {
+  expect(mistralUsageFrom(undefined)).toStrictEqual(undefined);
+  expect(mistralUsageFrom({})).toStrictEqual(undefined);
 });
 
-Deno.test("MistralModel.generate calls API and returns mapped result", async () => {
+test("MistralModel.generate calls API and returns mapped result", async () => {
   let fetchCalled = false;
   let requestBody: Record<string, unknown> | null = null;
 
@@ -524,11 +521,8 @@ Deno.test("MistralModel.generate calls API and returns mapped result", async () 
     httpClient: new HTTPClient({
       fetcher: async (input: RequestInfo | URL, init?: RequestInit) => {
         fetchCalled = true;
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           requestBody = await requestBodyFrom(input, init);
           return Promise.resolve(
@@ -538,14 +532,16 @@ Deno.test("MistralModel.generate calls API and returns mapped result", async () 
                 object: "chat.completion",
                 created: 1677652288,
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: "Hello! how can I help you today?",
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: "Hello! how can I help you today?",
+                    },
+                    finish_reason: "stop",
                   },
-                  finish_reason: "stop",
-                }],
+                ],
                 usage: {
                   prompt_tokens: 9,
                   completion_tokens: 12,
@@ -569,34 +565,33 @@ Deno.test("MistralModel.generate calls API and returns mapped result", async () 
     messages: [{ role: "user", contents: "Hi" }],
   });
 
-  assertEquals(fetchCalled, true);
-  assertEquals(requestBody!.model, "mistral-large-latest");
-  assertEquals(requestBody!.messages, [{ role: "user", content: "Hi" }]);
-  assertEquals(result.modelId, "mistral-large-latest");
-  assertEquals(result.messages.length, 1);
-  assertEquals(result.messages[0].role, "model");
-  assertEquals(result.messages[0].contents, [{
-    text: "Hello! how can I help you today?",
-  }]);
-  assertEquals(result.usage, {
+  expect(fetchCalled).toStrictEqual(true);
+  expect(requestBody!.model).toStrictEqual("mistral-large-latest");
+  expect(requestBody!.messages).toStrictEqual([{ role: "user", content: "Hi" }]);
+  expect(result.modelId).toStrictEqual("mistral-large-latest");
+  expect(result.messages.length).toStrictEqual(1);
+  expect(result.messages[0].role).toStrictEqual("model");
+  expect(result.messages[0].contents).toStrictEqual([
+    {
+      text: "Hello! how can I help you today?",
+    },
+  ]);
+  expect(result.usage).toStrictEqual({
     inputTokens: 9,
     outputTokens: 12,
     totalTokens: 21,
   });
 });
 
-Deno.test("MistralModel.generate handles tool calls", async () => {
+test("MistralModel.generate handles tool calls", async () => {
   let requestBody: Record<string, unknown> | null = null;
 
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           requestBody = await requestBodyFrom(input, init);
           return Promise.resolve(
@@ -606,22 +601,26 @@ Deno.test("MistralModel.generate handles tool calls", async () => {
                 object: "chat.completion",
                 created: 1677652288,
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: null,
-                    tool_calls: [{
-                      id: "call_abc",
-                      type: "function",
-                      function: {
-                        name: "get_weather",
-                        arguments: '{"location":"San Francisco"}',
-                      },
-                    }],
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: "call_abc",
+                          type: "function",
+                          function: {
+                            name: "get_weather",
+                            arguments: '{"location":"San Francisco"}',
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: "tool_calls",
                   },
-                  finish_reason: "tool_calls",
-                }],
+                ],
                 usage: {
                   prompt_tokens: 50,
                   completion_tokens: 20,
@@ -645,37 +644,38 @@ Deno.test("MistralModel.generate handles tool calls", async () => {
     messages: [{ role: "user", contents: "What is the weather?" }],
   });
 
-  assertEquals(requestBody!.model, "mistral-large-latest");
-  assertEquals(result.modelId, "mistral-large-latest");
-  assertEquals(result.messages.length, 1);
+  expect(requestBody!.model).toStrictEqual("mistral-large-latest");
+  expect(result.modelId).toStrictEqual("mistral-large-latest");
+  expect(result.messages.length).toStrictEqual(1);
   const msg = result.messages[0] as ModelMessage;
-  assertEquals(msg.role, "model");
-  assertEquals(msg.contents, [{
-    toolCall: {
+  expect(msg.role).toStrictEqual("model");
+  expect(msg.contents).toStrictEqual([
+    {
+      toolCall: {
+        id: "call_abc",
+        name: "get_weather",
+        props: props({ location: "San Francisco" }),
+      },
+    },
+  ]);
+  expect(msg.toolCalls).toStrictEqual([
+    {
       id: "call_abc",
       name: "get_weather",
       props: props({ location: "San Francisco" }),
     },
-  }]);
-  assertEquals(msg.toolCalls, [{
-    id: "call_abc",
-    name: "get_weather",
-    props: props({ location: "San Francisco" }),
-  }]);
+  ]);
 });
 
-Deno.test("MistralModel.generate prepends system prompt if provided", async () => {
+test("MistralModel.generate prepends system prompt if provided", async () => {
   let requestBody: Record<string, unknown> | null = null;
 
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           requestBody = await requestBodyFrom(input, init);
           return Promise.resolve(
@@ -685,14 +685,16 @@ Deno.test("MistralModel.generate prepends system prompt if provided", async () =
                 object: "chat.completion",
                 created: 1677652288,
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: "Response",
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: "Response",
+                    },
+                    finish_reason: "stop",
                   },
-                  finish_reason: "stop",
-                }],
+                ],
                 usage: {
                   prompt_tokens: 5,
                   completion_tokens: 1,
@@ -717,22 +719,19 @@ Deno.test("MistralModel.generate prepends system prompt if provided", async () =
     messages: [{ role: "user", contents: "Hi" }],
   });
 
-  assertEquals(requestBody!.messages, [
+  expect(requestBody!.messages).toStrictEqual([
     { role: "system", content: "You are a helpful assistant" },
     { role: "user", content: "Hi" },
   ]);
 });
 
-Deno.test("MistralModel.generate handles invalid JSON in tool call arguments", async () => {
+test("MistralModel.generate handles invalid JSON in tool call arguments", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           return Promise.resolve(
             new Response(
@@ -741,22 +740,26 @@ Deno.test("MistralModel.generate handles invalid JSON in tool call arguments", a
                 object: "chat.completion",
                 created: 1677652288,
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  message: {
-                    role: "assistant",
-                    content: null,
-                    tool_calls: [{
-                      id: "call_bad",
-                      type: "function",
-                      function: {
-                        name: "broken_tool",
-                        arguments: "this is not json",
-                      },
-                    }],
+                choices: [
+                  {
+                    index: 0,
+                    message: {
+                      role: "assistant",
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: "call_bad",
+                          type: "function",
+                          function: {
+                            name: "broken_tool",
+                            arguments: "this is not json",
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: "tool_calls",
                   },
-                  finish_reason: "tool_calls",
-                }],
+                ],
                 usage: {
                   prompt_tokens: 5,
                   completion_tokens: 1,
@@ -780,24 +783,21 @@ Deno.test("MistralModel.generate handles invalid JSON in tool call arguments", a
     messages: [{ role: "user", contents: "Call the tool" }],
   });
 
-  assertEquals(result.messages.length, 1);
+  expect(result.messages.length).toStrictEqual(1);
   const msg = result.messages[0] as ModelMessage;
-  assertEquals(msg.toolCalls.length, 1);
-  assertEquals(msg.toolCalls[0].id, "call_bad");
-  assertEquals(msg.toolCalls[0].name, "broken_tool");
-  assertEquals(msg.toolCalls[0].props, {});
+  expect(msg.toolCalls.length).toStrictEqual(1);
+  expect(msg.toolCalls[0].id).toStrictEqual("call_bad");
+  expect(msg.toolCalls[0].name).toStrictEqual("broken_tool");
+  expect(msg.toolCalls[0].props).toStrictEqual({});
 });
 
-Deno.test("MistralModel.stream streams content and maps correctly", async () => {
+test("MistralModel.stream streams content and maps correctly", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
@@ -843,22 +843,19 @@ Deno.test("MistralModel.stream streams content and maps correctly", async () => 
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].modelId, "mistral-large-latest");
-  assertEquals(results[0].messages[0].contents, [{ text: "Hello" }]);
-  assertEquals(results[1].messages[0].contents, [{ text: " world" }]);
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].modelId).toStrictEqual("mistral-large-latest");
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Hello" }]);
+  expect(results[1].messages[0].contents).toStrictEqual([{ text: " world" }]);
 });
 
-Deno.test("MistralModel.stream yields a final usage chunk", async () => {
+test("MistralModel.stream yields a final usage chunk", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           const encoder = new TextEncoder();
           const chunks = [
@@ -886,9 +883,7 @@ Deno.test("MistralModel.stream yields a final usage chunk", async () => {
           const stream = new ReadableStream({
             start(controller) {
               for (const chunk of chunks) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                );
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
               }
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               controller.close();
@@ -916,9 +911,9 @@ Deno.test("MistralModel.stream yields a final usage chunk", async () => {
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].messages[0].contents, [{ text: "Hi" }]);
-  assertEquals(results[1], {
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Hi" }]);
+  expect(results[1]).toStrictEqual({
     modelId: "mistral-large-latest",
     messages: [],
     usage: {
@@ -929,16 +924,13 @@ Deno.test("MistralModel.stream yields a final usage chunk", async () => {
   });
 });
 
-Deno.test("MistralModel.stream streams tool calls correctly", async () => {
+test("MistralModel.stream streams tool calls correctly", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
@@ -946,66 +938,72 @@ Deno.test("MistralModel.stream streams tool calls correctly", async () => {
               const chunk1 = {
                 id: "1",
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  delta: {
-                    tool_calls: [{
-                      index: 0,
-                      id: "call_123",
-                      type: "function",
-                      function: {
-                        name: "get_weather",
-                        arguments: "",
-                      },
-                    }],
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call_123",
+                          type: "function",
+                          function: {
+                            name: "get_weather",
+                            arguments: "",
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
                   },
-                  finish_reason: null,
-                }],
+                ],
               };
               const chunk2 = {
                 id: "1",
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  delta: {
-                    tool_calls: [{
-                      index: 0,
-                      function: {
-                        name: "get_weather",
-                        arguments: '{"loc',
-                      },
-                    }],
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          function: {
+                            name: "get_weather",
+                            arguments: '{"loc',
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
                   },
-                  finish_reason: null,
-                }],
+                ],
               };
               const chunk3 = {
                 id: "1",
                 model: "mistral-large-latest",
-                choices: [{
-                  index: 0,
-                  delta: {
-                    tool_calls: [{
-                      index: 0,
-                      function: {
-                        name: "get_weather",
-                        arguments: 'ation":"SF"}',
-                      },
-                    }],
+                choices: [
+                  {
+                    index: 0,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          function: {
+                            name: "get_weather",
+                            arguments: 'ation":"SF"}',
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
                   },
-                  finish_reason: null,
-                }],
+                ],
               };
 
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`),
-              );
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`),
-              );
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk3)}\n\n`),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`));
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk3)}\n\n`));
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               controller.close();
             },
@@ -1032,60 +1030,61 @@ Deno.test("MistralModel.stream streams tool calls correctly", async () => {
     results.push(chunk);
   }
 
-  assertEquals(results.length, 1);
+  expect(results.length).toStrictEqual(1);
   const msg = results[0].messages[0] as ModelMessage;
-  assertEquals(msg.toolCalls.length, 1);
-  assertEquals(msg.toolCalls[0].id, "call_123");
-  assertEquals(msg.toolCalls[0].name, "get_weather");
-  assertEquals(msg.toolCalls[0].props, props({ location: "SF" }));
-  assertEquals(msg.contents, [{ toolCall: msg.toolCalls[0] }]);
+  expect(msg.toolCalls.length).toStrictEqual(1);
+  expect(msg.toolCalls[0].id).toStrictEqual("call_123");
+  expect(msg.toolCalls[0].name).toStrictEqual("get_weather");
+  expect(msg.toolCalls[0].props).toStrictEqual(props({ location: "SF" }));
+  expect(msg.contents).toStrictEqual([{ toolCall: msg.toolCalls[0] }]);
 });
 
-Deno.test("MistralModel.stream flushes tool calls on finish_reason", async () => {
+test("MistralModel.stream flushes tool calls on finish_reason", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           const encoder = new TextEncoder();
           const chunks = [
             {
               id: "1",
               model: "mistral-large-latest",
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: "call_1",
-                    type: "function",
-                    function: { name: "get_weather", arguments: '{"a":1}' },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_1",
+                        type: "function",
+                        function: { name: "get_weather", arguments: '{"a":1}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
                 },
-                finish_reason: null,
-              }],
+              ],
             },
             {
               id: "1",
               model: "mistral-large-latest",
-              choices: [{
-                index: 0,
-                delta: { content: "Done" },
-                finish_reason: "tool_calls",
-              }],
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "Done" },
+                  finish_reason: "tool_calls",
+                },
+              ],
             },
           ];
           const stream = new ReadableStream({
             start(controller) {
               for (const chunk of chunks) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                );
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
               }
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               controller.close();
@@ -1113,66 +1112,69 @@ Deno.test("MistralModel.stream flushes tool calls on finish_reason", async () =>
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].messages[0].contents, [{ text: "Done" }]);
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Done" }]);
   const toolMsg = results[1].messages[0] as ModelMessage;
-  assertEquals(toolMsg.toolCalls, [
+  expect(toolMsg.toolCalls).toStrictEqual([
     { id: "call_1", name: "get_weather", props: props({ a: 1 }) },
   ]);
 });
 
-Deno.test("MistralModel.stream emits earlier tool call when a new index starts", async () => {
+test("MistralModel.stream emits earlier tool call when a new index starts", async () => {
   const model = new MistralModel({
     apiKey: "test-key",
     httpClient: new HTTPClient({
       fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (url.includes("/v1/chat/completions")) {
           const encoder = new TextEncoder();
           const chunks = [
             {
               id: "1",
               model: "mistral-large-latest",
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: "call_1",
-                    type: "function",
-                    function: { name: "tool_a", arguments: "{}" },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_1",
+                        type: "function",
+                        function: { name: "tool_a", arguments: "{}" },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
                 },
-                finish_reason: null,
-              }],
+              ],
             },
             {
               id: "1",
               model: "mistral-large-latest",
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 1,
-                    id: "call_2",
-                    type: "function",
-                    function: { name: "tool_b", arguments: '{"b":2}' },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 1,
+                        id: "call_2",
+                        type: "function",
+                        function: { name: "tool_b", arguments: '{"b":2}' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
                 },
-                finish_reason: null,
-              }],
+              ],
             },
           ];
           const stream = new ReadableStream({
             start(controller) {
               for (const chunk of chunks) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                );
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
               }
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
               controller.close();
@@ -1200,23 +1202,23 @@ Deno.test("MistralModel.stream emits earlier tool call when a new index starts",
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
+  expect(results.length).toStrictEqual(2);
   const first = results[0].messages[0] as ModelMessage;
-  assertEquals(first.toolCalls[0].id, "call_1");
-  assertEquals(first.toolCalls[0].name, "tool_a");
+  expect(first.toolCalls[0].id).toStrictEqual("call_1");
+  expect(first.toolCalls[0].name).toStrictEqual("tool_a");
   const second = results[1].messages[0] as ModelMessage;
-  assertEquals(second.toolCalls[0].id, "call_2");
-  assertEquals(second.toolCalls[0].name, "tool_b");
-  assertEquals(second.toolCalls[0].props, props({ b: 2 }));
+  expect(second.toolCalls[0].id).toStrictEqual("call_2");
+  expect(second.toolCalls[0].name).toStrictEqual("tool_b");
+  expect(second.toolCalls[0].props).toStrictEqual(props({ b: 2 }));
 });
 
-Deno.test("mistral factory returns MistralModel instance", () => {
+test("mistral factory returns MistralModel instance", () => {
   const model = mistral({ apiKey: "test" });
-  assertInstanceOf(model, MistralModel);
+  expect(model).toBeInstanceOf(MistralModel);
 });
 
-Deno.test("MistralModel has expected methods", () => {
+test("MistralModel has expected methods", () => {
   const model = new MistralModel({ apiKey: "test" });
-  assertEquals(typeof model.generate, "function");
-  assertEquals(typeof model.stream, "function");
+  expect(typeof model.generate).toStrictEqual("function");
+  expect(typeof model.stream).toStrictEqual("function");
 });

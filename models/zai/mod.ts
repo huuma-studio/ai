@@ -8,9 +8,9 @@
  *
  * @example
  * ```typescript
- * import { zai } from "jsr:@huuma/ai/models/zai";
+ * import { zai } from "@huuma/ai/models/zai";
  *
- * const model = zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") });
+ * const model = zai({ apiKey: process.env.ZAI_CODING_API_KEY! });
  * const result = await model.generate({
  *   modelId: "glm-5.3",
  *   messages: [{ role: "user", contents: "Write a REST API in Go." }],
@@ -19,10 +19,10 @@
  *
  * @module
  */
-import type { BaseModel, ModelResult } from "@/model/mod.ts";
-import type { Message } from "@/mod.ts";
+import type { BaseModel, ModelResult } from "../../src/model/mod.ts";
+import type { Message } from "../../src/mod.ts";
 import OpenAI from "openai";
-import type { Tool } from "@/tools/mod.ts";
+import type { Tool } from "../../src/tools/tool.ts";
 import {
   modelMessageFrom,
   openAIMessagesFrom,
@@ -31,7 +31,7 @@ import {
   usageFrom,
   type OpenAIRequestOptions,
 } from "../openai/mod.ts";
-import { deadlineFrom } from "@/model/deadline.ts";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 
 /** Default base URL for the Z.AI Coding Plan endpoint. */
 const DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/";
@@ -43,12 +43,7 @@ const DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/";
  * string branch keeps the wrapper usable with newly released models.
  * Requests for GLM-5.2/GLM-5.1 auto-route to GLM-5.3.
  */
-export type ZAIModels =
-  | "glm-5.3"
-  | "glm-5-turbo"
-  | "glm-4.7"
-  // deno-lint-ignore ban-types
-  | (string & {});
+export type ZAIModels = "glm-5.3" | "glm-5-turbo" | "glm-4.7" | (string & {});
 
 /** Configuration for the Z.AI thinking / Preserved Thinking feature. */
 export interface ZAIThinkingOptions {
@@ -79,8 +74,8 @@ export type ZAIRequestOptions = OpenAIRequestOptions & {
  * Options for configuring the Z.AI adapter.
  */
 export interface ZAIOptions {
-  /** Coding Plan API key. Falls back to `ZAI_CODING_API_KEY` env var. */
-  apiKey?: string;
+  /** Coding Plan API key. */
+  apiKey: string;
   /** Override the default Coding Plan base URL. */
   baseURL?: string;
 }
@@ -99,7 +94,6 @@ export interface ZAIGenerateOptions {
   system?: string;
 
   /** Tools available to the model. */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
 
   /** Additional Z.AI chat completion options. */
@@ -142,9 +136,9 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    *
    * @param options Configuration including API key and optional base URL override.
    */
-  constructor(options: ZAIOptions = {}) {
+  constructor(options: ZAIOptions) {
     this.#client = new OpenAI({
-      apiKey: options.apiKey ?? Deno.env.get("ZAI_CODING_API_KEY"),
+      apiKey: options.apiKey,
       baseURL: options.baseURL ?? DEFAULT_BASE_URL,
     });
   }
@@ -155,21 +149,29 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns A normalized {@link ModelResult}.
    */
-  async generate(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      ZAIGenerateOptions,
-  ): Promise<ModelResult<ZAIModels>> {
+  async generate({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: ZAIGenerateOptions): Promise<ModelResult<ZAIModels>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const response = await this.#client.chat.completions.create({
-        ...options,
-        model: modelId,
-        messages: zaiMessagesFrom(messages, system),
-        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-        stream: false,
-      } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, {
-        signal: deadline.signal,
-      });
+      const response = await this.#client.chat.completions.create(
+        {
+          ...options,
+          model: modelId,
+          messages: zaiMessagesFrom(messages, system),
+          tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+          stream: false,
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+        {
+          signal: deadline.signal,
+        },
+      );
 
       const choice = response.choices[0];
       if (!choice) {
@@ -198,22 +200,30 @@ export class ZAIModel implements BaseModel<ZAIModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
-  async stream(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      ZAIGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<ZAIModels>>> {
+  async stream({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: ZAIGenerateOptions): Promise<AsyncGenerator<ModelResult<ZAIModels>>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const stream = await this.#client.chat.completions.create({
-        ...options,
-        model: modelId,
-        messages: zaiMessagesFrom(messages, system),
-        tools: tools?.length ? openAIToolsFrom(tools) : undefined,
-        stream: true,
-        stream_options: { include_usage: true },
-      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, {
-        signal: deadline.signal,
-      });
+      const stream = await this.#client.chat.completions.create(
+        {
+          ...options,
+          model: modelId,
+          messages: zaiMessagesFrom(messages, system),
+          tools: tools?.length ? openAIToolsFrom(tools) : undefined,
+          stream: true,
+          stream_options: { include_usage: true },
+        } as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
+        {
+          signal: deadline.signal,
+        },
+      );
 
       return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
@@ -248,14 +258,14 @@ export function zaiMessagesFrom(
 /**
  * Factory function that creates a {@link ZAIModel}.
  *
- * @param options Optional configuration including API key and base URL.
+ * @param options Configuration including API key and optional base URL.
  * @returns A configured {@link ZAIModel} instance.
  *
  * @example
  * ```typescript
- * const model = zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") });
+ * const model = zai({ apiKey: process.env.ZAI_CODING_API_KEY! });
  * ```
  */
-export function zai(options?: ZAIOptions): ZAIModel {
+export function zai(options: ZAIOptions): ZAIModel {
   return new ZAIModel(options);
 }

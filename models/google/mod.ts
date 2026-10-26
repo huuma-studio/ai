@@ -3,9 +3,9 @@
  *
  * @example
  * ```typescript
- * import { google } from "jsr:@huuma/ai/models/google";
+ * import { google } from "@huuma/ai/models/google";
  *
- * const model = google({ apiKey: Deno.env.get("GOOGLE_API_KEY") });
+ * const model = google({ apiKey: process.env.GOOGLE_API_KEY });
  * const result = await model.generate({
  *   modelId: "gemini-2.5-flash",
  *   messages: [{ role: "user", contents: "Hello!" }],
@@ -34,11 +34,11 @@ import type {
   TextContent,
   ToolCallContent,
   ToolResultContent,
-} from "@/mod.ts";
-import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { fileSourceFrom } from "@/model/mod.ts";
-import type { Tool } from "@/tools/mod.ts";
-import { deadlineFrom } from "@/model/deadline.ts";
+} from "../../src/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "../../src/model/mod.ts";
+import { fileSourceFrom } from "../../src/model/mod.ts";
+import type { Tool } from "../../src/tools/tool.ts";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 
 // Shutdown date: October 16, 2026
 type Gemini_2_5_Flash_Light = "gemini-2.5-flash-lite";
@@ -70,9 +70,7 @@ export type GeminiModels =
   | Gemini_3_1_Pro_Preview
   | Gemini_3_1_Flash_Lite
   | Gemini_3_5_Flash
-  | string
-    // deno-lint-ignore ban-types
-    & {};
+  | (string & {});
 
 /** Options for configuring the Google GenAI client. */
 export interface GoogleGenAIOptions {
@@ -89,7 +87,6 @@ export interface GoogleGenAiGenerateOptions {
   /** Optional system prompt sent as Gemini's `systemInstruction`. */
   system?: string;
   /** Tools available to the model. */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
   /** Additional Gemini generation options. */
   options?: {
@@ -135,23 +132,27 @@ export class GoogleGenAIModel implements BaseModel {
   }
 
   /** Generate a complete Gemini response. */
-  async generate(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      GoogleGenAiGenerateOptions,
-  ): Promise<ModelResult<GeminiModels>> {
+  async generate({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: GoogleGenAiGenerateOptions): Promise<ModelResult<GeminiModels>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const response = await this.#model.models
-        .generateContent({
-          model: modelId,
-          contents: genAIContentsFrom(messages),
-          config: {
-            thinkingConfig: options?.thinkingConfig,
-            systemInstruction: system,
-            tools: tools?.length ? googleToolsFrom(tools) : undefined,
-            abortSignal: deadline.signal,
-          },
-        });
+      const response = await this.#model.models.generateContent({
+        model: modelId,
+        contents: genAIContentsFrom(messages),
+        config: {
+          thinkingConfig: options?.thinkingConfig,
+          systemInstruction: system,
+          tools: tools?.length ? googleToolsFrom(tools) : undefined,
+          abortSignal: deadline.signal,
+        },
+      });
       return modelResultFrom(
         modelId,
         modelMessagesFrom(response),
@@ -170,10 +171,15 @@ export class GoogleGenAIModel implements BaseModel {
    * carrying the token usage of the whole call, taken from the last chunk
    * that reported usage metadata.
    */
-  async stream(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      GoogleGenAiGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
+  async stream({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: GoogleGenAiGenerateOptions): Promise<AsyncGenerator<ModelResult<GeminiModels>>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
       const stream = await this.#model.models.generateContentStream({
@@ -276,9 +282,7 @@ function genAIContentFrom(message: Message): Content {
   if (message.role === "tool") {
     return {
       role: "user",
-      parts: genAIPartsFrom(
-        message.contents.filter((content) => "toolResult" in content),
-      ),
+      parts: genAIPartsFrom(message.contents.filter((content) => "toolResult" in content)),
     };
   }
 
@@ -287,7 +291,7 @@ function genAIContentFrom(message: Message): Content {
     return {
       role: "model",
       parts: message.contents.map((content, index) =>
-        genAIPartFrom(content, thoughtSignatures?.[index])
+        genAIPartFrom(content, thoughtSignatures?.[index]),
       ),
     };
   }
@@ -298,17 +302,13 @@ function genAIContentFrom(message: Message): Content {
   };
 }
 
-function thoughtSignaturesFrom(
-  message: ModelMessage,
-): (string | undefined)[] | undefined {
+function thoughtSignaturesFrom(message: ModelMessage): (string | undefined)[] | undefined {
   const signatures = message.thinkingMeta?.thoughtSignatures;
   return Array.isArray(signatures) ? signatures : undefined;
 }
 
 function genAIPartsFrom(
-  contents:
-    | (TextContent | ToolCallContent | ToolResultContent | FileContent)[]
-    | string,
+  contents: (TextContent | ToolCallContent | ToolResultContent | FileContent)[] | string,
 ): Part[] {
   return typeof contents === "string"
     ? [genAIPartFrom(contents)]
@@ -316,12 +316,7 @@ function genAIPartsFrom(
 }
 
 function genAIPartFrom(
-  content:
-    | TextContent
-    | ToolCallContent
-    | ToolResultContent
-    | FileContent
-    | string,
+  content: TextContent | ToolCallContent | ToolResultContent | FileContent | string,
   thoughtSignature?: string,
 ): Part {
   if (typeof content === "string") {
@@ -329,9 +324,7 @@ function genAIPartFrom(
   }
 
   if ("text" in content) {
-    return thoughtSignature
-      ? { thoughtSignature, text: content.text }
-      : { text: content.text };
+    return thoughtSignature ? { thoughtSignature, text: content.text } : { text: content.text };
   }
 
   if ("toolCall" in content) {
@@ -349,9 +342,7 @@ function genAIPartFrom(
         id,
         name,
         response: result,
-        ...(files?.length
-          ? { parts: files.map((file) => genAIFilePartFrom(file.file)) }
-          : {}),
+        ...(files?.length ? { parts: files.map((file) => genAIFilePartFrom(file.file)) } : {}),
       },
     };
   }
@@ -390,35 +381,24 @@ function genAIFilePartFrom(
  * candidate carries no content for a reason other than a normal stop, so
  * blocked or truncated responses fail loudly instead of resolving empty.
  */
-export function modelMessagesFrom(
-  response: GenerateContentResponse,
-): ModelMessage[] {
+export function modelMessagesFrom(response: GenerateContentResponse): ModelMessage[] {
   const candidate = response.candidates?.at(0);
   if (!candidate) {
     const blockReason = response.promptFeedback?.blockReason;
     throw new Error(
-      `No candidates returned from Gemini${
-        blockReason ? ` (block reason: ${blockReason})` : ""
-      }`,
+      `No candidates returned from Gemini${blockReason ? ` (block reason: ${blockReason})` : ""}`,
     );
   }
 
   const messages = messagesFrom(response.candidates);
-  if (
-    !messages.length && candidate.finishReason &&
-    candidate.finishReason !== FinishReason.STOP
-  ) {
-    throw new Error(
-      `Gemini returned no content (finish reason: ${candidate.finishReason})`,
-    );
+  if (!messages.length && candidate.finishReason && candidate.finishReason !== FinishReason.STOP) {
+    throw new Error(`Gemini returned no content (finish reason: ${candidate.finishReason})`);
   }
 
   return messages;
 }
 
-function messagesFrom(
-  candidates?: Candidate[],
-): ModelMessage[] {
+function messagesFrom(candidates?: Candidate[]): ModelMessage[] {
   if (!candidates || candidates.length === 0) {
     return [];
   }
@@ -437,9 +417,7 @@ function messagesFrom(
 
   const parts = candidate.content?.parts || [];
 
-  for (
-    const { text, functionCall, thoughtSignature, thought } of parts
-  ) {
+  for (const { text, functionCall, thoughtSignature, thought } of parts) {
     if (thoughtSignature) {
       pendingSignature = thoughtSignature;
     }
@@ -468,9 +446,7 @@ function messagesFrom(
         thoughtSignatures.push(pendingSignature);
         pendingSignature = undefined;
       } else {
-        console.info(
-          "Tool call messages skipped because of missing tool call name",
-        );
+        console.info("Tool call messages skipped because of missing tool call name");
       }
     }
   }
@@ -480,7 +456,8 @@ function messagesFrom(
   }
 
   if (
-    message.contents.length === 0 && message.toolCalls.length === 0 &&
+    message.contents.length === 0 &&
+    message.toolCalls.length === 0 &&
     message.thinking === undefined
   ) {
     return [];
@@ -492,20 +469,18 @@ function messagesFrom(
 /**
  * Converts Huuma {@link Tool}s into Gemini function-declaration tool entries.
  */
-export function googleToolsFrom(
-  // deno-lint-ignore no-explicit-any
-  tools: Tool<any>[],
-): GeminiTool[] {
-  return [{
-    functionDeclarations: tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: parametersFrom(tool),
-    })),
-  }];
+export function googleToolsFrom(tools: Tool<any>[]): GeminiTool[] {
+  return [
+    {
+      functionDeclarations: tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: parametersFrom(tool),
+      })),
+    },
+  ];
 }
 
-// deno-lint-ignore no-explicit-any
 function parametersFrom(tool: Tool<any>): JSONSchema {
   // TODO: apply logic to comply with googles OpenApi based schema
   return tool.jsonSchema as JSONSchema;

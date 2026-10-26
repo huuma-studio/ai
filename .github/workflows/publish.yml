@@ -1,18 +1,29 @@
-# .github/workflows/publish.yml
-
-name: Publish
-
+name: Publish to JSR
 on:
   push:
     branches:
       - main
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
-      id-token: write # The OIDC ID token is used for authentication with JSR.
+      id-token: write
+
     steps:
-      - uses: actions/checkout@v6
-      - run: npx jsr publish
+      - uses: actions/checkout@v7
+
+      # Installs the dependencies: JSR publish resolves npm packages
+      # through node_modules.
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: "24"
+
+      - name: Publish package
+        run: vp exec jsr publish

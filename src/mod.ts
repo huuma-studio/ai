@@ -6,7 +6,7 @@ import type { JSONSchema } from "@huuma/validate";
  *
  * @example
  * ```typescript
- * import type { Message } from "jsr:@huuma/ai";
+ * import type { Message } from "@huuma/ai";
  *
  * const message: Message = {
  *   role: "user",
@@ -19,7 +19,7 @@ import type { JSONSchema } from "@huuma/validate";
  * `url` (exactly one of the two); provider support depends on the model
  * adapter, and unsupported combinations throw at request time.
  * ```typescript
- * import type { Message } from "jsr:@huuma/ai";
+ * import type { Message } from "@huuma/ai";
  *
  * const message: Message = {
  *   role: "user",
@@ -34,11 +34,7 @@ import type { JSONSchema } from "@huuma/validate";
  */
 
 /** Conversation message exchanged between users, models, systems, and tools. */
-export type Message =
-  | SystemMessage
-  | ModelMessage
-  | UserMessage
-  | ToolMessage;
+export type Message = SystemMessage | ModelMessage | UserMessage | ToolMessage;
 
 /** Supported message roles. */
 export type MessageRole = "system" | "user" | "model" | "tool";

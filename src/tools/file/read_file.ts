@@ -1,3 +1,5 @@
+import type { FileHandle } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { number, object, string } from "@huuma/validate";
 import { type Tool, tool } from "../mod.ts";
 import {
@@ -42,17 +44,15 @@ export const DEFAULT_READ_FILE_MAX_BYTES = 512 * 1024;
  * @param options Optional size cap.
  * @returns A {@link Tool} that returns the contents of the requested file path.
  */
-// deno-lint-ignore no-explicit-any
 export function readFile(options?: ReadFileOptions): Tool<any, string> {
   const maxBytes = options?.maxBytes ?? DEFAULT_READ_FILE_MAX_BYTES;
   validateMaxBytes(maxBytes);
 
   return tool({
     name: "read_file",
-    description:
-      `Read the content of a text file from the file system. Use this to inspect code, configuration files, or documentation. A read returns at most ${
-        formatBytes(maxBytes)
-      }; a larger file is returned in parts, each ending with a note giving the offset to continue from. Optional "offset" (byte to start at, default 0) and "limit" (number of bytes to read) select a part of the file.`,
+    description: `Read the content of a text file from the file system. Use this to inspect code, configuration files, or documentation. A read returns at most ${formatBytes(
+      maxBytes,
+    )}; a larger file is returned in parts, each ending with a note giving the offset to continue from. Optional "offset" (byte to start at, default 0) and "limit" (number of bytes to read) select a part of the file.`,
     input: object({
       path: string(),
       offset: number().optional(),
@@ -110,22 +110,22 @@ async function readWindow(
   let start: number;
   try {
     if (offset > size) {
-      throw new Error(
-        `offset ${offset} is past the end of ${path} (${size} bytes)`,
-      );
+      throw new Error(`offset ${offset} is past the end of ${path} (${size} bytes)`);
     }
     start = await textStart(file, offset);
-    await file.seek(start, Deno.SeekMode.Start);
   } catch (error) {
-    file.close();
+    await file.close();
     throw mapReadError(error, path);
   }
   try {
     // The stream owns the handle from here: it closes the file when it is
     // read to the end, cancelled at the cap, or fails.
-    // Keeping a byte-order mark matches Deno.readTextFile and keeps every
+    // Keeping a byte-order mark keeps every
     // byte of the file in the text, so offsets stay exact.
-    const bounded = await readTextBounded(file.readable, length, {
+    const readable = Readable.toWeb(
+      file.createReadStream({ start, autoClose: true }),
+    ) as ReadableStream<Uint8Array>;
+    const bounded = await readTextBounded(readable, length, {
       signal,
       ignoreBOM: true,
     });
@@ -141,10 +141,9 @@ async function readWindow(
  * returned is exactly the file's bytes from there on — keeping the offsets
  * reported to the model exact.
  */
-async function textStart(file: Deno.FsFile, offset: number): Promise<number> {
-  await file.seek(offset, Deno.SeekMode.Start);
+async function textStart(file: FileHandle, offset: number): Promise<number> {
   const head = new Uint8Array(3);
-  const read = await file.read(head) ?? 0;
+  const { bytesRead: read } = await file.read(head, 0, head.length, offset);
   let skip = 0;
   while (skip < read && (head[skip] & 0xc0) === 0x80) skip++;
   return offset + skip;
@@ -161,15 +160,8 @@ function fitWithProgress(text: string, maxBytes: number): string {
 
 /** The note ending a partial read: which bytes it shows, and where to go
  * on from if the file continues. `end` is exclusive. */
-function windowNotice(
-  start: number,
-  end: number,
-  size: number,
-  more: boolean,
-): string {
-  const total = size < 1024
-    ? `${size} bytes`
-    : `${size} bytes (${formatBytes(size)})`;
+function windowNotice(start: number, end: number, size: number, more: boolean): string {
+  const total = size < 1024 ? `${size} bytes` : `${size} bytes (${formatBytes(size)})`;
   if (end === start) {
     return `…[end of file: no text after byte ${start} of ${total}]`;
   }

@@ -25,8 +25,8 @@
  *
  * @example
  * ```typescript
- * import { agent } from "jsr:@huuma/ai/agent";
- * import { skills } from "jsr:@huuma/ai/tools";
+ * import { agent } from "@huuma/ai/agent";
+ * import { skills } from "@huuma/ai/tools";
  *
  * const [listSkills, retrieveSkill] = skills({ path: "./.agents/skills" });
  *
@@ -40,8 +40,11 @@
  */
 import { array, object, string, undef, union, unknown } from "@huuma/validate";
 import { extract } from "@std/front-matter/yaml";
-import { join, resolve } from "@std/path";
-import { tool, type Tool } from "@/tools/mod.ts";
+import type { Dirent } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tool, type Tool } from "../mod.ts";
+import { hasErrorCode, NOT_FOUND } from "../fs_errors.ts";
 
 const skillFrontmatterSchema = object({
   name: string().notEmpty(),
@@ -103,7 +106,7 @@ export interface SkillsToolOptions {
  *
  * @example
  * ```typescript
- * import { skills } from "jsr:@huuma/ai/tools";
+ * import { skills } from "@huuma/ai/tools";
  *
  * const [listSkills, retrieveSkill] = skills({
  *   path: "./.agents/skills",
@@ -115,12 +118,12 @@ export interface SkillsToolOptions {
  * warning callback.
  * @returns A `[listSkills, retrieveSkill]` tuple of {@link Tool}s.
  */
-// deno-lint-ignore no-explicit-any
 type SkillsToolPair = readonly [Tool<any, unknown>, Tool<any, unknown>];
 
-export function skills(
-  { path = "./.agents/skills", onWarning = console.warn }: SkillsToolOptions = {},
-): SkillsToolPair {
+export function skills({
+  path = "./.agents/skills",
+  onWarning = console.warn,
+}: SkillsToolOptions = {}): SkillsToolPair {
   const root = resolve(path);
   let loading: Promise<SkillInfo[]> | null = null;
 
@@ -138,15 +141,12 @@ export function skills(
   }
 
   async function scan(): Promise<SkillInfo[]> {
-    let entries: Deno.DirEntry[];
+    let entries: Dirent[];
     try {
-      entries = [];
-      for await (const entry of Deno.readDir(root)) {
-        entries.push(entry);
-      }
+      entries = await readdir(root, { withFileTypes: true });
     } catch (error) {
       // A missing skills directory is not an error: yield an empty list.
-      if (error instanceof Deno.errors.NotFound) {
+      if (hasErrorCode(error, NOT_FOUND)) {
         return [];
       }
       // Anything else (path points at a file, permission error) rejects
@@ -161,26 +161,22 @@ export function skills(
     // `onWarning` so the skill does not vanish without a diagnostic.
     const folders: string[] = [];
     for (const entry of entries) {
-      if (entry.isDirectory) {
+      if (entry.isDirectory()) {
         folders.push(entry.name);
-      } else if (entry.isSymlink) {
+      } else if (entry.isSymbolicLink()) {
         try {
-          const stat = await Deno.stat(join(root, entry.name));
-          if (stat.isDirectory) folders.push(entry.name);
+          const info = await stat(join(root, entry.name));
+          if (info.isDirectory()) folders.push(entry.name);
         } catch (error) {
-          if (error instanceof Deno.errors.NotFound) continue;
-          onWarning(
-            `Failed to inspect skill folder ${join(root, entry.name)}: ${
-              describe(error)
-            }`,
-          );
+          if (hasErrorCode(error, NOT_FOUND)) continue;
+          onWarning(`Failed to inspect skill folder ${join(root, entry.name)}: ${describe(error)}`);
         }
       }
     }
 
     // Deterministic order: listings are stable and duplicate frontmatter
     // names resolve to the sorted-first folder.
-    folders.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+    folders.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
     const loaded: SkillInfo[] = [];
     const seenNames = new Set<string>();
@@ -196,10 +192,10 @@ export function skills(
 
       let content: string;
       try {
-        content = await Deno.readTextFile(skillMdPath);
+        content = await readFile(skillMdPath, "utf8");
       } catch (error) {
         // A folder without `SKILL.md` is not a skill — skip silently.
-        if (error instanceof Deno.errors.NotFound) return;
+        if (hasErrorCode(error, NOT_FOUND)) return;
         onWarning(`Failed to read ${skillMdPath}: ${describe(error)}`);
         return;
       }
@@ -209,18 +205,16 @@ export function skills(
       try {
         ({ attrs, body } = extract(content));
       } catch (error) {
-        onWarning(
-          `Failed to parse frontmatter in ${skillMdPath}: ${describe(error)}`,
-        );
+        onWarning(`Failed to parse frontmatter in ${skillMdPath}: ${describe(error)}`);
         return;
       }
 
       const validation = skillFrontmatterSchema.validate(attrs);
       if (validation.errors) {
         onWarning(
-          `Invalid frontmatter in ${skillMdPath}: ${
-            validation.errors.map((e) => e.message).join("; ")
-          }`,
+          `Invalid frontmatter in ${skillMdPath}: ${validation.errors
+            .map((e) => e.message)
+            .join("; ")}`,
         );
         return;
       }
@@ -266,14 +260,12 @@ export function skills(
     }),
     fn: async ({ name }) => {
       const loaded = await loadSkills();
-      const skill = loaded.find((s) => s.frontmatter.name === name) ??
-        loaded.find((s) => s.folder === name);
+      const skill =
+        loaded.find((s) => s.frontmatter.name === name) ?? loaded.find((s) => s.folder === name);
 
       if (!skill) {
         const available = loaded.map((s) => s.frontmatter.name).join(", ");
-        throw new Error(
-          `Skill "${name}" not found. Available skills: ${available}`,
-        );
+        throw new Error(`Skill "${name}" not found. Available skills: ${available}`);
       }
 
       return {

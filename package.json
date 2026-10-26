@@ -1,0 +1,42 @@
+{
+  "name": "@huuma/ai",
+  "private": true,
+  "description": "Development tooling only. @huuma/ai is published to JSR from jsr.json.",
+  "type": "module",
+  "exports": {
+    ".": "./src/mod.ts",
+    "./model": "./src/model/mod.ts",
+    "./workflow": "./src/workflow/mod.ts",
+    "./models": "./models/mod.ts",
+    "./models/anthropic": "./models/anthropic/mod.ts",
+    "./models/google": "./models/google/mod.ts",
+    "./models/ollama": "./models/ollama/mod.ts",
+    "./models/openai": "./models/openai/mod.ts",
+    "./models/mistral": "./models/mistral/mod.ts",
+    "./models/zai": "./models/zai/mod.ts",
+    "./agent": "./src/agent/mod.ts",
+    "./tools": "./src/tools/mod.ts"
+  },
+  "scripts": {
+    "check": "vp check",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.5",
+    "@google/genai": "^2.13.0",
+    "@huuma/validate": "npm:@jsr/huuma__validate@^0.2.1",
+    "@mistralai/mistralai": "^2.5.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@std/front-matter": "npm:@jsr/std__front-matter@^1.0.9",
+    "node-html-markdown": "^2.0.0",
+    "ollama": "^0.6.3",
+    "openai": "^6.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "jsr": "0.14.3",
+    "vite": "^8",
+    "vite-plus": "1.1.0"
+  },
+  "packageManager": "pnpm@12.11.2"
+}

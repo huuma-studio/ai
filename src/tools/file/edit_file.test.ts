@@ -1,13 +1,24 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { link, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { editFile } from "./edit_file.ts";
 
-Deno.test("editFile - search_replace operation", async (t) => {
+describe("editFile - search_replace operation", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("replaces unique text successfully", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("replaces unique text successfully", async () => {
     const testFile = `${testDir}/test1.txt`;
-    await Deno.writeTextFile(testFile, "Hello, World!");
+    await writeFile(testFile, "Hello, World!");
 
     const result = await tool.call({
       path: testFile,
@@ -16,52 +27,44 @@ Deno.test("editFile - search_replace operation", async (t) => {
       replace: "Deno",
     });
 
-    assertEquals(result.success, true);
-    assertEquals(result.operation, "search_replace");
+    expect(result.success).toBe(true);
+    expect(result.operation).toBe("search_replace");
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "Hello, Deno!");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("Hello, Deno!");
   });
 
-  await t.step("fails when text not found", async () => {
+  test("fails when text not found", async () => {
     const testFile = `${testDir}/test2.txt`;
-    await Deno.writeTextFile(testFile, "Hello, World!");
+    await writeFile(testFile, "Hello, World!");
 
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "NotFound",
-          replace: "Deno",
-        });
-      },
-      Error,
-      "Text not found in file",
-    );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "NotFound",
+        replace: "Deno",
+      }),
+    ).rejects.toThrow("Text not found in file");
   });
 
-  await t.step("fails when multiple occurrences found", async () => {
+  test("fails when multiple occurrences found", async () => {
     const testFile = `${testDir}/test3.txt`;
-    await Deno.writeTextFile(testFile, "Hello Hello Hello");
+    await writeFile(testFile, "Hello Hello Hello");
 
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "Hello",
-          replace: "Hi",
-        });
-      },
-      Error,
-      "Found 3 occurrences",
-    );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "Hello",
+        replace: "Hi",
+      }),
+    ).rejects.toThrow("Found 3 occurrences");
   });
 
-  await t.step("can replace multi-line text", async () => {
+  test("can replace multi-line text", async () => {
     const testFile = `${testDir}/test4.txt`;
-    await Deno.writeTextFile(testFile, "function old() {\n  return 1;\n}");
+    await writeFile(testFile, "function old() {\n  return 1;\n}");
 
     const result = await tool.call({
       path: testFile,
@@ -70,22 +73,28 @@ Deno.test("editFile - search_replace operation", async (t) => {
       replace: "function new() {\n  return 2;\n}",
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "function new() {\n  return 2;\n}");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("function new() {\n  return 2;\n}");
   });
-
-  await Deno.remove(testDir, { recursive: true });
 });
 
-Deno.test("editFile - insert operation", async (t) => {
+describe("editFile - insert operation", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("inserts at beginning of file", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("inserts at beginning of file", async () => {
     const testFile = `${testDir}/test1.txt`;
-    await Deno.writeTextFile(testFile, "line 2\nline 3");
+    await writeFile(testFile, "line 2\nline 3");
 
     const result = await tool.call({
       path: testFile,
@@ -94,15 +103,15 @@ Deno.test("editFile - insert operation", async (t) => {
       line: 1,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 2\nline 3");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 2\nline 3");
   });
 
-  await t.step("inserts in middle of file", async () => {
+  test("inserts in middle of file", async () => {
     const testFile = `${testDir}/test2.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 3");
+    await writeFile(testFile, "line 1\nline 3");
 
     const result = await tool.call({
       path: testFile,
@@ -111,15 +120,15 @@ Deno.test("editFile - insert operation", async (t) => {
       line: 2,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 2\nline 3");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 2\nline 3");
   });
 
-  await t.step("inserts at end of file", async () => {
+  test("inserts at end of file", async () => {
     const testFile = `${testDir}/test3.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2");
+    await writeFile(testFile, "line 1\nline 2");
 
     const result = await tool.call({
       path: testFile,
@@ -128,15 +137,15 @@ Deno.test("editFile - insert operation", async (t) => {
       line: 3,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 2\nline 3");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 2\nline 3");
   });
 
-  await t.step("inserts multi-line content", async () => {
+  test("inserts multi-line content", async () => {
     const testFile = `${testDir}/test4.txt`;
-    await Deno.writeTextFile(testFile, "start\nend");
+    await writeFile(testFile, "start\nend");
 
     const result = await tool.call({
       path: testFile,
@@ -145,15 +154,15 @@ Deno.test("editFile - insert operation", async (t) => {
       line: 2,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "start\nmiddle1\nmiddle2\nend");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("start\nmiddle1\nmiddle2\nend");
   });
 
-  await t.step("appends multi-line content at lines.length+1", async () => {
+  test("appends multi-line content at lines.length+1", async () => {
     const testFile = `${testDir}/test6.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2");
+    await writeFile(testFile, "line 1\nline 2");
 
     const result = await tool.call({
       path: testFile,
@@ -162,40 +171,42 @@ Deno.test("editFile - insert operation", async (t) => {
       line: 3,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 2\nline 3\nline 4");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 2\nline 3\nline 4");
   });
 
-  await t.step("fails when line is beyond end of file", async () => {
+  test("fails when line is beyond end of file", async () => {
     const testFile = `${testDir}/test5.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2");
+    await writeFile(testFile, "line 1\nline 2");
 
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: testFile,
-          operation: "insert_lines",
-          content: "line 4",
-          line: 5,
-        });
-      },
-      Error,
-      "is beyond end of file",
-    );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "insert_lines",
+        content: "line 4",
+        line: 5,
+      }),
+    ).rejects.toThrow("is beyond end of file");
   });
-
-  await Deno.remove(testDir, { recursive: true });
 });
 
-Deno.test("editFile - delete_lines operation", async (t) => {
+describe("editFile - delete_lines operation", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("deletes single line", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("deletes single line", async () => {
     const testFile = `${testDir}/test1.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2\nline 3");
+    await writeFile(testFile, "line 1\nline 2\nline 3");
 
     const result = await tool.call({
       path: testFile,
@@ -204,36 +215,33 @@ Deno.test("editFile - delete_lines operation", async (t) => {
       lineStart: 2,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 3");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 3");
   });
 
-  await t.step(
-    "deletes multiple lines using lineStart and lineEnd",
-    async () => {
-      const testFile = `${testDir}/test2.txt`;
-      await Deno.writeTextFile(testFile, "line 1\nline 2\nline 3\nline 4");
+  test("deletes multiple lines using lineStart and lineEnd", async () => {
+    const testFile = `${testDir}/test2.txt`;
+    await writeFile(testFile, "line 1\nline 2\nline 3\nline 4");
 
-      const result = await tool.call({
-        path: testFile,
-        operation: "delete_lines",
-        content: "", // content is required by schema but not used
-        lineStart: 2,
-        lineEnd: 3,
-      });
+    const result = await tool.call({
+      path: testFile,
+      operation: "delete_lines",
+      content: "", // content is required by schema but not used
+      lineStart: 2,
+      lineEnd: 3,
+    });
 
-      assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-      const content = await Deno.readTextFile(testFile);
-      assertEquals(content, "line 1\nline 4");
-    },
-  );
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 4");
+  });
 
-  await t.step("deletes first line", async () => {
+  test("deletes first line", async () => {
     const testFile = `${testDir}/test3.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2\nline 3");
+    await writeFile(testFile, "line 1\nline 2\nline 3");
 
     const result = await tool.call({
       path: testFile,
@@ -242,15 +250,15 @@ Deno.test("editFile - delete_lines operation", async (t) => {
       lineStart: 1,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 2\nline 3");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 2\nline 3");
   });
 
-  await t.step("deletes last line", async () => {
+  test("deletes last line", async () => {
     const testFile = `${testDir}/test4.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2\nline 3");
+    await writeFile(testFile, "line 1\nline 2\nline 3");
 
     const result = await tool.call({
       path: testFile,
@@ -259,105 +267,90 @@ Deno.test("editFile - delete_lines operation", async (t) => {
       lineStart: 3,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "line 1\nline 2");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("line 1\nline 2");
   });
 
-  await t.step("fails when lineEnd < lineStart", async () => {
+  test("fails when lineEnd < lineStart", async () => {
     const testFile = `${testDir}/test5.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2");
+    await writeFile(testFile, "line 1\nline 2");
 
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: testFile,
-          operation: "delete_lines",
-          content: "", // content is required by schema but not used
-          lineStart: 2,
-          lineEnd: 1,
-        });
-      },
-      Error,
-      "lineEnd must be greater than or equal to lineStart",
-    );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "delete_lines",
+        content: "", // content is required by schema but not used
+        lineStart: 2,
+        lineEnd: 1,
+      }),
+    ).rejects.toThrow("lineEnd must be greater than or equal to lineStart");
   });
-
-  await Deno.remove(testDir, { recursive: true });
 });
 
-Deno.test("editFile - error handling", async (t) => {
+describe("editFile - error handling", () => {
   const tool = editFile();
 
-  await t.step("fails for non-existent file", async () => {
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: "/non/existent/file.txt",
-          operation: "search_replace",
-          search: "old",
-          replace: "new",
-        });
-      },
-      Error,
-      "File not found",
-    );
+  test("fails for non-existent file", async () => {
+    await expect(
+      tool.call({
+        path: "/non/existent/file.txt",
+        operation: "search_replace",
+        search: "old",
+        replace: "new",
+      }),
+    ).rejects.toThrow("File not found");
   });
 
-  await t.step("fails for invalid operation", async () => {
-    const testDir = await Deno.makeTempDir();
+  test("fails for invalid operation", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
     const testFile = `${testDir}/test.txt`;
-    await Deno.writeTextFile(testFile, "content");
+    await writeFile(testFile, "content");
 
-    await assertRejects(
-      async () => {
-        await tool.call({
-          path: testFile,
-          operation: "invalid_op",
-          // deno-lint-ignore no-explicit-any
-        } as any);
-      },
-      Error,
-      "operation",
-    );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "invalid_op",
+      } as any),
+    ).rejects.toThrow("operation");
 
-    await Deno.remove(testDir, { recursive: true });
+    await rm(testDir, { recursive: true, force: true });
   });
 
-  await t.step(
-    "fails when required parameters missing for search_replace",
-    async () => {
-      const testDir = await Deno.makeTempDir();
-      const testFile = `${testDir}/test.txt`;
-      await Deno.writeTextFile(testFile, "content");
+  test("fails when required parameters missing for search_replace", async () => {
+    const testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+    const testFile = `${testDir}/test.txt`;
+    await writeFile(testFile, "content");
 
-      await assertRejects(
-        async () => {
-          await tool.call({
-            path: testFile,
-            operation: "search_replace",
-            search: "content",
-            // replace is intentionally omitted for testing
-            // deno-lint-ignore no-explicit-any
-          } as any);
-        },
-        Error,
-        "replace",
-      );
+    await expect(
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "content",
+        // replace is intentionally omitted for testing
+      } as any),
+    ).rejects.toThrow("replace");
 
-      await Deno.remove(testDir, { recursive: true });
-    },
-  );
+    await rm(testDir, { recursive: true, force: true });
+  });
 });
 
-Deno.test("editFile - same-batch same-file edits apply sequentially", async (t) => {
+describe("editFile - same-batch same-file edits apply sequentially", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("two search_replace calls in one batch both land", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("two search_replace calls in one batch both land", async () => {
     const testFile = `${testDir}/batch1.txt`;
-    await Deno.writeTextFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
+    await writeFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
 
     const results = await Promise.all([
       tool.call({
@@ -374,15 +367,15 @@ Deno.test("editFile - same-batch same-file edits apply sequentially", async (t) 
       }),
     ]);
 
-    assertEquals(results.every((result) => result.success), true);
+    expect(results.every((result) => result.success)).toStrictEqual(true);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "ALPHA\nBETA\nTAIL-MARKER-OK");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("ALPHA\nBETA\nTAIL-MARKER-OK");
   });
 
-  await t.step("swapping the batch order still applies both edits", async () => {
+  test("swapping the batch order still applies both edits", async () => {
     const testFile = `${testDir}/batch2.txt`;
-    await Deno.writeTextFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
+    await writeFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
 
     await Promise.all([
       tool.call({
@@ -399,144 +392,133 @@ Deno.test("editFile - same-batch same-file edits apply sequentially", async (t) 
       }),
     ]);
 
-    const content = await Deno.readTextFile(testFile);
-    assertEquals(content, "ALPHA\nBETA\nTAIL-MARKER-OK");
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("ALPHA\nBETA\nTAIL-MARKER-OK");
   });
 
-  await t.step(
-    "mixed search_replace and insert_lines in one batch both land",
-    async () => {
-      const testFile = `${testDir}/batch3.txt`;
-      await Deno.writeTextFile(testFile, "alpha\nbeta");
+  test("mixed search_replace and insert_lines in one batch both land", async () => {
+    const testFile = `${testDir}/batch3.txt`;
+    await writeFile(testFile, "alpha\nbeta");
 
-      await Promise.all([
-        tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "alpha",
-          replace: "ALPHA",
-        }),
-        tool.call({
-          path: testFile,
-          operation: "insert_lines",
-          content: "inserted\n",
-          line: 2,
-        }),
-      ]);
+    await Promise.all([
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "alpha",
+        replace: "ALPHA",
+      }),
+      tool.call({
+        path: testFile,
+        operation: "insert_lines",
+        content: "inserted\n",
+        line: 2,
+      }),
+    ]);
 
-      const content = await Deno.readTextFile(testFile);
-      assertEquals(content, "ALPHA\ninserted\nbeta");
-    },
-  );
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("ALPHA\ninserted\nbeta");
+  });
 
-  await t.step(
-    "conflicting same-file edits fail loudly instead of silently losing one",
-    async () => {
-      const testFile = `${testDir}/batch4.txt`;
-      await Deno.writeTextFile(testFile, "value = 1\nTAIL-MARKER-OK");
+  test("conflicting same-file edits fail loudly instead of silently losing one", async () => {
+    const testFile = `${testDir}/batch4.txt`;
+    await writeFile(testFile, "value = 1\nTAIL-MARKER-OK");
 
-      const outcomes = await Promise.allSettled([
-        tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "value = 1",
-          replace: "value = 2",
-        }),
-        tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "value = 1",
-          replace: "value = 3",
-        }),
-      ]);
+    const outcomes = await Promise.allSettled([
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "value = 1",
+        replace: "value = 2",
+      }),
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "value = 1",
+        replace: "value = 3",
+      }),
+    ]);
 
-      // Both calls target the same text; serialized application means exactly
-      // one edit wins and the loser reports an error instead of both calls
-      // reporting success while one edit is dropped.
-      const applied = outcomes.filter((o) => o.status === "fulfilled").length;
-      assertEquals(applied, 1);
+    // Both calls target the same text; serialized application means exactly
+    // one edit wins and the loser reports an error instead of both calls
+    // reporting success while one edit is dropped.
+    const applied = outcomes.filter((o) => o.status === "fulfilled").length;
+    expect(applied).toStrictEqual(1);
 
-      const content = await Deno.readTextFile(testFile);
-      assertEquals(
-        content === "value = 2\nTAIL-MARKER-OK" ||
-          content === "value = 3\nTAIL-MARKER-OK",
-        true,
-      );
-    },
-  );
+    const content = await readFile(testFile, "utf8");
+    expect(
+      content === "value = 2\nTAIL-MARKER-OK" || content === "value = 3\nTAIL-MARKER-OK",
+    ).toStrictEqual(true);
+  });
 
-  await t.step(
-    "separate editFile instances still serialize on the same file",
-    async () => {
-      const testFile = `${testDir}/batch5.txt`;
-      await Deno.writeTextFile(testFile, "one\ntwo\nTAIL-MARKER-OK");
+  test("separate editFile instances still serialize on the same file", async () => {
+    const testFile = `${testDir}/batch5.txt`;
+    await writeFile(testFile, "one\ntwo\nTAIL-MARKER-OK");
 
-      await Promise.all([
-        editFile().call({
-          path: testFile,
-          operation: "search_replace",
-          search: "one",
-          replace: "ONE",
-        }),
-        editFile().call({
-          path: testFile,
-          operation: "search_replace",
-          search: "two",
-          replace: "TWO",
-        }),
-      ]);
+    await Promise.all([
+      editFile().call({
+        path: testFile,
+        operation: "search_replace",
+        search: "one",
+        replace: "ONE",
+      }),
+      editFile().call({
+        path: testFile,
+        operation: "search_replace",
+        search: "two",
+        replace: "TWO",
+      }),
+    ]);
 
-      const content = await Deno.readTextFile(testFile);
-      assertEquals(content, "ONE\nTWO\nTAIL-MARKER-OK");
-    },
-  );
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("ONE\nTWO\nTAIL-MARKER-OK");
+  });
 
-  await t.step(
-    "edits through hard-linked names of one file still serialize",
-    async () => {
-      const testFile = `${testDir}/hard-link-target.txt`;
-      await Deno.writeTextFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
-      const aliasFile = `${testDir}/hard-link-alias.txt`;
-      await Deno.link(testFile, aliasFile);
+  test("edits through hard-linked names of one file still serialize", async () => {
+    const testFile = `${testDir}/hard-link-target.txt`;
+    await writeFile(testFile, "alpha\nbeta\nTAIL-MARKER-OK");
+    const aliasFile = `${testDir}/hard-link-alias.txt`;
+    await link(testFile, aliasFile);
 
-      // One edit per alias of the same underlying file, issued concurrently:
-      // both must land instead of racing on separate (per-path) locks.
-      await Promise.all([
-        tool.call({
-          path: testFile,
-          operation: "search_replace",
-          search: "alpha",
-          replace: "ALPHA",
-        }),
-        tool.call({
-          path: aliasFile,
-          operation: "search_replace",
-          search: "beta",
-          replace: "BETA",
-        }),
-      ]);
+    // One edit per alias of the same underlying file, issued concurrently:
+    // both must land instead of racing on separate (per-path) locks.
+    await Promise.all([
+      tool.call({
+        path: testFile,
+        operation: "search_replace",
+        search: "alpha",
+        replace: "ALPHA",
+      }),
+      tool.call({
+        path: aliasFile,
+        operation: "search_replace",
+        search: "beta",
+        replace: "BETA",
+      }),
+    ]);
 
-      const content = await Deno.readTextFile(testFile);
-      assertEquals(content, "ALPHA\nBETA\nTAIL-MARKER-OK");
-      assertEquals(await Deno.readTextFile(aliasFile), content);
-    },
-  );
-
-  await Deno.remove(testDir, { recursive: true });
+    const content = await readFile(testFile, "utf8");
+    expect(content).toStrictEqual("ALPHA\nBETA\nTAIL-MARKER-OK");
+    expect(await readFile(aliasFile, "utf8")).toStrictEqual(content);
+  });
 });
 
-Deno.test("editFile - insert_lines handles very large content", async (t) => {
+describe("editFile - insert_lines handles very large content", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
+
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
 
   const assertLargeInsert = async (lineCount: number) => {
     const testFile = `${testDir}/large-${lineCount}.txt`;
-    await Deno.writeTextFile(testFile, "head\nTAIL-MARKER-OK");
+    await writeFile(testFile, "head\nTAIL-MARKER-OK");
 
-    const content = Array.from(
-      { length: lineCount },
-      (_, i) => `pad ${i}`,
-    ).join("\n") + "\n";
+    const content = Array.from({ length: lineCount }, (_, i) => `pad ${i}`).join("\n") + "\n";
 
     const result = await tool.call({
       path: testFile,
@@ -545,31 +527,36 @@ Deno.test("editFile - insert_lines handles very large content", async (t) => {
       line: 2,
     });
 
-    assertEquals(result.success, true);
+    expect(result.success).toBe(true);
 
-    const updated = await Deno.readTextFile(testFile);
+    const updated = await readFile(testFile, "utf8");
     const updatedLines = updated.split("\n");
-    assertEquals(updatedLines.length, lineCount + 2);
-    assertEquals(updatedLines[0], "head");
-    assertEquals(updatedLines[1], "pad 0");
-    assertEquals(updatedLines[lineCount], `pad ${lineCount - 1}`);
-    assertEquals(updatedLines[lineCount + 1], "TAIL-MARKER-OK");
+    expect(updatedLines.length).toStrictEqual(lineCount + 2);
+    expect(updatedLines[0]).toStrictEqual("head");
+    expect(updatedLines[1]).toStrictEqual("pad 0");
+    expect(updatedLines[lineCount]).toStrictEqual(`pad ${lineCount - 1}`);
+    expect(updatedLines[lineCount + 1]).toStrictEqual("TAIL-MARKER-OK");
   };
 
-  await t.step("inserts 10 000 lines", async () => await assertLargeInsert(10_000));
-  await t.step("inserts 100 000 lines", async () =>
-    await assertLargeInsert(100_000));
-
-  await Deno.remove(testDir, { recursive: true });
+  test("inserts 10 000 lines", async () => await assertLargeInsert(10_000));
+  test("inserts 100 000 lines", async () => await assertLargeInsert(100_000));
 });
 
-Deno.test("editFile - CRLF files are handled per line and keep their endings", async (t) => {
+describe("editFile - CRLF files are handled per line and keep their endings", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("insert_lines preserves CRLF endings", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("insert_lines preserves CRLF endings", async () => {
     const testFile = `${testDir}/crlf-insert.txt`;
-    await Deno.writeTextFile(testFile, "line 1\r\nline 2\r\n");
+    await writeFile(testFile, "line 1\r\nline 2\r\n");
 
     const result = await tool.call({
       path: testFile,
@@ -578,58 +565,45 @@ Deno.test("editFile - CRLF files are handled per line and keep their endings", a
       line: 2,
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
-      "line 1\r\ninserted\r\nline 2\r\n",
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("line 1\r\ninserted\r\nline 2\r\n");
+  });
+
+  test("insert_lines normalizes LF-only content to the file's CRLF", async () => {
+    const testFile = `${testDir}/crlf-insert-lf.txt`;
+    await writeFile(testFile, "line 1\r\nline 2\r\n");
+
+    const result = await tool.call({
+      path: testFile,
+      operation: "insert_lines",
+      content: "inserted\n",
+      line: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("line 1\r\ninserted\r\nline 2\r\n");
+  });
+
+  test("insert_lines normalizes a mixed file to its dominant ending", async () => {
+    const testFile = `${testDir}/crlf-mixed.txt`;
+    await writeFile(testFile, "line 1\r\nline 2\nline 3\r\n");
+
+    const result = await tool.call({
+      path: testFile,
+      operation: "insert_lines",
+      content: "inserted\n",
+      line: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual(
+      "line 1\r\ninserted\r\nline 2\r\nline 3\r\n",
     );
   });
 
-  await t.step(
-    "insert_lines normalizes LF-only content to the file's CRLF",
-    async () => {
-      const testFile = `${testDir}/crlf-insert-lf.txt`;
-      await Deno.writeTextFile(testFile, "line 1\r\nline 2\r\n");
-
-      const result = await tool.call({
-        path: testFile,
-        operation: "insert_lines",
-        content: "inserted\n",
-        line: 2,
-      });
-
-      assertEquals(result.success, true);
-      assertEquals(
-        await Deno.readTextFile(testFile),
-        "line 1\r\ninserted\r\nline 2\r\n",
-      );
-    },
-  );
-
-  await t.step(
-    "insert_lines normalizes a mixed file to its dominant ending",
-    async () => {
-      const testFile = `${testDir}/crlf-mixed.txt`;
-      await Deno.writeTextFile(testFile, "line 1\r\nline 2\nline 3\r\n");
-
-      const result = await tool.call({
-        path: testFile,
-        operation: "insert_lines",
-        content: "inserted\n",
-        line: 2,
-      });
-
-      assertEquals(result.success, true);
-      assertEquals(
-        await Deno.readTextFile(testFile),
-        "line 1\r\ninserted\r\nline 2\r\nline 3\r\n",
-      );
-    },
-  );
-
-  await t.step("delete_lines preserves CRLF endings", async () => {
+  test("delete_lines preserves CRLF endings", async () => {
     const testFile = `${testDir}/crlf-delete.txt`;
-    await Deno.writeTextFile(testFile, "line 1\r\nline 2\r\nline 3\r\n");
+    await writeFile(testFile, "line 1\r\nline 2\r\nline 3\r\n");
 
     const result = await tool.call({
       path: testFile,
@@ -637,16 +611,13 @@ Deno.test("editFile - CRLF files are handled per line and keep their endings", a
       lineStart: 2,
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
-      "line 1\r\nline 3\r\n",
-    );
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("line 1\r\nline 3\r\n");
   });
 
-  await t.step("search_replace leaves untouched line endings alone", async () => {
+  test("search_replace leaves untouched line endings alone", async () => {
     const testFile = `${testDir}/crlf-replace.txt`;
-    await Deno.writeTextFile(testFile, "line 1\r\nalpha\r\nline 3\r\n");
+    await writeFile(testFile, "line 1\r\nalpha\r\nline 3\r\n");
 
     const result = await tool.call({
       path: testFile,
@@ -655,16 +626,13 @@ Deno.test("editFile - CRLF files are handled per line and keep their endings", a
       replace: "beta",
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
-      "line 1\r\nbeta\r\nline 3\r\n",
-    );
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("line 1\r\nbeta\r\nline 3\r\n");
   });
 
-  await t.step("an LF file stays LF", async () => {
+  test("an LF file stays LF", async () => {
     const testFile = `${testDir}/lf-insert.txt`;
-    await Deno.writeTextFile(testFile, "line 1\nline 2\n");
+    await writeFile(testFile, "line 1\nline 2\n");
 
     const result = await tool.call({
       path: testFile,
@@ -673,23 +641,26 @@ Deno.test("editFile - CRLF files are handled per line and keep their endings", a
       line: 2,
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
-      "line 1\ninserted\nline 2\n",
-    );
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("line 1\ninserted\nline 2\n");
   });
-
-  await Deno.remove(testDir, { recursive: true });
 });
 
-Deno.test("editFile - edits keep content outside the edited region intact", async (t) => {
+describe("editFile - edits keep content outside the edited region intact", () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  let testDir: string;
 
-  await t.step("search_replace keeps head and tail intact", async () => {
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("search_replace keeps head and tail intact", async () => {
     const testFile = `${testDir}/intact-replace.txt`;
-    await Deno.writeTextFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
+    await writeFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
 
     const result = await tool.call({
       path: testFile,
@@ -698,16 +669,15 @@ Deno.test("editFile - edits keep content outside the edited region intact", asyn
       replace: "BODY-A",
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual(
       "HEAD-MARKER\nBODY-A\nbody-b\nTAIL-MARKER-OK",
     );
   });
 
-  await t.step("insert_lines keeps head and tail intact", async () => {
+  test("insert_lines keeps head and tail intact", async () => {
     const testFile = `${testDir}/intact-insert.txt`;
-    await Deno.writeTextFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
+    await writeFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
 
     const result = await tool.call({
       path: testFile,
@@ -716,16 +686,15 @@ Deno.test("editFile - edits keep content outside the edited region intact", asyn
       line: 3,
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual(
       "HEAD-MARKER\nbody-a\nnew-1\nnew-2\nbody-b\nTAIL-MARKER-OK",
     );
   });
 
-  await t.step("delete_lines keeps head and tail intact", async () => {
+  test("delete_lines keeps head and tail intact", async () => {
     const testFile = `${testDir}/intact-delete.txt`;
-    await Deno.writeTextFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
+    await writeFile(testFile, "HEAD-MARKER\nbody-a\nbody-b\nTAIL-MARKER-OK");
 
     const result = await tool.call({
       path: testFile,
@@ -734,22 +703,17 @@ Deno.test("editFile - edits keep content outside the edited region intact", asyn
       lineEnd: 3,
     });
 
-    assertEquals(result.success, true);
-    assertEquals(
-      await Deno.readTextFile(testFile),
-      "HEAD-MARKER\nTAIL-MARKER-OK",
-    );
+    expect(result.success).toBe(true);
+    expect(await readFile(testFile, "utf8")).toStrictEqual("HEAD-MARKER\nTAIL-MARKER-OK");
   });
-
-  await Deno.remove(testDir, { recursive: true });
 });
 
-Deno.test("editFile - search_replace works on multi-megabyte files", async () => {
+test("editFile - search_replace works on multi-megabyte files", async () => {
   const tool = editFile();
-  const testDir = await Deno.makeTempDir();
+  const testDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
   const testFile = `${testDir}/big.txt`;
   const filler = "a".repeat(3 * 1024 * 1024);
-  await Deno.writeTextFile(testFile, `start ${filler} NEEDLE end`);
+  await writeFile(testFile, `start ${filler} NEEDLE end`);
 
   const result = await tool.call({
     path: testFile,
@@ -758,9 +722,8 @@ Deno.test("editFile - search_replace works on multi-megabyte files", async () =>
     replace: "REPLACED",
   });
 
-  assertEquals(result.success, true);
+  expect(result.success).toBe(true);
 
-  const content = await Deno.readTextFile(testFile);
-  assertEquals(content, `start ${filler} REPLACED end`);
-  await Deno.remove(testDir, { recursive: true });
+  const content = await readFile(testFile, "utf8");
+  expect(content).toStrictEqual(`start ${filler} REPLACED end`);
 });

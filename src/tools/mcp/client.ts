@@ -25,8 +25,8 @@ import type {
   McpIcon,
   McpToolDef,
   McpTransportOptions,
-} from "@/tools/mcp/types.ts";
-import denoJson from "../../../deno.json" with { type: "json" };
+} from "./types.ts";
+import jsrJson from "../../../jsr.json" with { type: "json" };
 
 /**
  * Hard ceiling on tools/list pagination per listing. A server that keeps
@@ -52,8 +52,8 @@ export async function connect(
   signal?: AbortSignal,
 ): Promise<McpClient> {
   // Sent to every server in the initialize handshake; sourced from
-  // deno.json so version bumps can't leave it behind.
-  const client = new Client({ name: denoJson.name, version: denoJson.version });
+  // jsr.json so version bumps can't leave it behind.
+  const client = new Client({ name: jsrJson.name, version: jsrJson.version });
   const transport = transportFrom(options);
 
   // Collect stderr from stdio transports so connection failures can surface
@@ -81,10 +81,7 @@ export async function connect(
   }
 
   try {
-    await withAbortReason(
-      client.connect(transport, signal ? { signal } : undefined),
-      signal,
-    );
+    await withAbortReason(client.connect(transport, signal ? { signal } : undefined), signal);
   } catch (error) {
     // A cancelled connect is not a connection failure: the caller asked
     // for it, so the signal's reason surfaces untouched instead of being
@@ -142,12 +139,8 @@ export async function connect(
       let cursor: string | undefined;
       let pages = 0;
       do {
-        const page: Awaited<ReturnType<typeof client.listTools>> =
-          await withAbortReason(
-          client.listTools(
-            cursor ? { cursor } : undefined,
-            signal ? { signal } : undefined,
-          ),
+        const page: Awaited<ReturnType<typeof client.listTools>> = await withAbortReason(
+          client.listTools(cursor ? { cursor } : undefined, signal ? { signal } : undefined),
           signal,
         );
         pages++;
@@ -189,12 +182,13 @@ export async function connect(
     },
     async callTool(name, args, timeout, signal) {
       // Unset options stay absent so the request shape is unchanged.
-      const requestOptions = timeout === undefined && !signal
-        ? undefined
-        : {
-          ...(timeout === undefined ? {} : { timeout }),
-          ...(signal ? { signal } : {}),
-        };
+      const requestOptions =
+        timeout === undefined && !signal
+          ? undefined
+          : {
+              ...(timeout === undefined ? {} : { timeout }),
+              ...(signal ? { signal } : {}),
+            };
       const result = await withAbortReason(
         client.callTool({ name, arguments: args }, undefined, requestOptions),
         signal,
@@ -209,10 +203,8 @@ export async function connect(
       if (callResult.resultType === "input_required") {
         const text = (callResult.content ?? [])
           .filter(
-            (block): block is Extract<
-              { type: "text"; text: string },
-              { type: "text" }
-            > => block.type === "text",
+            (block): block is Extract<{ type: "text"; text: string }, { type: "text" }> =>
+              block.type === "text",
           )
           .map((block) => block.text)
           .join("\n");
@@ -260,9 +252,7 @@ function transportFrom(options: McpTransportOptions): Transport {
   if ("url" in options) {
     return new StreamableHTTPClientTransport(
       new URL(options.url),
-      options.headers
-        ? { requestInit: { headers: options.headers } }
-        : undefined,
+      options.headers ? { requestInit: { headers: options.headers } } : undefined,
     );
   }
 

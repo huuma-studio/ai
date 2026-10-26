@@ -20,9 +20,9 @@
  *   control callbacks prove the finalizer pipeline works for exactly
  *   the kind of object this assertion measures; undelivered control
  *   callbacks mean the measurement stalled, and the assertion is
- *   skipped for that run. When the suite runs with
- *   `--v8-flags=--expose-gc`, explicit collections make the
- *   measurement fully deterministic.
+ *   skipped for that run. vite.config.ts runs the test workers with
+ *   `--expose-gc`, so explicit collections make the measurement fully
+ *   deterministic.
  * - Bounded heap growth: settled `heapUsed` readings at 50-round
  *   milestones must grow linearly in the message count. Readings taken
  *   without `--expose-gc` are only mostly accurate: V8 reclaims
@@ -49,14 +49,10 @@
  *
  * @module
  */
-import { assert, assertEquals } from "@std/assert";
-import { agent } from "@/agent/mod.ts";
-import type {
-  BaseModel,
-  Message,
-  ModelResult,
-} from "@/agent/mod.ts";
-import { tool } from "@/tools/mod.ts";
+import { expect, test } from "vite-plus/test";
+import { agent } from "./mod.ts";
+import type { BaseModel, Message, ModelResult } from "./mod.ts";
+import { tool } from "../tools/mod.ts";
 import { object } from "@huuma/validate";
 
 const MEGABYTE = 1024 * 1024;
@@ -75,9 +71,16 @@ const MEDIAN_DELTA_LIMIT = 4 * MEGABYTE;
 const TOTAL_GROWTH_LIMIT = 128 * MEGABYTE;
 
 /**
- * Best-effort settled `heapUsed` reading without `--v8-flags=--expose-gc`.
+ * Settled `heapUsed` reading.
  *
- * The standard `deno test` task cannot pass V8 flags, so collections
+ * vite.config.ts runs the test workers with `--expose-gc`, so the
+ * reading normally follows an explicit full collection and is exact.
+ * Under Node's V8 the pressure fallback below is not accurate enough
+ * on its own: its readings drift upward by several MB per milestone
+ * (median ~7 MB observed against ~0.6 MB of true growth measured with
+ * `gc()`), which trips the median limit on correct code.
+ *
+ * Without `gc()` the reading is best effort: collections
  * are driven by allocation pressure: half-megabyte pointer chunks are
  * allocated and immediately dropped. Each chunk is larger than V8's
  * regular-object limit, so the pressure accumulates in old-space
@@ -95,7 +98,12 @@ const TOTAL_GROWTH_LIMIT = 128 * MEGABYTE;
  * case of a collector that never triggers within the pressure budget.
  */
 function settleHeap(): number {
-  let peak = Deno.memoryUsage().heapUsed;
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (gc) {
+    gc();
+    return process.memoryUsage().heapUsed;
+  }
+  let peak = process.memoryUsage().heapUsed;
   let min = peak;
   for (let i = 0; i < 600; i++) {
     // ~0.5 MB of pointers: above V8's large-object threshold, so the
@@ -103,7 +111,7 @@ function settleHeap(): number {
     const chunk: unknown[] = new Array(128_000);
     chunk.fill({ chunk: i });
     if (chunk.length === 0) throw new Error("unreachable");
-    const current = Deno.memoryUsage().heapUsed;
+    const current = process.memoryUsage().heapUsed;
     if (current > peak) peak = current;
     if (current < min) min = current;
     if (peak - current >= 4 * MEGABYTE) return current;
@@ -111,8 +119,7 @@ function settleHeap(): number {
   return min;
 }
 
-const yieldToEventLoop = () =>
-  new Promise<void>((resolve) => setTimeout(resolve, 0));
+const yieldToEventLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 const collected = new Set<number>();
 const registry = new FinalizationRegistry((round: number) => {
@@ -172,26 +179,23 @@ class LoopModel implements BaseModel<string> {
     if (round > ROUNDS) {
       return {
         modelId: "loop",
-        messages: [{
-          role: "model",
-          contents: [{ text: "done" }],
-          toolCalls: [],
-        }],
+        messages: [
+          {
+            role: "model",
+            contents: [{ text: "done" }],
+            toolCalls: [],
+          },
+        ],
       };
     }
-    const roundMessages: Message[] = Array.from(
-      { length: FILLERS_PER_ROUND },
-      (_, i): Message => ({
-        role: "model",
-        contents: [{ text: `filler ${round} ${i}` }],
-        toolCalls: [],
-      }),
-    );
+    const roundMessages: Message[] = Array.from({ length: FILLERS_PER_ROUND }, (_, i): Message => ({
+      role: "model",
+      contents: [{ text: `filler ${round} ${i}` }],
+      toolCalls: [],
+    }));
     roundMessages.push({
       role: "model",
-      contents: [
-        { toolCall: { id: `call-${round}`, name: "echo", props: {} } },
-      ],
+      contents: [{ toolCall: { id: `call-${round}`, name: "echo", props: {} } }],
       toolCalls: [{ id: `call-${round}`, name: "echo", props: {} }],
     });
     return { modelId: "loop", messages: roundMessages };
@@ -205,9 +209,7 @@ class LoopModel implements BaseModel<string> {
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 const echo = tool({
@@ -217,7 +219,7 @@ const echo = tool({
   fn: () => "ok",
 });
 
-Deno.test("agent - long runs reclaim snapshots and hold memory linear in message count", async () => {
+test("agent - long runs reclaim snapshots and hold memory linear in message count", async () => {
   const model = new LoopModel();
   const assistant = agent({
     model,
@@ -234,11 +236,8 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
   // the run alongside the snapshots it tracks.
   controlSlot[0] = undefined;
 
-  assertEquals(model.calls, ROUNDS + 1);
-  assertEquals(
-    messages.length,
-    1 + ROUNDS * (FILLERS_PER_ROUND + 2) + 1,
-  );
+  expect(model.calls).toStrictEqual(ROUNDS + 1);
+  expect(messages.length).toStrictEqual(1 + ROUNDS * (FILLERS_PER_ROUND + 2) + 1);
 
   const { samples } = model;
   const deltas = samples.slice(1).map((sample, index) => ({
@@ -249,34 +248,35 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
 
   // Linear retention: the live conversation (~21k small messages) sits
   // in the single current array, so the typical milestone growth stays
-  // a few MB (measured median: ~1.8 MB). The median tolerates the
+  // a few MB (measured median: ~1.8 MB on Deno, ~0.6 MB on Node with
+  // `gc()`). The median tolerates the
   // occasional settle outlier (see module note); retention that grows
   // per round or per round squared pushes the median past the limit.
   const medianDelta = median(deltas.map((d) => d.bytes));
-  assert(
+  expect(
     medianDelta <= MEDIAN_DELTA_LIMIT,
-    `median per-milestone heap growth was ${
-      (medianDelta / MEGABYTE).toFixed(1)
-    } MB (expected linear, at most ${
+    `median per-milestone heap growth was ${(medianDelta / MEGABYTE).toFixed(
+      1,
+    )} MB (expected linear, at most ${
       MEDIAN_DELTA_LIMIT / MEGABYTE
     } MB): ${JSON.stringify(deltas)}`,
-  );
+  ).toBe(true);
 
   // Catastrophic fuse for leaks too gross for milestone medians to
   // express cleanly (measured iterative worst case: ~56 MB with a
   // settle outlier; retention of the old chain's snapshot arrays on
   // engines that pin frame state adds tens of MB by round 400).
   const totalGrowth = samples[samples.length - 1] - samples[0];
-  assert(
+  expect(
     totalGrowth <= TOTAL_GROWTH_LIMIT,
-    `total heap growth over ${ROUNDS} rounds was ${
-      (totalGrowth / MEGABYTE).toFixed(1)
-    } MB (limit ${TOTAL_GROWTH_LIMIT / MEGABYTE} MB): ${JSON.stringify(deltas)}`,
-  );
+    `total heap growth over ${ROUNDS} rounds was ${(totalGrowth / MEGABYTE).toFixed(
+      1,
+    )} MB (limit ${TOTAL_GROWTH_LIMIT / MEGABYTE} MB): ${JSON.stringify(deltas)}`,
+  ).toBe(true);
 
   // Drain finalization callbacks. Each iteration forces at least one
-  // major collection — explicit GC when the suite runs with
-  // `--v8-flags=--expose-gc`, otherwise the same allocation pressure
+  // major collection — explicit GC when the workers run with
+  // `--expose-gc` (vite.config.ts passes it), otherwise the same allocation pressure
   // `settleHeap` uses — then yields so callbacks flush, and repeats
   // until both reclaimed counts stop growing. Per-iteration collections
   // matter because garbage that dies late in the run (the final
@@ -292,8 +292,7 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
       settleHeap();
     }
     await yieldToEventLoop();
-    const settled = collected.size === previousRun &&
-      controlCollected.size === previousControl;
+    const settled = collected.size === previousRun && controlCollected.size === previousControl;
     stable = settled ? stable + 1 : 0;
     previousRun = collected.size;
     previousControl = controlCollected.size;
@@ -308,7 +307,7 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
     console.warn(
       "[agent loop memory test] finalizer delivery stalled during the drain; " +
         "skipping the reclamation assertion this run " +
-        "(see the module docs in loop_memory_test.ts)",
+        "(see the module docs in loop_memory.test.ts)",
     );
     return;
   }
@@ -319,13 +318,13 @@ Deno.test("agent - long runs reclaim snapshots and hold memory linear in message
   // callback-delivery jitter; a real retention bug collects almost
   // none and fails by a wide margin.
   const reclaimed = collected.size;
-  assert(
+  expect(
     reclaimed >= Math.floor(ROUNDS * RECLAIMED_RATIO),
     `only ${reclaimed} of ${ROUNDS} snapshot arrays were reclaimed by the end of the run (control group: ${controlCollected.size} delivered)`,
-  );
+  ).toBe(true);
 });
 
-Deno.test("agent - model requests share one tools snapshot per run", async () => {
+test("agent - model requests share one tools snapshot per run", async () => {
   const toolsInstances = new Set<unknown>();
 
   class ToolfulModel implements BaseModel<string> {
@@ -337,30 +336,38 @@ Deno.test("agent - model requests share one tools snapshot per run", async () =>
       if (this.calls > 3) {
         return Promise.resolve({
           modelId: "tools",
-          messages: [{
-            role: "model",
-            contents: [{ text: "done" }],
-            toolCalls: [],
-          }],
+          messages: [
+            {
+              role: "model",
+              contents: [{ text: "done" }],
+              toolCalls: [],
+            },
+          ],
         });
       }
       return Promise.resolve({
         modelId: "tools",
-        messages: [{
-          role: "model",
-          contents: [{
-            toolCall: {
-              id: `call-${this.calls}`,
-              name: "echo",
-              props: {},
-            },
-          }],
-          toolCalls: [{
-            id: `call-${this.calls}`,
-            name: "echo",
-            props: {},
-          }],
-        }],
+        messages: [
+          {
+            role: "model",
+            contents: [
+              {
+                toolCall: {
+                  id: `call-${this.calls}`,
+                  name: "echo",
+                  props: {},
+                },
+              },
+            ],
+            toolCalls: [
+              {
+                id: `call-${this.calls}`,
+                name: "echo",
+                props: {},
+              },
+            ],
+          },
+        ],
       });
     }
 
@@ -378,5 +385,5 @@ Deno.test("agent - model requests share one tools snapshot per run", async () =>
 
   await assistant.run("Reuse the snapshot.");
 
-  assertEquals(toolsInstances.size, 1);
+  expect(toolsInstances.size).toStrictEqual(1);
 });

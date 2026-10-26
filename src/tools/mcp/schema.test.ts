@@ -1,6 +1,6 @@
-import { assertEquals } from "@std/assert";
+import { expect, test } from "vite-plus/test";
 import type { JSONSchema, Schema } from "@huuma/validate";
-import { PassthroughSchema } from "@/tools/mcp/schema.ts";
+import { PassthroughSchema } from "./schema.ts";
 
 const SERVER_SCHEMA = {
   type: "object",
@@ -8,29 +8,27 @@ const SERVER_SCHEMA = {
   required: ["message"],
 } as JSONSchema;
 
-Deno.test("PassthroughSchema - jsonSchema returns the exact object", () => {
+test("PassthroughSchema - jsonSchema returns the exact object", () => {
   const schema = new PassthroughSchema(SERVER_SCHEMA);
-  assertEquals(schema.jsonSchema(), SERVER_SCHEMA);
+  expect(schema.jsonSchema()).toStrictEqual(SERVER_SCHEMA);
 });
 
-Deno.test("PassthroughSchema - validate passes values through", () => {
+test("PassthroughSchema - validate passes values through", () => {
   const schema = new PassthroughSchema(SERVER_SCHEMA);
   const { value, errors } = schema.validate({ a: 1 });
-  assertEquals(value, { a: 1 });
-  assertEquals(errors, undefined);
+  expect(value).toStrictEqual({ a: 1 });
+  expect(errors).toBe(undefined);
 });
 
-Deno.test("PassthroughSchema - null and undefined coerce to {}", () => {
+test("PassthroughSchema - null and undefined coerce to {}", () => {
   const schema = new PassthroughSchema(SERVER_SCHEMA);
-  assertEquals(schema.validate(undefined).value, {});
-  assertEquals(schema.validate(null).value, {});
+  expect(schema.validate(undefined).value).toStrictEqual({});
+  expect(schema.validate(null).value).toStrictEqual({});
 });
 
-Deno.test("PassthroughSchema - assignable where a Schema is expected", () => {
+test("PassthroughSchema - assignable where a Schema is expected", () => {
   // Compile-time check: PassthroughSchema satisfies the Schema interface
   // Tool's input requires.
-  const schema: Schema<Record<string, unknown>> = new PassthroughSchema(
-    SERVER_SCHEMA,
-  );
-  assertEquals(schema.isRequired(), true);
+  const schema: Schema<Record<string, unknown>> = new PassthroughSchema(SERVER_SCHEMA);
+  expect(schema.isRequired()).toBe(true);
 });

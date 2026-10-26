@@ -1,0 +1,20 @@
+name: ci
+run-name: change request by ${{ github.actor }}
+on:
+  pull_request:
+  # Publish runs the same checks before it releases.
+  workflow_call:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: "24"
+          cache: true
+      # Format, lint and type check.
+      - run: vp check
+      - run: vp test
+      # Catches JSR publish errors (slow types, missing exports) before merge.
+      - run: vp run jsr:dry-run

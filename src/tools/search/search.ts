@@ -1,5 +1,5 @@
 import { number, object, string } from "@huuma/validate";
-import { Tool } from "@/tools/mod.ts";
+import { Tool } from "../mod.ts";
 import { type SearchEngine, SearchTool } from "./mod.ts";
 import type { SearchResponse } from "./types.ts";
 
@@ -21,14 +21,9 @@ export const DEFAULT_SEARCH_TIMEOUT = 30_000;
  * @param options Search engine, API key, and optional timeout.
  * @returns A {@link Tool} that queries the web and returns a {@link SearchResponse}.
  */
-export function search(
-  options?: SearchToolOptions,
-  // deno-lint-ignore no-explicit-any
-): Tool<any, SearchResponse> {
+export function search(options?: SearchToolOptions): Tool<any, SearchResponse> {
   const searchTool = new SearchTool(
-    options?.engine
-      ? { engine: options.engine, apiKey: options.apiKey }
-      : undefined,
+    options?.engine ? { engine: options.engine, apiKey: options.apiKey } : undefined,
   );
   return new Tool({
     name: "search",

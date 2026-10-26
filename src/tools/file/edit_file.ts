@@ -1,5 +1,7 @@
 import { number, object, string } from "@huuma/validate";
+import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { type Tool, tool } from "../mod.ts";
+import { hasErrorCode, IS_A_DIRECTORY, NOT_FOUND, PERMISSION_DENIED } from "../fs_errors.ts";
 
 /**
  * Input schema for the edit_file tool.
@@ -46,15 +48,15 @@ const fileLocks = new Map<string, Promise<unknown>>();
 /** Resolve a lock key that identifies the underlying file, not the path. */
 async function lockKeyFor(path: string): Promise<string> {
   try {
-    const info = await Deno.stat(path);
-    if (info.dev !== null && info.ino !== null && info.ino !== 0) {
+    const info = await stat(path);
+    if (info.ino !== 0) {
       return `file:${info.dev}:${info.ino}`;
     }
   } catch {
     // Missing file: the edit fails below with a clear error regardless.
   }
   try {
-    return `path:${await Deno.realPath(path)}`;
+    return `path:${await realpath(path)}`;
   } catch {
     return `path:${path}`;
   }
@@ -64,9 +66,11 @@ async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const key = await lockKeyFor(path);
   const previous = fileLocks.get(key) ?? Promise.resolve();
   const run = previous.catch(() => {}).then(fn);
-  const tracked = run.catch(() => {}).finally(() => {
-    if (fileLocks.get(key) === tracked) fileLocks.delete(key);
-  });
+  const tracked = run
+    .catch(() => {})
+    .finally(() => {
+      if (fileLocks.get(key) === tracked) fileLocks.delete(key);
+    });
   fileLocks.set(key, tracked);
   return run;
 }
@@ -78,7 +82,6 @@ async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
  *
  * @returns A {@link Tool} that edits files in place and returns an {@link EditFileResult}.
  */
-// deno-lint-ignore no-explicit-any
 export function editFile(): Tool<any, EditFileResult> {
   return tool({
     name: "edit_file",
@@ -98,9 +101,7 @@ export function editFile(): Tool<any, EditFileResult> {
       lineStart: number().optional(),
       lineEnd: number().optional(),
     }),
-    fn: (
-      props,
-    ) => {
+    fn: (props) => {
       if (
         props.operation !== "search_replace" &&
         props.operation !== "insert_lines" &&
@@ -114,16 +115,14 @@ export function editFile(): Tool<any, EditFileResult> {
         try {
           // Read the current file content while holding the path lock so the
           // operation always resolves against up-to-date on-disk state.
-          const fileContent = await Deno.readTextFile(props.path);
+          const fileContent = await readFile(props.path, "utf8");
 
           switch (props.operation) {
             case "search_replace": {
               const search = props.search;
               const replace = props.replace;
               if (search === undefined || replace === undefined) {
-                throw new Error(
-                  'search_replace requires both "search" and "replace" fields.',
-                );
+                throw new Error('search_replace requires both "search" and "replace" fields.');
               }
 
               // Count occurrences to ensure uniqueness
@@ -131,9 +130,10 @@ export function editFile(): Tool<any, EditFileResult> {
 
               if (occurrences === 0) {
                 throw new Error(
-                  `Text not found in file: "${
-                    truncate(search, 50)
-                  }". Make sure the search text matches exactly including whitespace.`,
+                  `Text not found in file: "${truncate(
+                    search,
+                    50,
+                  )}". Make sure the search text matches exactly including whitespace.`,
                 );
               }
 
@@ -146,10 +146,7 @@ export function editFile(): Tool<any, EditFileResult> {
               // Perform the replacement with raw string operations; the line
               // handling below is only needed for insert/delete, so no line
               // array is allocated here.
-              await Deno.writeTextFile(
-                props.path,
-                fileContent.replace(search, replace),
-              );
+              await writeFile(props.path, fileContent.replace(search, replace));
 
               return {
                 success: true,
@@ -163,9 +160,7 @@ export function editFile(): Tool<any, EditFileResult> {
               const content = props.content;
               const line = props.line;
               if (content === undefined || line === undefined) {
-                throw new Error(
-                  'insert_lines requires both "content" and "line" fields.',
-                );
+                throw new Error('insert_lines requires both "content" and "line" fields.');
               }
 
               if (line < 1) {
@@ -198,14 +193,13 @@ export function editFile(): Tool<any, EditFileResult> {
                 ...lines.slice(insertIndex),
               ];
 
-              await Deno.writeTextFile(props.path, updated.join(eol));
+              await writeFile(props.path, updated.join(eol));
 
               return {
                 success: true,
                 path: props.path,
                 operation: props.operation,
-                message:
-                  `Successfully inserted content at line ${line} in ${props.path}`,
+                message: `Successfully inserted content at line ${line} in ${props.path}`,
               };
             }
 
@@ -220,9 +214,7 @@ export function editFile(): Tool<any, EditFileResult> {
                 throw new Error("line numbers must be 1 or greater");
               }
               if (end < start) {
-                throw new Error(
-                  "lineEnd must be greater than or equal to lineStart",
-                );
+                throw new Error("lineEnd must be greater than or equal to lineStart");
               }
 
               const { lines, eol } = splitLines(fileContent);
@@ -243,14 +235,13 @@ export function editFile(): Tool<any, EditFileResult> {
               const deleteCount = end - start + 1;
               lines.splice(deleteStart, deleteCount);
 
-              await Deno.writeTextFile(props.path, lines.join(eol));
+              await writeFile(props.path, lines.join(eol));
 
               return {
                 success: true,
                 path: props.path,
                 operation: props.operation,
-                message:
-                  `Successfully deleted ${deleteCount} line(s) (${start}-${end}) from ${props.path}`,
+                message: `Successfully deleted ${deleteCount} line(s) (${start}-${end}) from ${props.path}`,
               };
             }
 
@@ -263,15 +254,13 @@ export function editFile(): Tool<any, EditFileResult> {
               );
           }
         } catch (error) {
-          if (error instanceof Deno.errors.NotFound) {
+          if (hasErrorCode(error, NOT_FOUND)) {
             throw new Error(`File not found: ${props.path}`);
           }
-          if (error instanceof Deno.errors.PermissionDenied) {
-            throw new Error(
-              `Permission denied: ${props.path}. Make sure to run with --allow-read and --allow-write.`,
-            );
+          if (hasErrorCode(error, ...PERMISSION_DENIED)) {
+            throw new Error(`Permission denied: ${props.path}`);
           }
-          if (error instanceof Deno.errors.IsADirectory) {
+          if (hasErrorCode(error, IS_A_DIRECTORY)) {
             throw new Error(`Path is a directory, not a file: ${props.path}`);
           }
           throw error;

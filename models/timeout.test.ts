@@ -1,16 +1,11 @@
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
-import type { BaseModel, Message } from "@/model/mod.ts";
+import { expect, test } from "vite-plus/test";
+import type { BaseModel, Message } from "../src/model/mod.ts";
 import { anthropic, google, mistral, ollama, openai, zai } from "./mod.ts";
 
 /**
  * A deadline must reject a model call that never responds within bounds
  * with a `TimeoutError` and cancel it at the transport — the same contract
- * signal_test.ts requires for caller signals. The SDKs translate aborts
+ * signal.test.ts requires for caller signals. The SDKs translate aborts
  * into their own error types, so these tests also pin that every adapter
  * surfaces the deadline's reason, and the caller's when it aborts first. Each case stubs `fetch` with a request
  * that only ever settles by aborting, exactly like a real fetch on a
@@ -20,11 +15,7 @@ import { anthropic, google, mistral, ollama, openai, zai } from "./mod.ts";
 const adapters: [string, () => BaseModel<string>, string][] = [
   ["openai", () => openai({ apiKey: "test", maxRetries: 0 }), "gpt-5.5"],
   ["zai", () => zai({ apiKey: "test" }), "glm-5.3"],
-  [
-    "anthropic",
-    () => anthropic({ apiKey: "test", maxRetries: 0 }),
-    "claude-opus-4-7",
-  ],
+  ["anthropic", () => anthropic({ apiKey: "test", maxRetries: 0 }), "claude-opus-4-7"],
   ["mistral", () => mistral({ apiKey: "test" }), "mistral-large-latest"],
   ["google", () => google({ apiKey: "test" }), "gemini-3-pro-preview"],
   ["ollama", () => ollama({ host: "http://localhost:11434" }), "llama3"],
@@ -44,8 +35,7 @@ function stubHangingFetch(): {
     resolveFetched = resolve;
   });
   globalThis.fetch = (input, init) => {
-    const signal = init?.signal ??
-      (input instanceof Request ? input.signal : undefined);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     if (!signal) {
       return Promise.reject(new Error("request carries no signal"));
     }
@@ -57,7 +47,7 @@ function stubHangingFetch(): {
       });
     });
   };
-  return { fetched, restore: () => globalThis.fetch = original };
+  return { fetched, restore: () => (globalThis.fetch = original) };
 }
 
 /** Replaces `fetch` with a streaming response whose headers arrive at
@@ -67,22 +57,26 @@ function stubHangingFetch(): {
 function stubStalledStreamFetch(contentType: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = (input, init) => {
-    const signal = init?.signal ??
-      (input instanceof Request ? input.signal : undefined);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        signal?.addEventListener(
-          "abort",
-          () => controller.error(signal.reason),
-          { once: true },
-        );
+        signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
       },
     });
-    return Promise.resolve(
-      new Response(body, { headers: { "content-type": contentType } }),
-    );
+    return Promise.resolve(new Response(body, { headers: { "content-type": contentType } }));
   };
-  return () => globalThis.fetch = original;
+  return () => (globalThis.fetch = original);
+}
+
+/** Resolves with the reason `promise` rejects with; fails the test if it
+ * fulfils instead. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  return expect.fail("expected the call to reject");
 }
 
 /** Rejects if `promise` has not settled within `ms` — a deadline that
@@ -91,10 +85,7 @@ function stubStalledStreamFetch(contentType: string): () => void {
 async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`the deadline did not reach the transport`)),
-      ms,
-    );
+    timer = setTimeout(() => reject(new Error(`the deadline did not reach the transport`)), ms);
   });
   try {
     return await Promise.race([promise, deadline]);
@@ -106,9 +97,9 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 /** Asserts `error` is the deadline's own reason, not an SDK translation
  * of the abort such as `APIUserAbortError`. */
 function assertTimeoutError(error: unknown): void {
-  assertInstanceOf(error, DOMException);
-  assertEquals(error.name, "TimeoutError");
-  assertEquals(error.message, "The model call timed out");
+  expect(error).toBeInstanceOf(DOMException);
+  expect((error as DOMException).name).toBe("TimeoutError");
+  expect((error as DOMException).message).toBe("The model call timed out");
 }
 
 const streamContentTypes: Record<string, string> = {
@@ -117,22 +108,22 @@ const streamContentTypes: Record<string, string> = {
 
 for (const [name, create, modelId] of adapters) {
   for (const method of ["generate", "stream"] as const) {
-    Deno.test(`${name} - ${method} rejects in bounded time when its deadline expires`, async () => {
+    test(`${name} - ${method} rejects in bounded time when its deadline expires`, async () => {
       const { fetched, restore } = stubHangingFetch();
       try {
         const pending = create()[method]({ modelId, messages, timeout: 50 });
         pending.catch(() => {});
         const transportSignal = await within(fetched, 2_000);
 
-        const error = await within(assertRejects(() => pending), 2_000);
+        const error = await within(rejection(pending), 2_000);
         assertTimeoutError(error);
-        assertEquals(transportSignal.aborted, true);
+        expect(transportSignal.aborted).toBe(true);
       } finally {
         restore();
       }
     });
 
-    Deno.test(`${name} - ${method} rejects with the caller's reason when the caller aborts first`, async () => {
+    test(`${name} - ${method} rejects with the caller's reason when the caller aborts first`, async () => {
       const { fetched, restore } = stubHangingFetch();
       try {
         const controller = new AbortController();
@@ -147,9 +138,9 @@ for (const [name, create, modelId] of adapters) {
         const reason = new Error("caller stopped");
         controller.abort(reason);
 
-        const error = await within(assertRejects(() => pending), 2_000);
-        assertStrictEquals(error, reason);
-        assertEquals(transportSignal.aborted, true);
+        const error = await within(rejection(pending), 2_000);
+        expect(error).toBe(reason);
+        expect(transportSignal.aborted).toBe(true);
       } finally {
         restore();
       }
@@ -158,28 +149,21 @@ for (const [name, create, modelId] of adapters) {
 }
 
 for (const [name, create, modelId] of adapters) {
-  Deno.test(`${name} - a stream deadline ends a body that stalls mid-iteration`, async () => {
-    const restore = stubStalledStreamFetch(
-      streamContentTypes[name] ?? "text/event-stream",
-    );
+  test(`${name} - a stream deadline ends a body that stalls mid-iteration`, async () => {
+    const restore = stubStalledStreamFetch(streamContentTypes[name] ?? "text/event-stream");
     try {
-      const stream = await within(
-        create().stream({ modelId, messages, timeout: 50 }),
-        2_000,
-      );
+      const stream = await within(create().stream({ modelId, messages, timeout: 50 }), 2_000);
 
       const next = stream.next();
-      const error = await within(assertRejects(() => next), 2_000);
+      const error = await within(rejection(next), 2_000);
       assertTimeoutError(error);
     } finally {
       restore();
     }
   });
 
-  Deno.test(`${name} - a caller abort ends a stalled stream with the caller's reason`, async () => {
-    const restore = stubStalledStreamFetch(
-      streamContentTypes[name] ?? "text/event-stream",
-    );
+  test(`${name} - a caller abort ends a stalled stream with the caller's reason`, async () => {
+    const restore = stubStalledStreamFetch(streamContentTypes[name] ?? "text/event-stream");
     try {
       const controller = new AbortController();
       const stream = await within(
@@ -195,21 +179,19 @@ for (const [name, create, modelId] of adapters) {
       const next = stream.next();
       const reason = new Error("caller stopped");
       controller.abort(reason);
-      const error = await within(assertRejects(() => next), 2_000);
-      assertStrictEquals(error, reason);
+      const error = await within(rejection(next), 2_000);
+      expect(error).toBe(reason);
     } finally {
       restore();
     }
   });
 }
 
-Deno.test("ollama - a timeout of 0 rejects with a TimeoutError", async () => {
+test("ollama - a timeout of 0 rejects with a TimeoutError", async () => {
   const { restore } = stubHangingFetch();
   try {
     const error = await within(
-      assertRejects(() =>
-        ollama().generate({ modelId: "llama3", messages, timeout: 0 })
-      ),
+      rejection(ollama().generate({ modelId: "llama3", messages, timeout: 0 })),
       2_000,
     );
     assertTimeoutError(error);
@@ -218,21 +200,21 @@ Deno.test("ollama - a timeout of 0 rejects with a TimeoutError", async () => {
   }
 });
 
-Deno.test("ollama - invalid timeouts reject with TypeError", async () => {
+test("ollama - invalid timeouts reject with TypeError", async () => {
   const model = ollama();
-  await assertRejects(
+  for (const call of [
     () => model.generate({ modelId: "llama3", messages, timeout: -1 }),
-    TypeError,
-    "Model timeout must be a finite, non-negative number",
-  );
-  await assertRejects(
     () => model.stream({ modelId: "llama3", messages, timeout: NaN }),
-    TypeError,
-    "Model timeout must be a finite, non-negative number",
-  );
+  ]) {
+    const error = await rejection(call());
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toContain(
+      "Model timeout must be a finite, non-negative number",
+    );
+  }
 });
 
-Deno.test("ollama - a deadline longer than the response leaves a responding call untouched", async () => {
+test("ollama - a deadline longer than the response leaves a responding call untouched", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = () =>
     Promise.resolve(
@@ -252,8 +234,8 @@ Deno.test("ollama - a deadline longer than the response leaves a responding call
       ollama().generate({ modelId: "llama3", messages, timeout: 10_000 }),
       2_000,
     );
-    assertEquals(result.modelId, "llama3");
-    assertEquals(result.usage?.totalTokens, 8);
+    expect(result.modelId).toBe("llama3");
+    expect(result.usage?.totalTokens).toBe(8);
   } finally {
     globalThis.fetch = original;
   }

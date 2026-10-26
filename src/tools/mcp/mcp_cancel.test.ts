@@ -1,14 +1,11 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import { expect, test } from "vite-plus/test";
 // Dev-only SDK imports for the in-process server; publish excludes tests.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { mcp, type McpTransport } from "@/tools/mcp/mcp.ts";
-import { callTool, tools } from "@/tools/mod.ts";
-import type { JSONSchema, Message, ToolMessage } from "@/agent/mod.ts";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { mcp, type McpTransport } from "./mcp.ts";
+import { callTool, tools } from "../mod.ts";
+import type { JSONSchema, Message, ToolMessage } from "../../agent/mod.ts";
 
 const EMPTY_SCHEMA = { type: "object", properties: {} };
 
@@ -59,8 +56,7 @@ async function cancellableServer() {
     },
   );
 
-  const [clientTransport, serverTransport] = InMemoryTransport
-    .createLinkedPair();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   /** Resolves once `count` pending requests have reached the server, and
@@ -69,12 +65,7 @@ async function cancellableServer() {
   const started = (count: number) =>
     new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
-        () =>
-          reject(
-            new Error(
-              `only ${state.started} of ${count} requests reached the server`,
-            ),
-          ),
+        () => reject(new Error(`only ${state.started} of ${count} requests reached the server`)),
         2_000,
       );
       const check = () => {
@@ -90,17 +81,14 @@ async function cancellableServer() {
 }
 
 /** Polls until the server has observed `count` cancellations. */
-async function cancellations(
-  state: { cancelled: number },
-  count: number,
-): Promise<void> {
+async function cancellations(state: { cancelled: number }, count: number): Promise<void> {
   for (let i = 0; i < 200 && state.cancelled < count; i++) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  assertEquals(state.cancelled, count);
+  expect(state.cancelled).toBe(count);
 }
 
-Deno.test("mcp - aborting a tool call cancels it on the server and rejects with the reason", async () => {
+test("mcp - aborting a tool call cancels it on the server and rejects with the reason", async () => {
   const { transport, state, started } = await cancellableServer();
   const connection = await mcp({ name: "srv", transport });
   try {
@@ -112,30 +100,30 @@ Deno.test("mcp - aborting a tool call cancels it on the server and rejects with 
     await started(1);
     controller.abort(reason);
 
-    const error = await assertRejects(() => pending);
-    assertStrictEquals(error, reason);
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBe(reason);
     await cancellations(state, 1);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - a per-call timeout cancels the request on the server", async () => {
+test("mcp - a per-call timeout cancels the request on the server", async () => {
   const { transport, state } = await cancellableServer();
   // A long configured timeout: the shorter per-call timeout must win.
   const connection = await mcp({ name: "srv", transport, timeout: 60_000 });
   try {
     const [hang] = connection.tools();
 
-    const error = await assertRejects(() => hang.call({}, { timeout: 50 }));
-    assertEquals((error as DOMException).name, "TimeoutError");
+    const error = await hang.call({}, { timeout: 50 }).catch((e: unknown) => e);
+    expect((error as DOMException).name).toBe("TimeoutError");
     await cancellations(state, 1);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - aborting a batch fails and cancels every in-flight MCP call", async () => {
+test("mcp - aborting a batch fails and cancels every in-flight MCP call", async () => {
   const { transport, state, started } = await cancellableServer();
   const connection = await mcp({ name: "srv", transport });
   try {
@@ -145,11 +133,13 @@ Deno.test("mcp - aborting a batch fails and cancels every in-flight MCP call", a
       name: "srv_hang",
       props: {} as unknown as JSONSchema,
     }));
-    const messages: Message[] = [{
-      role: "model",
-      contents: calls.map((toolCall) => ({ toolCall })),
-      toolCalls: calls,
-    }];
+    const messages: Message[] = [
+      {
+        role: "model",
+        contents: calls.map((toolCall) => ({ toolCall })),
+        toolCalls: calls,
+      },
+    ];
 
     const pending = callTool(tools(connection.tools()), {
       signal: controller.signal,
@@ -158,19 +148,18 @@ Deno.test("mcp - aborting a batch fails and cancels every in-flight MCP call", a
     controller.abort(new Error("stop"));
 
     const result = (await pending).at(-1) as ToolMessage;
-    assertEquals(
+    expect(
       result.contents.map((content) =>
-        "toolResult" in content ? content.toolResult.result.error : undefined
+        "toolResult" in content ? content.toolResult.result.error : undefined,
       ),
-      ["stop", "stop"],
-    );
+    ).toStrictEqual(["stop", "stop"]);
     await cancellations(state, 2);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - refresh with an aborted signal rejects, stops paging, and keeps the tools", async () => {
+test("mcp - refresh with an aborted signal rejects, stops paging, and keeps the tools", async () => {
   const { transport, state, started } = await cancellableServer();
   const connection = await mcp({ name: "srv", transport });
   try {
@@ -182,31 +171,31 @@ Deno.test("mcp - refresh with an aborted signal rejects, stops paging, and keeps
     await started(1);
     controller.abort(reason);
 
-    const error = await assertRejects(() => pending);
-    assertStrictEquals(error, reason);
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBe(reason);
     await cancellations(state, 1);
     // One eager listing plus the single cancelled refresh page.
-    assertEquals(state.listRequests, 2);
-    assertEquals(connection.tools().map((tool) => tool.name), ["srv_hang"]);
+    expect(state.listRequests).toBe(2);
+    expect(connection.tools().map((tool) => tool.name)).toStrictEqual(["srv_hang"]);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - an aborted signal stops mcp() before connecting", async () => {
+test("mcp - an aborted signal stops mcp() before connecting", async () => {
   const { transport, state } = await cancellableServer();
   const controller = new AbortController();
   const reason = new Error("stop");
   controller.abort(reason);
 
-  const error = await assertRejects(() =>
-    mcp({ name: "srv", transport, signal: controller.signal })
+  const error = await mcp({ name: "srv", transport, signal: controller.signal }).catch(
+    (e: unknown) => e,
   );
-  assertStrictEquals(error, reason);
-  assertEquals(state.listRequests, 0);
+  expect(error).toBe(reason);
+  expect(state.listRequests).toBe(0);
 });
 
-Deno.test("mcp - aborting during the initial listing rejects mcp() with the reason", async () => {
+test("mcp - aborting during the initial listing rejects mcp() with the reason", async () => {
   const { transport, state, started } = await cancellableServer();
   state.hangListing = true;
   const controller = new AbortController();
@@ -216,7 +205,7 @@ Deno.test("mcp - aborting during the initial listing rejects mcp() with the reas
   await started(1);
   controller.abort(reason);
 
-  const error = await assertRejects(() => pending);
-  assertStrictEquals(error, reason);
+  const error = await pending.catch((e: unknown) => e);
+  expect(error).toBe(reason);
   await cancellations(state, 1);
 });

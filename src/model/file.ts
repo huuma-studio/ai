@@ -6,9 +6,7 @@
 import type { FileContent } from "../mod.ts";
 
 /** Resolved file source: inline base64 data or a URL reference. */
-export type FileSource =
-  | { kind: "data"; data: string }
-  | { kind: "url"; url: string };
+export type FileSource = { kind: "data"; data: string } | { kind: "url"; url: string };
 
 /**
  * Resolves the source of a file content part.

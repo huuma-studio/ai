@@ -17,13 +17,8 @@ export class OllamaSearchProvider implements SearchProvider {
     this.#apiKey = apiKey;
   }
 
-  async search(
-    query: string,
-    options?: SearchOptions,
-  ): Promise<SearchResponse> {
-    const apiKey = this.#apiKey ??
-      Deno.env.get("OLLAMA_SEARCH_API_KEY") ??
-      Deno.env.get("OLLAMA_API_KEY");
+  async search(query: string, options?: SearchOptions): Promise<SearchResponse> {
+    const apiKey = this.#apiKey ?? process.env.OLLAMA_SEARCH_API_KEY ?? process.env.OLLAMA_API_KEY;
 
     if (!apiKey) {
       throw new Error("Ollama API Key is required");
@@ -37,7 +32,7 @@ export class OllamaSearchProvider implements SearchProvider {
     const response = await fetch("https://ollama.com/api/web_search", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -48,9 +43,7 @@ export class OllamaSearchProvider implements SearchProvider {
       // Cancel the body so an unconsumed response does not pin the
       // connection until it is finalized.
       await response.body?.cancel();
-      throw new Error(
-        `Ollama Search failed: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Ollama Search failed: ${response.status} ${response.statusText}`);
     }
 
     const data = (await response.json()) as OllamaSearchApiResponse;

@@ -3,7 +3,7 @@
  *
  * @example
  * ```typescript
- * import type { BaseModel } from "jsr:@huuma/ai/model";
+ * import type { BaseModel } from "@huuma/ai/model";
  *
  * const result = await model.generate({
  *   modelId: "gpt-4o-mini",
@@ -14,12 +14,7 @@
  * @module
  */
 import type { Message } from "../mod.ts";
-export {
-  dataUrlFrom,
-  type FileSource,
-  fileSourceFrom,
-  toolFilesLabel,
-} from "./file.ts";
+export { dataUrlFrom, type FileSource, fileSourceFrom, toolFilesLabel } from "./file.ts";
 export type {
   FileContent,
   Message,
@@ -102,9 +97,7 @@ const MODEL_USAGE_KEYS = [
  * @param usages Usage reports to sum; `undefined` entries are skipped.
  * @returns The summed usage, or `undefined` when no input carries usage.
  */
-export function sumModelUsage(
-  ...usages: (ModelUsage | undefined)[]
-): ModelUsage | undefined {
+export function sumModelUsage(...usages: (ModelUsage | undefined)[]): ModelUsage | undefined {
   let result: ModelUsage | undefined;
 
   for (const usage of usages) {

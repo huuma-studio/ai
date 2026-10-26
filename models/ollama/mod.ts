@@ -3,7 +3,7 @@
  *
  * @example
  * ```typescript
- * import { ollama } from "jsr:@huuma/ai/models/ollama";
+ * import { ollama } from "@huuma/ai/models/ollama";
  *
  * const model = ollama({ host: "http://localhost:11434" });
  * const result = await model.generate({
@@ -14,25 +14,24 @@
  *
  * @module
  */
-import { type ChatResponse, type Config, Ollama } from "ollama";
-import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
+import { type ChatResponse, type Config, Ollama } from "ollama/browser";
+import type { BaseModel, ModelResult, ModelUsage } from "../../src/model/mod.ts";
 import type {
   FileContent,
   Message,
   ModelMessage,
   TextContent,
   ToolCallContent,
-} from "@/mod.ts";
-import { fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
-import type { Tool } from "@/tools/mod.ts";
-import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama";
-import { deadlineFrom } from "@/model/deadline.ts";
+} from "../../src/mod.ts";
+import { fileSourceFrom, toolFilesLabel } from "../../src/model/mod.ts";
+import type { Tool } from "../../src/tools/tool.ts";
+import type { Message as OllamaMessage, Tool as OllamaTool } from "ollama/browser";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 /**
  * Ollama models currently available.
  * This list is not exhaustive as Ollama models can be pulled dynamically.
  */
-export type OllamaModels = // deno-lint-ignore ban-types
-  string & {};
+export type OllamaModels = string & {};
 
 /**
  * Options for configuring the Ollama client.
@@ -52,12 +51,12 @@ export interface OllamaOptions {
    *
    * **Security Warning:**
    * - Never hardcode API keys in source code
-   * - Use the `OLLAMA_API_KEY` environment variable instead of passing
-   *   the key directly when possible
    * - Ensure the host URL uses HTTPS (except for localhost)
    * - Rotate keys regularly according to your security policy
    *
-   * If not provided, falls back to `OLLAMA_API_KEY` environment variable.
+   * The adapter does not read environment variables. Note that the
+   * underlying `ollama` client still falls back to `process.env.OLLAMA_API_KEY`
+   * for requests to `https://ollama.com` when no key is provided.
    */
   apiKey?: string;
 }
@@ -84,7 +83,6 @@ export interface OllamaGenerateOptions {
   /**
    * Tools available to the model (optional).
    */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
 
   /**
@@ -173,9 +171,7 @@ export class OllamaModel implements BaseModel<OllamaModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns A normalized {@link ModelResult}.
    */
-  async generate(
-    options: OllamaGenerateOptions,
-  ): Promise<ModelResult<OllamaModels>> {
+  async generate(options: OllamaGenerateOptions): Promise<ModelResult<OllamaModels>> {
     const messages = ollamaMessagesFrom(options.messages);
 
     if (options.system) {
@@ -213,9 +209,7 @@ export class OllamaModel implements BaseModel<OllamaModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
-  async stream(
-    options: OllamaGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<OllamaModels>>> {
+  async stream(options: OllamaGenerateOptions): Promise<AsyncGenerator<ModelResult<OllamaModels>>> {
     const messages = ollamaMessagesFrom(options.messages);
 
     if (options.system) {
@@ -253,10 +247,7 @@ export class OllamaModel implements BaseModel<OllamaModels> {
   }
 }
 
-function assertValidHostUrl(
-  host: string | undefined,
-  hasApiKey: boolean,
-): void {
+function assertValidHostUrl(host: string | undefined, hasApiKey: boolean): void {
   if (!hasApiKey || !host) {
     return;
   }
@@ -264,9 +255,8 @@ function assertValidHostUrl(
   try {
     const url = new URL(host);
 
-    const isLocalhost = url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "::1";
+    const isLocalhost =
+      url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
 
     if (url.protocol !== "https:" && !isLocalhost) {
       console.warn(
@@ -280,9 +270,7 @@ function assertValidHostUrl(
 }
 
 function resolveApiKey(options?: OllamaOptions): string | undefined {
-  const apiKey = options?.apiKey?.trim() ||
-    Deno.env.get("OLLAMA_API_KEY")?.trim();
-  return apiKey || undefined;
+  return options?.apiKey?.trim() || undefined;
 }
 
 function modelResultFrom(response: ChatResponse): ModelResult<OllamaModels> {
@@ -299,7 +287,6 @@ function modelResultFrom(response: ChatResponse): ModelResult<OllamaModels> {
         // Ollama doesn't provide an ID for tool calls, so we generate one.
         id: crypto.randomUUID(),
         name: toolCall.function.name,
-        // deno-lint-ignore no-explicit-any
         props: toolCall.function.arguments as any,
       };
 
@@ -329,9 +316,7 @@ function modelResultFrom(response: ChatResponse): ModelResult<OllamaModels> {
  * Ollama only reports `prompt_eval_count` and `eval_count` on the final
  * (`done`) response, so streamed intermediate chunks carry no usage.
  */
-export function ollamaUsageFrom(
-  response: ChatResponse,
-): ModelUsage | undefined {
+export function ollamaUsageFrom(response: ChatResponse): ModelUsage | undefined {
   if (!response.done) {
     return undefined;
   }
@@ -356,16 +341,13 @@ export function ollamaUsageFrom(
  * `role: "tool"` message requires. Errors take precedence over output,
  * and non-string payloads are JSON-encoded.
  */
-function toolOutputString(
-  result: { output?: unknown; error?: unknown },
-): string {
+function toolOutputString(result: { output?: unknown; error?: unknown }): string {
   const value = result.error ?? result.output;
   if (value === undefined || value === null) return "";
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 /** Converts Huuma {@link Tool}s into Ollama tool definitions. */
-// deno-lint-ignore no-explicit-any
 export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
   return tools.map((tool) => ({
     type: "function",
@@ -388,16 +370,12 @@ export function ollamaToolsFrom(tools: Tool<any>[]): OllamaTool[] {
  */
 function ollamaImageFrom(file: FileContent["file"]): string {
   if (!file.mimeType.startsWith("image/")) {
-    throw new RangeError(
-      `Ollama adapter does not support file content of type "${file.mimeType}"`,
-    );
+    throw new RangeError(`Ollama adapter does not support file content of type "${file.mimeType}"`);
   }
 
   const source = fileSourceFrom(file);
   if (source.kind === "url") {
-    throw new RangeError(
-      "Ollama adapter does not support images by URL; pass base64 data instead",
-    );
+    throw new RangeError("Ollama adapter does not support images by URL; pass base64 data instead");
   }
   return source.data;
 }
@@ -414,9 +392,10 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
 
   for (const message of messages) {
     if (message.role === "system") {
-      const content = typeof message.contents === "string"
-        ? message.contents
-        : message.contents.map((c) => c.text).join("");
+      const content =
+        typeof message.contents === "string"
+          ? message.contents
+          : message.contents.map((c) => c.text).join("");
 
       result.push({ role: "system", content });
     } else if (message.role === "user") {
@@ -519,13 +498,13 @@ export function ollamaMessagesFrom(messages: Message[]): OllamaMessage[] {
  *
  * @example
  * ```typescript
- * // Using environment variable (recommended)
- * const model = ollama({ host: "https://api.ollama.com" });
+ * // Local instance, no authentication
+ * const local = ollama();
  *
- * // Explicit API key (use with caution)
- * const model = ollama({
- *   host: "https://api.ollama.com",
- *   apiKey: process.env.OLLAMA_API_KEY
+ * // Authenticated remote instance
+ * const remote = ollama({
+ *   host: "https://ollama.com",
+ *   apiKey: process.env.OLLAMA_API_KEY,
  * });
  * ```
  */

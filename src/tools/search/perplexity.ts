@@ -17,11 +17,8 @@ export class PerplexitySearchProvider implements SearchProvider {
     this.#apiKey = apiKey;
   }
 
-  async search(
-    query: string,
-    options?: SearchOptions,
-  ): Promise<SearchResponse> {
-    const apiKey = this.#apiKey ?? Deno.env.get("PERPLEXITY_API_KEY");
+  async search(query: string, options?: SearchOptions): Promise<SearchResponse> {
+    const apiKey = this.#apiKey ?? process.env.PERPLEXITY_API_KEY;
 
     if (!apiKey) {
       throw new Error("Perplexity API Key is required");
@@ -30,7 +27,7 @@ export class PerplexitySearchProvider implements SearchProvider {
     const response = await fetch("https://api.perplexity.ai/search", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -44,9 +41,7 @@ export class PerplexitySearchProvider implements SearchProvider {
       // Cancel the body so an unconsumed response does not pin the
       // connection until it is finalized.
       await response.body?.cancel();
-      throw new Error(
-        `Perplexity Search failed: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Perplexity Search failed: ${response.status} ${response.statusText}`);
     }
 
     const data = (await response.json()) as PerplexityApiResponse;

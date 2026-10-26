@@ -3,9 +3,9 @@
  *
  * @example
  * ```typescript
- * import { anthropic } from "jsr:@huuma/ai/models/anthropic";
+ * import { anthropic } from "@huuma/ai/models/anthropic";
  *
- * const model = anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") });
+ * const model = anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
  * const result = await model.generate({
  *   modelId: "claude-opus-4-8",
  *   messages: [{ role: "user", contents: "Hello!" }],
@@ -15,18 +15,18 @@
  * @module
  */
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
-import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { fileSourceFrom } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "../../src/model/mod.ts";
+import { fileSourceFrom } from "../../src/model/mod.ts";
 import type {
   FileContent,
   Message,
   ModelMessage,
   TextContent,
   ToolCallContent,
-} from "@/mod.ts";
-import type { Tool } from "@/tools/mod.ts";
+} from "../../src/mod.ts";
+import type { Tool } from "../../src/tools/tool.ts";
 import type { JSONSchema } from "@huuma/validate";
-import { deadlineFrom } from "@/model/deadline.ts";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 
 type Claude_Fable_5 = "claude-fable-5";
 type Claude_Opus_4_8 = "claude-opus-4-8";
@@ -48,9 +48,7 @@ export type ClaudeModels =
   | Claude_Opus_4_6
   | Claude_Sonnet_4_6
   | Claude_Haiku_4_5
-  | string
-    // deno-lint-ignore ban-types
-    & {};
+  | (string & {});
 
 // Defaults follow Anthropic's guidance: non-streaming requests above ~16K
 // output tokens risk SDK HTTP timeouts, while streaming requests can give
@@ -73,7 +71,6 @@ export interface AnthropicGenerateOptions {
   system?: string;
 
   /** Tools available to the model. */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
 
   /** Additional Anthropic message options. */
@@ -147,21 +144,29 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns A normalized {@link ModelResult}.
    */
-  async generate(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      AnthropicGenerateOptions,
-  ): Promise<ModelResult<ClaudeModels>> {
+  async generate({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: AnthropicGenerateOptions): Promise<ModelResult<ClaudeModels>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const response = await this.#client.messages.create({
-        model: modelId,
-        max_tokens: options?.maxTokens ?? DEFAULT_GENERATE_MAX_TOKENS,
-        thinking: options?.thinking,
-        system,
-        tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
-        messages: anthropicMessagesFrom(messages),
-        stream: false,
-      }, { signal: deadline.signal });
+      const response = await this.#client.messages.create(
+        {
+          model: modelId,
+          max_tokens: options?.maxTokens ?? DEFAULT_GENERATE_MAX_TOKENS,
+          thinking: options?.thinking,
+          system,
+          tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
+          messages: anthropicMessagesFrom(messages),
+          stream: false,
+        },
+        { signal: deadline.signal },
+      );
 
       return modelResultFrom(
         modelId,
@@ -190,21 +195,29 @@ export class AnthropicModel implements BaseModel<ClaudeModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
-  async stream(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      AnthropicGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<ClaudeModels>>> {
+  async stream({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: AnthropicGenerateOptions): Promise<AsyncGenerator<ModelResult<ClaudeModels>>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const stream = await this.#client.messages.create({
-        model: modelId,
-        max_tokens: options?.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS,
-        thinking: options?.thinking,
-        system,
-        tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
-        messages: anthropicMessagesFrom(messages),
-        stream: true,
-      }, { signal: deadline.signal });
+      const stream = await this.#client.messages.create(
+        {
+          model: modelId,
+          max_tokens: options?.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS,
+          thinking: options?.thinking,
+          system,
+          tools: tools?.length ? anthropicToolsFrom(tools) : undefined,
+          messages: anthropicMessagesFrom(messages),
+          stream: true,
+        },
+        { signal: deadline.signal },
+      );
 
       return deadline.guard(streamMessages(stream, modelId));
     } catch (error) {
@@ -273,7 +286,8 @@ function anthropicUsageFrom(
     return base;
   }
 
-  result.totalTokens = (result.inputTokens ?? 0) +
+  result.totalTokens =
+    (result.inputTokens ?? 0) +
     (result.outputTokens ?? 0) +
     (result.cacheReadInputTokens ?? 0) +
     (result.cacheWriteInputTokens ?? 0);
@@ -290,9 +304,7 @@ function anthropicUsageFrom(
  * replayed as `thinking` and `redacted_thinking` blocks in their original
  * order so multi-turn tool use keeps every block's signature intact.
  */
-export function anthropicMessagesFrom(
-  messages: Message[],
-): Anthropic.MessageParam[] {
+export function anthropicMessagesFrom(messages: Message[]): Anthropic.MessageParam[] {
   const result: Anthropic.MessageParam[] = [];
 
   for (const message of messages) {
@@ -321,11 +333,11 @@ export function anthropicMessagesFrom(
             tool_use_id: id,
             content: files?.length
               ? [
-                // Anthropic rejects empty text blocks, so file-only
-                // results carry file blocks alone.
-                ...(text ? [{ type: "text" as const, text }] : []),
-                ...files.map((file) => fileBlockFrom(file.file)),
-              ]
+                  // Anthropic rejects empty text blocks, so file-only
+                  // results carry file blocks alone.
+                  ...(text ? [{ type: "text" as const, text }] : []),
+                  ...files.map((file) => fileBlockFrom(file.file)),
+                ]
               : text,
             is_error: result.error !== undefined,
           });
@@ -345,9 +357,7 @@ export function anthropicMessagesFrom(
   return result;
 }
 
-function assistantContentFrom(
-  message: ModelMessage,
-): Anthropic.ContentBlockParam[] {
+function assistantContentFrom(message: ModelMessage): Anthropic.ContentBlockParam[] {
   // Thinking blocks must precede other content.
   const content: Anthropic.ContentBlockParam[] = thinkingContentFrom(message);
 
@@ -372,9 +382,7 @@ function assistantContentFrom(
  * hand-written history; a thinking block without a signature is dropped
  * because Anthropic rejects it.
  */
-function thinkingContentFrom(
-  message: ModelMessage,
-): Anthropic.ContentBlockParam[] {
+function thinkingContentFrom(message: ModelMessage): Anthropic.ContentBlockParam[] {
   const content: Anthropic.ContentBlockParam[] = [];
 
   const blocks = message.thinkingMeta?.blocks;
@@ -419,9 +427,11 @@ function isThinkingBlockMeta(
 ): block is Extract<AnthropicThinkingBlockMeta, { type: "thinking" }> {
   if (typeof block !== "object" || block === null) return false;
   const candidate = block as Record<string, unknown>;
-  return candidate.type === "thinking" &&
+  return (
+    candidate.type === "thinking" &&
     typeof candidate.thinking === "string" &&
-    typeof candidate.signature === "string";
+    typeof candidate.signature === "string"
+  );
 }
 
 function isRedactedThinkingBlockMeta(
@@ -429,8 +439,7 @@ function isRedactedThinkingBlockMeta(
 ): block is Extract<AnthropicThinkingBlockMeta, { type: "redacted_thinking" }> {
   if (typeof block !== "object" || block === null) return false;
   const candidate = block as Record<string, unknown>;
-  return candidate.type === "redacted_thinking" &&
-    typeof candidate.data === "string";
+  return candidate.type === "redacted_thinking" && typeof candidate.data === "string";
 }
 
 /** Convert an Anthropic response into model messages.
@@ -439,9 +448,7 @@ function isRedactedThinkingBlockMeta(
  * than a normal stop, so refusals and truncated responses fail loudly
  * instead of resolving empty.
  */
-function modelMessagesFrom(
-  response: Anthropic.Message,
-): ModelMessage[] {
+function modelMessagesFrom(response: Anthropic.Message): ModelMessage[] {
   const message: ModelMessage = {
     role: "model",
     contents: [],
@@ -483,13 +490,13 @@ function modelMessagesFrom(
   }
 
   if (
-    message.contents.length === 0 && message.toolCalls.length === 0 &&
-    message.thinking === undefined && !message.thinkingMeta
+    message.contents.length === 0 &&
+    message.toolCalls.length === 0 &&
+    message.thinking === undefined &&
+    !message.thinkingMeta
   ) {
     if (response.stop_reason && response.stop_reason !== "end_turn") {
-      throw new Error(
-        `Claude returned no content (stop reason: ${response.stop_reason})`,
-      );
+      throw new Error(`Claude returned no content (stop reason: ${response.stop_reason})`);
     }
     return [];
   }
@@ -550,9 +557,7 @@ async function* streamMessages(
   }
 
   if (!yielded && stopReason && stopReason !== "end_turn") {
-    throw new Error(
-      `Claude returned no content (stop reason: ${stopReason})`,
-    );
+    throw new Error(`Claude returned no content (stop reason: ${stopReason})`);
   }
 
   if (usage) {
@@ -628,10 +633,7 @@ function deltaMessageFrom(
   return undefined;
 }
 
-function completedBlockFrom(
-  index: number,
-  state: StreamState,
-): ModelMessage | undefined {
+function completedBlockFrom(index: number, state: StreamState): ModelMessage | undefined {
   const pendingToolCall = state.toolCalls[index];
   if (pendingToolCall) {
     delete state.toolCalls[index];
@@ -702,9 +704,7 @@ function completedBlockFrom(
  * @param messages Chunk messages collected from a stream, in order.
  * @returns The merged message, or `undefined` when there is nothing to merge.
  */
-export function mergeAnthropicModelMessages(
-  messages: Message[],
-): ModelMessage | undefined {
+export function mergeAnthropicModelMessages(messages: Message[]): ModelMessage | undefined {
   const merged: ModelMessage = { role: "model", contents: [], toolCalls: [] };
   const blocks: AnthropicThinkingBlockMeta[] = [];
 
@@ -744,8 +744,10 @@ export function mergeAnthropicModelMessages(
   }
 
   if (
-    merged.contents.length === 0 && merged.toolCalls.length === 0 &&
-    merged.thinking === undefined && !merged.thinkingMeta
+    merged.contents.length === 0 &&
+    merged.toolCalls.length === 0 &&
+    merged.thinking === undefined &&
+    !merged.thinkingMeta
   ) {
     return undefined;
   }
@@ -767,17 +769,12 @@ function parseToolInput(name: string, inputJSON: string): JSONSchema {
   try {
     return JSON.parse(inputJSON);
   } catch (cause) {
-    throw new Error(
-      `Claude returned invalid input JSON for tool "${name}"`,
-      { cause },
-    );
+    throw new Error(`Claude returned invalid input JSON for tool "${name}"`, { cause });
   }
 }
 
 function textFrom(contents: string | TextContent[]): string {
-  return typeof contents === "string"
-    ? contents
-    : contents.map((content) => content.text).join("");
+  return typeof contents === "string" ? contents : contents.map((content) => content.text).join("");
 }
 
 /**
@@ -798,19 +795,12 @@ function userContentFrom(
   }
 
   return contents.map((content) =>
-    "file" in content
-      ? fileBlockFrom(content.file)
-      : { type: "text" as const, text: content.text }
+    "file" in content ? fileBlockFrom(content.file) : { type: "text" as const, text: content.text },
   );
 }
 
 /** Image media types accepted by the Anthropic API (base64 and URL). */
-const ANTHROPIC_IMAGE_MEDIA_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-] as const;
+const ANTHROPIC_IMAGE_MEDIA_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
 
 /**
  * Converts a file content part into an Anthropic image or document block.
@@ -825,13 +815,9 @@ function fileBlockFrom(
   const source = fileSourceFrom(file);
 
   if (file.mimeType.startsWith("image/")) {
-    const mediaType = ANTHROPIC_IMAGE_MEDIA_TYPES.find(
-      (type) => type === file.mimeType,
-    );
+    const mediaType = ANTHROPIC_IMAGE_MEDIA_TYPES.find((type) => type === file.mimeType);
     if (!mediaType) {
-      throw new RangeError(
-        `Anthropic adapter does not support images of type "${file.mimeType}"`,
-      );
+      throw new RangeError(`Anthropic adapter does not support images of type "${file.mimeType}"`);
     }
 
     if (source.kind === "url") {
@@ -846,13 +832,13 @@ function fileBlockFrom(
   if (file.mimeType === "application/pdf") {
     return source.kind === "data"
       ? {
-        type: "document",
-        source: {
-          type: "base64",
-          media_type: "application/pdf",
-          data: source.data,
-        },
-      }
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: source.data,
+          },
+        }
       : { type: "document", source: { type: "url", url: source.url } };
   }
 
@@ -866,9 +852,7 @@ function fileBlockFrom(
  * `tool_result` block carries. Errors take precedence over output, and
  * non-string payloads are JSON-encoded.
  */
-function toolOutputString(
-  result: { output?: unknown; error?: unknown },
-): string {
+function toolOutputString(result: { output?: unknown; error?: unknown }): string {
   const value = result.error ?? result.output;
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
@@ -884,10 +868,7 @@ function toolOutputString(
 /**
  * Converts Huuma {@link Tool}s into Anthropic tool definitions.
  */
-export function anthropicToolsFrom(
-  // deno-lint-ignore no-explicit-any
-  tools: Tool<any>[],
-): Anthropic.Tool[] {
+export function anthropicToolsFrom(tools: Tool<any>[]): Anthropic.Tool[] {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,

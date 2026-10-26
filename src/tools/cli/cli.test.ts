@@ -1,61 +1,46 @@
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertRejects,
-  assertThrows,
-} from "@std/assert";
+import { expect, test } from "vite-plus/test";
 import { ValidationException } from "@huuma/validate";
-import {
-  cli,
-  DEFAULT_CLI_MAX_OUTPUT_BYTES,
-  DEFAULT_CLI_TIMEOUT,
-} from "@/tools/cli/cli.ts";
+import { cli, DEFAULT_CLI_MAX_OUTPUT_BYTES, DEFAULT_CLI_TIMEOUT } from "./cli.ts";
 
-Deno.test("cli - executes allowed command", async () => {
+test("cli - executes allowed command", async () => {
   const cliTool = cli({ allowedCommands: ["echo"] });
 
   const result = await cliTool.call({ command: "echo", args: ["hello"] });
 
-  assertEquals(result.trim(), "hello");
+  expect(result.trim()).toBe("hello");
 });
 
-Deno.test("cli - rejects disallowed command", async () => {
+test("cli - rejects disallowed command", async () => {
   const cliTool = cli({ allowedCommands: ["echo"] });
 
-  await assertRejects(
-    () => cliTool.call({ command: "ls", args: [] }),
-    Error,
+  await expect(cliTool.call({ command: "ls", args: [] })).rejects.toThrow(
     'Command "ls" is not allowed',
   );
 });
 
-Deno.test("cli - throws on non-zero exit code", async () => {
+test("cli - throws on non-zero exit code", async () => {
   const cliTool = cli({ allowedCommands: ["false"] });
 
-  await assertRejects(
-    () => cliTool.call({ command: "false", args: [] }),
-    Error,
-  );
+  await expect(cliTool.call({ command: "false", args: [] })).rejects.toBeInstanceOf(Error);
 });
 
-Deno.test("cli - closes child-process stdin", async () => {
-  const executable = Deno.execPath();
+test("cli - closes child-process stdin", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable] });
 
   const result = await cliTool.call({
     command: executable,
     args: [
-      "eval",
-      "console.log((await new Response(Deno.stdin.readable).text()).length)",
+      "-e",
+      'let n = 0; process.stdin.on("data", (c) => { n += c.length; }); process.stdin.on("end", () => console.log(n));',
     ],
   });
 
-  assertEquals(result.trim(), "0");
+  expect(result.trim()).toBe("0");
 });
 
-Deno.test("cli - passes configured environment variables", async () => {
-  const executable = Deno.execPath();
+test("cli - passes configured environment variables", async () => {
+  const executable = process.execPath;
   const cliTool = cli({
     allowedCommands: [executable],
     env: { HUUMA_CLI_TEST: "configured" },
@@ -63,14 +48,14 @@ Deno.test("cli - passes configured environment variables", async () => {
 
   const result = await cliTool.call({
     command: executable,
-    args: ["eval", 'console.log(Deno.env.get("HUUMA_CLI_TEST"))'],
+    args: ["-e", "console.log(process.env.HUUMA_CLI_TEST)"],
   });
 
-  assertEquals(result.trim(), "configured");
+  expect(result.trim()).toBe("configured");
 });
 
-Deno.test("cli - passes explicitly enabled per-call environment variables", async () => {
-  const executable = Deno.execPath();
+test("cli - passes explicitly enabled per-call environment variables", async () => {
+  const executable = process.execPath;
   const cliTool = cli({
     allowedCommands: [executable],
     allowUnsafeEnvironmentVariables: true,
@@ -78,55 +63,50 @@ Deno.test("cli - passes explicitly enabled per-call environment variables", asyn
 
   const result = await cliTool.call({
     command: executable,
-    args: ["eval", 'console.log(Deno.env.get("HUUMA_CLI_CALL_TEST"))'],
+    args: ["-e", "console.log(process.env.HUUMA_CLI_CALL_TEST)"],
     env: { HUUMA_CLI_CALL_TEST: "agent" },
   });
 
-  assertEquals(result.trim(), "agent");
+  expect(result.trim()).toBe("agent");
 });
 
-Deno.test("cli - rejects per-call environment variables by default", async () => {
-  const executable = Deno.execPath();
+test("cli - rejects per-call environment variables by default", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable] });
 
-  await assertRejects(
-    () =>
-      cliTool.call({
-        command: executable,
-        args: ["--version"],
-        env: { LD_PRELOAD: "/tmp/payload.so" },
-      }),
-    Error,
-    "Per-call environment variables are disabled",
-  );
+  await expect(
+    cliTool.call({
+      command: executable,
+      args: ["--version"],
+      env: { LD_PRELOAD: "/tmp/payload.so" },
+    }),
+  ).rejects.toThrow("Per-call environment variables are disabled");
 });
 
-Deno.test("cli - rejects non-string environment values", async () => {
-  const executable = Deno.execPath();
+test("cli - rejects non-string environment values", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable] });
 
-  await assertRejects(
-    () =>
-      cliTool.call({
-        command: executable,
-        args: ["--version"],
-        env: { HUUMA_CLI_CALL_TEST: 1 },
-      }),
-    ValidationException,
-  );
+  await expect(
+    cliTool.call({
+      command: executable,
+      args: ["--version"],
+      env: { HUUMA_CLI_CALL_TEST: 1 },
+    }),
+  ).rejects.toBeInstanceOf(ValidationException);
 });
 
-Deno.test("cli - describes per-call environment as a string record", () => {
+test("cli - describes per-call environment as a string record", () => {
   const cliTool = cli({ allowedCommands: ["gh"] });
 
-  assertEquals(cliTool.input.jsonSchema().properties?.env, {
+  expect(cliTool.input.jsonSchema().properties?.env).toStrictEqual({
     type: "object",
     additionalProperties: { type: "string" },
   });
 });
 
-Deno.test("cli - configured environment overrides per-call values", async () => {
-  const executable = Deno.execPath();
+test("cli - configured environment overrides per-call values", async () => {
+  const executable = process.execPath;
   const cliTool = cli({
     allowedCommands: [executable],
     env: { HUUMA_CLI_TEST: "configured" },
@@ -135,47 +115,48 @@ Deno.test("cli - configured environment overrides per-call values", async () => 
 
   const result = await cliTool.call({
     command: executable,
-    args: ["eval", 'console.log(Deno.env.get("HUUMA_CLI_TEST"))'],
+    args: ["-e", "console.log(process.env.HUUMA_CLI_TEST)"],
     env: { HUUMA_CLI_TEST: "agent" },
   });
 
-  assertEquals(result.trim(), "configured");
+  expect(result.trim()).toBe("configured");
 });
 
-Deno.test("cli - has a 120 second default timeout", () => {
+test("cli - has a 120 second default timeout", () => {
   const cliTool = cli({ allowedCommands: ["echo"] });
-  assertEquals(cliTool.timeout, DEFAULT_CLI_TIMEOUT);
+  expect(cliTool.timeout).toBe(DEFAULT_CLI_TIMEOUT);
 });
 
-Deno.test("cli - kills a command when its timeout expires", async () => {
-  const executable = Deno.execPath();
+test("cli - kills a command when its timeout expires", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable], timeout: 10 });
 
-  await assertRejects(
-    () =>
-      cliTool.call({
-        command: executable,
-        args: ["eval", "await new Promise(() => {})"],
-      }),
-    DOMException,
-    "The operation was aborted due to timeout",
-  );
+  // An interval keeps the child alive until the timeout kills it.
+  const error = await cliTool
+    .call({
+      command: executable,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+    })
+    .catch((e: unknown) => e);
+
+  expect(error).toBeInstanceOf(DOMException);
+  expect((error as DOMException).message).toBe("The operation was aborted due to timeout");
 });
 
-Deno.test("cli - returns stdout and stderr byte-identical", async () => {
-  const executable = Deno.execPath();
+test("cli - returns stdout and stderr byte-identical", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable] });
 
   const result = await cliTool.call({
     command: executable,
-    args: ["eval", 'console.log("out"); console.error("err");'],
+    args: ["-e", 'console.log("out"); console.error("err");'],
   });
 
-  assertEquals(result, "out\n\nerr\n");
+  expect(result).toBe("out\n\nerr\n");
 });
 
-Deno.test("cli - truncates oversized output and keeps the exit code", async () => {
-  const executable = Deno.execPath();
+test("cli - truncates oversized output and keeps the exit code", async () => {
+  const executable = process.execPath;
   const cap = 64 * 1024;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
@@ -183,30 +164,27 @@ Deno.test("cli - truncates oversized output and keeps the exit code", async () =
     command: executable,
     // Twice the cap and more than a pipe buffer holds: the call resolving
     // proves the rest was drained, not abandoned, and the exit stayed 0.
-    args: [
-      "eval",
-      "await Deno.stdout.write(new Uint8Array(2 * 64 * 1024).fill(97))",
-    ],
+    args: ["-e", "process.stdout.write(Buffer.alloc(2 * 64 * 1024, 97))"],
   });
 
-  assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 64 KiB]`);
+  expect(result).toBe(`${"a".repeat(cap)}\n\n…[output truncated at 64 KiB]`);
 });
 
-Deno.test("cli - returns output that fills the cap exactly without a note", async () => {
-  const executable = Deno.execPath();
+test("cli - returns output that fills the cap exactly without a note", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
   const result = await cliTool.call({
     command: executable,
-    args: ["eval", "await Deno.stdout.write(new Uint8Array(1000).fill(97))"],
+    args: ["-e", "process.stdout.write(Buffer.alloc(1000, 97))"],
   });
 
-  assertEquals(result, "a".repeat(cap));
+  expect(result).toBe("a".repeat(cap));
 });
 
-Deno.test("cli - finishes a trailing partial character of untruncated output", async () => {
-  const executable = Deno.execPath();
+test("cli - finishes a trailing partial character of untruncated output", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
@@ -216,21 +194,23 @@ Deno.test("cli - finishes a trailing partial character of untruncated output", a
     // tail is replaced like a plain decode would and nothing is truncated.
     // The incomplete sequence takes three bytes, so its replacement
     // character still fits the cap once escaped.
-    args: ["eval", [
-      "const bytes = new Uint8Array(1000)",
-      "bytes.fill(97)",
-      "bytes[997] = 0xf0",
-      "bytes[998] = 0x9f",
-      "bytes[999] = 0x92",
-      "await Deno.stdout.write(bytes)",
-    ].join("; ")],
+    args: [
+      "-e",
+      [
+        "const bytes = Buffer.alloc(1000, 97)",
+        "bytes[997] = 0xf0",
+        "bytes[998] = 0x9f",
+        "bytes[999] = 0x92",
+        "process.stdout.write(bytes)",
+      ].join("; "),
+    ],
   });
 
-  assertEquals(result, `${"a".repeat(997)}\uFFFD`);
+  expect(result).toBe(`${"a".repeat(997)}�`);
 });
 
-Deno.test("cli - drops a character split by the cut", async () => {
-  const executable = Deno.execPath();
+test("cli - drops a character split by the cut", async () => {
+  const executable = process.execPath;
   const cap = 999;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
@@ -238,19 +218,21 @@ Deno.test("cli - drops a character split by the cut", async () => {
     command: executable,
     // The same output with one byte less of cap: the cut falls inside the
     // character, and its kept prefix ends without a replacement character.
-    args: ["eval", [
-      "const bytes = new Uint8Array(1000)",
-      "bytes.fill(97)",
-      "bytes[999] = 0xc3",
-      "await Deno.stdout.write(bytes)",
-    ].join("; ")],
+    args: [
+      "-e",
+      [
+        "const bytes = Buffer.alloc(1000, 97)",
+        "bytes[999] = 0xc3",
+        "process.stdout.write(bytes)",
+      ].join("; "),
+    ],
   });
 
-  assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 999 bytes]`);
+  expect(result).toBe(`${"a".repeat(cap)}\n\n…[output truncated at 999 bytes]`);
 });
 
-Deno.test("cli - bounds the result to the cap across stdout and stderr", async () => {
-  const executable = Deno.execPath();
+test("cli - bounds the result to the cap across stdout and stderr", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
@@ -258,18 +240,20 @@ Deno.test("cli - bounds the result to the cap across stdout and stderr", async (
     command: executable,
     // Each pipe keeps up to the cap, and the assembled result is cut to
     // the cap once escaped — dropping stderr's tail here.
-    args: ["eval", [
-      "await Deno.stdout.write(new Uint8Array(1500).fill(97))",
-      "await new Promise((resolve) => setTimeout(resolve, 100))",
-      "await Deno.stderr.write(new Uint8Array(1500).fill(98))",
-    ].join("; ")],
+    args: [
+      "-e",
+      [
+        "process.stdout.write(Buffer.alloc(1500, 97))",
+        "setTimeout(() => process.stderr.write(Buffer.alloc(1500, 98)), 100)",
+      ].join("; "),
+    ],
   });
 
-  assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 1000 bytes]`);
+  expect(result).toBe(`${"a".repeat(cap)}\n\n…[output truncated at 1000 bytes]`);
 });
 
-Deno.test("cli - keeps the result at the cap for output that escapes large", async () => {
-  const executable = Deno.execPath();
+test("cli - keeps the result at the cap for output that escapes large", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
@@ -277,152 +261,143 @@ Deno.test("cli - keeps the result at the cap for output that escapes large", asy
     command: executable,
     // NUL bytes escape to 6 bytes each in the model request: 1500 of them
     // must be cut to what escapes within the cap, not kept whole.
-    args: ["eval", "await Deno.stdout.write(new Uint8Array(1500))"],
+    args: ["-e", "process.stdout.write(Buffer.alloc(1500))"],
   });
 
-  assertEquals(
-    result,
-    `${"\0".repeat(166)}\n\n…[output truncated at 1000 bytes]`,
-  );
+  expect(result).toBe(`${"\0".repeat(166)}\n\n…[output truncated at 1000 bytes]`);
 });
 
-Deno.test("cli - keeps a failing command's stderr diagnostic beside flooded stdout", async () => {
-  const executable = Deno.execPath();
+// The children below set process.exitCode rather than calling
+// process.exit(), which could cut off output still being written to a pipe.
+
+test("cli - keeps a failing command's stderr diagnostic beside flooded stdout", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
-  const failure = await cliTool.call({
-    command: executable,
-    // stdout spends its pipe's cap long before the diagnostic is written,
-    // so the failure's reason must survive the stdout flood.
-    args: ["eval", [
-      "await Deno.stdout.write(new Uint8Array(1500).fill(97))",
-      "await new Promise((resolve) => setTimeout(resolve, 100))",
-      'await Deno.stderr.write(new TextEncoder().encode("boom"))',
-      "Deno.exit(3)",
-    ].join("; ")],
-  }).catch((error: unknown) => error);
+  const failure = await cliTool
+    .call({
+      command: executable,
+      // stdout spends its pipe's cap long before the diagnostic is written,
+      // so the failure's reason must survive the stdout flood.
+      args: [
+        "-e",
+        [
+          "process.stdout.write(Buffer.alloc(1500, 97))",
+          'setTimeout(() => { process.stderr.write("boom"); process.exitCode = 3; }, 100)',
+        ].join("; "),
+      ],
+    })
+    .catch((error: unknown) => error);
 
-  assertInstanceOf(failure, Error);
-  assertEquals(failure.message, `boom\n\n…[output truncated at 1000 bytes]`);
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe(`boom\n\n…[output truncated at 1000 bytes]`);
 });
 
-Deno.test("cli - reports a truncated stderr prefix when a command fails", async () => {
-  const executable = Deno.execPath();
+test("cli - reports a truncated stderr prefix when a command fails", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
-  const failure = await cliTool.call({
-    command: executable,
-    args: [
-      "eval",
-      "await Deno.stderr.write(new Uint8Array(1500).fill(101)); Deno.exit(3)",
-    ],
-  }).catch((error: unknown) => error);
+  const failure = await cliTool
+    .call({
+      command: executable,
+      args: ["-e", "process.stderr.write(Buffer.alloc(1500, 101)); process.exitCode = 3"],
+    })
+    .catch((error: unknown) => error);
 
-  assertInstanceOf(failure, Error);
-  assertEquals(
-    failure.message,
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe(
     `${"e".repeat(cap)}\n\n…[output truncated at 1000 bytes]`,
   );
 });
 
-Deno.test("cli - notes truncation on failure even when stderr is empty", async () => {
-  const executable = Deno.execPath();
+test("cli - notes truncation on failure even when stderr is empty", async () => {
+  const executable = process.execPath;
   const cap = 1000;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
-  const failure = await cliTool.call({
-    command: executable,
-    args: [
-      "eval",
-      "await Deno.stdout.write(new Uint8Array(1500).fill(97)); Deno.exit(3)",
-    ],
-  }).catch((error: unknown) => error);
+  const failure = await cliTool
+    .call({
+      command: executable,
+      args: ["-e", "process.stdout.write(Buffer.alloc(1500, 97)); process.exitCode = 3"],
+    })
+    .catch((error: unknown) => error);
 
-  assertInstanceOf(failure, Error);
-  assertEquals(
-    failure.message,
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as Error).message).toBe(
     `Command exited with code 3\n\n…[output truncated at 1000 bytes]`,
   );
 });
 
-Deno.test("cli - truncates at the default cap", async () => {
-  const executable = Deno.execPath();
+test("cli - truncates at the default cap", async () => {
+  const executable = process.execPath;
   const cliTool = cli({ allowedCommands: [executable] });
 
   const result = await cliTool.call({
     command: executable,
-    args: [
-      "eval",
-      "await Deno.stdout.write(new Uint8Array(512 * 1024 + 1).fill(97))",
-    ],
+    args: ["-e", "process.stdout.write(Buffer.alloc(512 * 1024 + 1, 97))"],
   });
 
-  assertEquals(
-    result,
-    `${
-      "a".repeat(DEFAULT_CLI_MAX_OUTPUT_BYTES)
-    }\n\n…[output truncated at 512 KiB]`,
+  expect(result).toBe(
+    `${"a".repeat(DEFAULT_CLI_MAX_OUTPUT_BYTES)}\n\n…[output truncated at 512 KiB]`,
   );
 });
 
-Deno.test("cli - keeps memory bounded when a command emits far past the cap", async () => {
+test("cli - keeps memory bounded when a command emits far past the cap", async () => {
   const forceGc = (globalThis as { gc?: () => void }).gc;
   if (!forceGc) {
     throw new Error(
-      "forced GC is unavailable; run the suite with " +
-        "`--v8-flags=--expose-gc` (the `deno task test` default)",
+      "forced GC is unavailable; run the suite with `--expose-gc` " +
+        "(set for the test workers by vite.config.ts test.execArgv)",
     );
   }
-  const executable = Deno.execPath();
+  const executable = process.execPath;
   const cap = 64 * 1024;
   const cliTool = cli({ allowedCommands: [executable], maxOutputBytes: cap });
 
   forceGc();
   await new Promise((resolve) => setTimeout(resolve, 0));
   forceGc();
-  const before = Deno.memoryUsage().heapUsed;
+  const before = process.memoryUsage().heapUsed;
 
   const result = await cliTool.call({
     command: executable,
-    args: [
-      "eval",
-      "await Deno.stdout.write(new Uint8Array(50 * 1024 * 1024).fill(97))",
-    ],
+    args: ["-e", "process.stdout.write(Buffer.alloc(50 * 1024 * 1024, 97))"],
   });
 
   forceGc();
   await new Promise((resolve) => setTimeout(resolve, 0));
   forceGc();
-  const after = Deno.memoryUsage().heapUsed;
+  const after = process.memoryUsage().heapUsed;
 
-  assertEquals(result, `${"a".repeat(cap)}\n\n…[output truncated at 64 KiB]`);
+  expect(result).toBe(`${"a".repeat(cap)}\n\n…[output truncated at 64 KiB]`);
   // The child emitted 50 MiB and the tool kept 64 KiB of it. The bound is
   // loose so runtime heap drift cannot fail a healthy run, while holding
   // even one full copy of the output would blow past it.
   const growth = after - before;
-  assert(
+  expect(
     growth < 8 * 1024 * 1024,
     `emitting 50 MiB grew the heap by ${(growth / 1024).toFixed(0)} KiB: ` +
       `command output is being buffered, not streamed`,
-  );
+  ).toBe(true);
 });
 
-Deno.test("cli - describes the output cap", () => {
+test("cli - describes the output cap", () => {
   const cliTool = cli({ allowedCommands: ["echo"], maxOutputBytes: 2048 });
 
-  assert(
-    cliTool.description.includes(
-      "Output over 2 KiB (stdout and stderr combined) is truncated.",
-    ),
+  expect(cliTool.description).toContain(
+    "Output over 2 KiB (stdout and stderr combined) is truncated.",
   );
 });
 
-Deno.test("cli - rejects an invalid maxOutputBytes", () => {
-  assertThrows(
-    () => cli({ allowedCommands: ["echo"], maxOutputBytes: 0 }),
-    TypeError,
-    "maxBytes must be a positive integer",
-  );
+test("cli - rejects an invalid maxOutputBytes", () => {
+  let error: unknown;
+  try {
+    cli({ allowedCommands: ["echo"], maxOutputBytes: 0 });
+  } catch (e) {
+    error = e;
+  }
+  expect(error).toBeInstanceOf(TypeError);
+  expect((error as TypeError).message).toContain("maxBytes must be a positive integer");
 });

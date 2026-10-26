@@ -1,26 +1,12 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
+import { expect, test } from "vite-plus/test";
 // Dev-only SDK imports for the in-process server; publish excludes tests.
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { mcp, type McpTransport } from "@/tools/mcp/mcp.ts";
-import { callTool, ToolOutput, tools } from "@/tools/mod.ts";
-import { agent } from "@/agent/mod.ts";
-import type {
-  BaseModel,
-  JSONSchema,
-  Message,
-  ModelResult,
-} from "@/agent/mod.ts";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { mcp, type McpTransport } from "./mcp.ts";
+import { callTool, ToolOutput, tools } from "../mod.ts";
+import { agent } from "../../agent/mod.ts";
+import type { BaseModel, JSONSchema, Message, ModelResult } from "../../agent/mod.ts";
 
 interface ToolDef {
   name: string;
@@ -43,9 +29,7 @@ const ECHO_SCHEMA = {
  * Returns the mutable tool list and a record of original names the
  * server was called with.
  */
-async function connectFixture(
-  options: { allowedTools?: string[] } = {},
-) {
+async function connectFixture(options: { allowedTools?: string[] } = {}) {
   const defs: ToolDef[] = [
     { name: "echo", inputSchema: ECHO_SCHEMA },
     {
@@ -65,8 +49,7 @@ async function connectFixture(
     { name: "fail", inputSchema: { type: "object", properties: {} } },
     { name: "picture", inputSchema: { type: "object", properties: {} } },
     {
-      name:
-        "a_tool_with_an_extremely_long_name_that_exceeds_the_provider_limit",
+      name: "a_tool_with_an_extremely_long_name_that_exceeds_the_provider_limit",
       inputSchema: { type: "object", properties: {} },
     },
     {
@@ -86,11 +69,7 @@ async function connectFixture(
   server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: defs }));
   server.setRequestHandler(
     CallToolRequestSchema,
-    (
-      request: {
-        params: { name: string; arguments?: Record<string, unknown> };
-      },
-    ) => {
+    (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
       const { name, arguments: args } = request.params;
       calledWith.push(name);
 
@@ -126,8 +105,7 @@ async function connectFixture(
     },
   );
 
-  const [clientTransport, serverTransport] = InMemoryTransport
-    .createLinkedPair();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   const connection = await mcp({
@@ -139,58 +117,51 @@ async function connectFixture(
   return { connection, defs, calledWith };
 }
 
-Deno.test("mcp - lists and wraps tools with prefixed names and verbatim schemas", async () => {
+test("mcp - lists and wraps tools with prefixed names and verbatim schemas", async () => {
   const { connection } = await connectFixture();
   try {
     const names = connection.tools().map((tool) => tool.name);
-    assert(names.includes("fixture_echo"), `echo missing in ${names}`);
-    assert(names.includes("fixture_add"), `add missing in ${names}`);
-    assertEquals(connection.tools().length, 7);
+    expect(names, `echo missing in ${names}`).toContain("fixture_echo");
+    expect(names, `add missing in ${names}`).toContain("fixture_add");
+    expect(connection.tools().length).toBe(7);
 
-    const echo = connection.tools().find((tool) =>
-      tool.name === "fixture_echo"
-    );
-    assertEquals(echo?.input.jsonSchema(), ECHO_SCHEMA as JSONSchema);
+    const echo = connection.tools().find((tool) => tool.name === "fixture_echo");
+    expect(echo?.input.jsonSchema()).toStrictEqual(ECHO_SCHEMA as JSONSchema);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - calls the server with the original unprefixed name", async () => {
+test("mcp - calls the server with the original unprefixed name", async () => {
   const { connection, calledWith } = await connectFixture();
   try {
-    const echo = connection.tools().find((tool) =>
-      tool.name === "fixture_echo"
-    );
-    assertEquals(await echo?.call({ message: "hi" }), "echo: hi");
-    assertEquals(calledWith, ["echo"]);
+    const echo = connection.tools().find((tool) => tool.name === "fixture_echo");
+    expect(await echo?.call({ message: "hi" })).toBe("echo: hi");
+    expect(calledWith).toStrictEqual(["echo"]);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - prefers structuredContent over duplicate text", async () => {
+test("mcp - prefers structuredContent over duplicate text", async () => {
   const { connection } = await connectFixture();
   try {
     const add = connection.tools().find((tool) => tool.name === "fixture_add");
-    assertEquals(await add?.call({ a: 1, b: 2 }), JSON.stringify({ sum: 3 }));
+    expect(await add?.call({ a: 1, b: 2 })).toBe(JSON.stringify({ sum: 3 }));
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - image blocks become files on the tool result", async () => {
+test("mcp - image blocks become files on the tool result", async () => {
   const { connection } = await connectFixture();
   try {
-    const picture = connection.tools().find((tool) =>
-      tool.name === "fixture_picture"
-    );
+    const picture = connection.tools().find((tool) => tool.name === "fixture_picture");
     const output = await picture?.call({});
-    assert(output instanceof ToolOutput);
-    assertEquals(output.output, "a tiny png");
-    assertEquals(output.files, [
-      { file: { mimeType: "image/png", data: "aGk=" } },
-    ]);
+    expect(output).toBeInstanceOf(ToolOutput);
+    if (!(output instanceof ToolOutput)) return;
+    expect(output.output).toBe("a tiny png");
+    expect(output.files).toStrictEqual([{ file: { mimeType: "image/png", data: "aGk=" } }]);
 
     // Through callTool, the wrapper unwraps into result.output + files.
     const toolCall = {
@@ -202,11 +173,13 @@ Deno.test("mcp - image blocks become files on the tool result", async () => {
       { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] },
     ]);
     const toolMessage = messages.at(-1);
-    assert(toolMessage?.role === "tool");
+    expect(toolMessage?.role).toBe("tool");
+    if (toolMessage?.role !== "tool") return;
     const content = toolMessage.contents[0];
-    assert("toolResult" in content);
-    assertEquals(content.toolResult.result.output, "a tiny png");
-    assertEquals(content.toolResult.files, [
+    expect(content).toHaveProperty("toolResult");
+    if (!("toolResult" in content)) return;
+    expect(content.toolResult.result.output).toBe("a tiny png");
+    expect(content.toolResult.files).toStrictEqual([
       { file: { mimeType: "image/png", data: "aGk=" } },
     ]);
   } finally {
@@ -214,13 +187,13 @@ Deno.test("mcp - image blocks become files on the tool result", async () => {
   }
 });
 
-Deno.test("mcp - isError rejects and lands in the callTool error path", async () => {
+test("mcp - isError rejects and lands in the callTool error path", async () => {
   const { connection } = await connectFixture();
   try {
-    const fail = connection.tools().find((tool) =>
-      tool.name === "fixture_fail"
-    );
-    await assertRejects(() => fail!.call({}), Error, "boom");
+    const fail = connection.tools().find((tool) => tool.name === "fixture_fail");
+    const error = await fail!.call({}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("boom");
 
     // Through callTool, the rejection becomes a model-visible tool error.
     const toolCall = {
@@ -232,45 +205,43 @@ Deno.test("mcp - isError rejects and lands in the callTool error path", async ()
       { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] },
     ]);
     const toolMessage = messages.at(-1);
-    assert(toolMessage?.role === "tool");
+    expect(toolMessage?.role).toBe("tool");
+    if (toolMessage?.role !== "tool") return;
     const content = toolMessage.contents[0];
-    assert("toolResult" in content);
-    assertStringIncludes(String(content.toolResult.result.error), "boom");
+    expect(content).toHaveProperty("toolResult");
+    if (!("toolResult" in content)) return;
+    expect(String(content.toolResult.result.error)).toContain("boom");
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - allowedTools filters by original name", async () => {
+test("mcp - allowedTools filters by original name", async () => {
   const { connection } = await connectFixture({ allowedTools: ["echo"] });
   try {
-    assertEquals(
-      connection.tools().map((tool) => tool.name),
-      ["fixture_echo"],
-    );
+    expect(connection.tools().map((tool) => tool.name)).toStrictEqual(["fixture_echo"]);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - caps over-long combined names end-to-end", async () => {
+test("mcp - caps over-long combined names end-to-end", async () => {
   const { connection } = await connectFixture();
   try {
-    const long = connection.tools().find((tool) =>
-      tool.name.startsWith("fixture_a_tool_with_an_extremely_long")
-    );
-    assert(long, "long-named tool missing");
-    assertEquals(long.name.length, 64);
-    assertMatch(long.name, /^[a-zA-Z0-9_-]{1,64}$/);
+    const long = connection
+      .tools()
+      .find((tool) => tool.name.startsWith("fixture_a_tool_with_an_extremely_long"));
+    expect(long, "long-named tool missing").toBeDefined();
+    expect(long!.name.length).toBe(64);
+    expect(long!.name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - rejects an invalid server name before connecting", async () => {
+test("mcp - rejects an invalid server name before connecting", async () => {
   let started = false;
   const transport: McpTransport = {
-    // deno-lint-ignore require-await
     start: async () => {
       started = true;
     },
@@ -278,32 +249,30 @@ Deno.test("mcp - rejects an invalid server name before connecting", async () => 
     close: () => Promise.resolve(),
   };
 
-  await assertRejects(
-    () => mcp({ name: "bad name!", transport }),
-    RangeError,
-    "must match",
-  );
-  assertEquals(started, false);
+  const error = await mcp({ name: "bad name!", transport }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(RangeError);
+  expect((error as RangeError).message).toContain("must match");
+  expect(started).toBe(false);
 });
 
-Deno.test("mcp - refresh picks up new tools; prior arrays stay unchanged", async () => {
+test("mcp - refresh picks up new tools; prior arrays stay unchanged", async () => {
   const { connection, defs } = await connectFixture();
   try {
     const before = connection.tools();
-    assertEquals(before.length, 7);
+    expect(before.length).toBe(7);
 
     defs.push({ name: "extra", inputSchema: { type: "object" } });
     const refreshed = await connection.refresh();
 
-    assert(refreshed.some((tool) => tool.name === "fixture_extra"));
-    assertEquals(before.length, 7);
-    assertEquals(connection.tools().length, 8);
+    expect(refreshed.some((tool) => tool.name === "fixture_extra")).toBe(true);
+    expect(before.length).toBe(7);
+    expect(connection.tools().length).toBe(8);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - colliding sanitized names throw instead of clobbering", async () => {
+test("mcp - colliding sanitized names throw instead of clobbering", async () => {
   const { connection, defs } = await connectFixture();
   try {
     // Both sanitize to "fixture_repo_search" — silent last-one-wins would
@@ -312,19 +281,21 @@ Deno.test("mcp - colliding sanitized names throw instead of clobbering", async (
       { name: "repo.search", inputSchema: { type: "object" } },
       { name: "repo_search", inputSchema: { type: "object" } },
     );
-    const error = await assertRejects(() => connection.refresh(), Error);
-    assertStringIncludes(error.message, "repo.search");
-    assertStringIncludes(error.message, "repo_search");
-    assertStringIncludes(error.message, "allowedTools");
+    const error = await connection.refresh().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    const { message } = error as Error;
+    expect(message).toContain("repo.search");
+    expect(message).toContain("repo_search");
+    expect(message).toContain("allowedTools");
 
     // The prior snapshot stays intact and usable.
-    assertEquals(connection.tools().length, 7);
+    expect(connection.tools().length).toBe(7);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - agent end-to-end through Agent.run", async () => {
+test("mcp - agent end-to-end through Agent.run", async () => {
   const { connection, calledWith } = await connectFixture();
   try {
     const toolCall = {
@@ -359,46 +330,39 @@ Deno.test("mcp - agent end-to-end through Agent.run", async () => {
 
     const messages = await assistant.run("Add 1 and 2");
 
-    assertEquals(calledWith, ["add"]);
+    expect(calledWith).toStrictEqual(["add"]);
     const toolMessage = messages.at(-2);
-    assert(toolMessage?.role === "tool");
+    expect(toolMessage?.role).toBe("tool");
+    if (toolMessage?.role !== "tool") return;
     const content = toolMessage.contents[0];
-    assert("toolResult" in content);
-    assertEquals(content.toolResult.result.output, JSON.stringify({ sum: 3 }));
-    assertEquals(messages.at(-1)?.contents, [{ text: "The sum is 3." }]);
+    expect(content).toHaveProperty("toolResult");
+    if (!("toolResult" in content)) return;
+    expect(content.toolResult.result.output).toBe(JSON.stringify({ sum: 3 }));
+    expect(messages.at(-1)?.contents).toStrictEqual([{ text: "The sum is 3." }]);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - tool title is surfaced in the model-visible description", async () => {
+test("mcp - tool title is surfaced in the model-visible description", async () => {
   const { connection } = await connectFixture();
   try {
-    const titled = connection.tools().find((tool) =>
-      tool.name === "fixture_titled"
-    );
-    assert(titled, "titled tool missing");
-    assertEquals(
-      titled.description,
-      "Titled Tool — A tool with a display title.",
-    );
+    const titled = connection.tools().find((tool) => tool.name === "fixture_titled");
+    expect(titled, "titled tool missing").toBeDefined();
+    expect(titled!.description).toBe("Titled Tool — A tool with a display title.");
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - resultType input_required throws a descriptive error", async () => {
+test("mcp - resultType input_required throws a descriptive error", async () => {
   const { connection } = await connectFixture();
   try {
-    const needsInput = connection.tools().find((tool) =>
-      tool.name === "fixture_needs_input"
-    );
-    assert(needsInput, "needs_input tool missing");
-    await assertRejects(
-      () => needsInput.call({}),
-      Error,
-      "Please specify the file path.",
-    );
+    const needsInput = connection.tools().find((tool) => tool.name === "fixture_needs_input");
+    expect(needsInput, "needs_input tool missing").toBeDefined();
+    const error = await needsInput!.call({}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Please specify the file path.");
   } finally {
     await connection.close();
   }
@@ -412,28 +376,22 @@ Deno.test("mcp - resultType input_required throws a descriptive error", async ()
  * every request, proving the loop stopped instead of merely erroring late.
  */
 async function paginatingServer(
-  paginate: (
-    cursor: string | undefined,
-  ) => { tools: ToolDef[]; nextCursor?: string },
+  paginate: (cursor: string | undefined) => { tools: ToolDef[]; nextCursor?: string },
 ) {
   const requestedCursors: (string | undefined)[] = [];
   const server = new Server(
     { name: "huuma-pagination-fixture", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(
-    ListToolsRequestSchema,
-    (request: { params?: { cursor?: string } }) => {
-      // The first request carries no params at all (the client sends
-      // `listTools(undefined)`), so `params` is optional here.
-      const cursor = request.params?.cursor;
-      requestedCursors.push(cursor);
-      return paginate(cursor);
-    },
-  );
+  server.setRequestHandler(ListToolsRequestSchema, (request: { params?: { cursor?: string } }) => {
+    // The first request carries no params at all (the client sends
+    // `listTools(undefined)`), so `params` is optional here.
+    const cursor = request.params?.cursor;
+    requestedCursors.push(cursor);
+    return paginate(cursor);
+  });
 
-  const [clientTransport, serverTransport] = InMemoryTransport
-    .createLinkedPair();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
 
   return { transport: clientTransport as McpTransport, requestedCursors };
@@ -443,7 +401,7 @@ function pageTool(name: string): ToolDef {
   return { name, inputSchema: { type: "object", properties: {} } };
 }
 
-Deno.test("mcp - a server that echoes its cursor rejects instead of hanging", async () => {
+test("mcp - a server that echoes its cursor rejects instead of hanging", async () => {
   const { transport, requestedCursors } = await paginatingServer(() => ({
     tools: [pageTool("stuck_tool")],
     nextCursor: "stuck",
@@ -451,86 +409,69 @@ Deno.test("mcp - a server that echoes its cursor rejects instead of hanging", as
 
   // The eager listing inside mcp() must fail fast with an error naming the
   // server, the echoed cursor, and the tools collected so far.
-  const error = await assertRejects(
-    () => mcp({ name: "echo-server", transport }),
-    Error,
-  );
-  assertStringIncludes(error.message, "echo-server");
-  assertStringIncludes(error.message, "stuck");
-  assertStringIncludes(error.message, "2 tools");
+  const error = await mcp({ name: "echo-server", transport }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("echo-server");
+  expect((error as Error).message).toContain("stuck");
+  expect((error as Error).message).toContain("2 tools");
   // Two requests: the first page, then one re-request of the echoed
   // cursor that exposed the loop — and no more.
-  assertEquals(requestedCursors, [undefined, "stuck"]);
+  expect(requestedCursors).toStrictEqual([undefined, "stuck"]);
 });
 
-Deno.test("mcp - alternating cursors are detected as a cycle", async () => {
-  const pages = new Map<
-    string | undefined,
-    { tools: ToolDef[]; nextCursor?: string }
-  >([
+test("mcp - alternating cursors are detected as a cycle", async () => {
+  const pages = new Map<string | undefined, { tools: ToolDef[]; nextCursor?: string }>([
     [undefined, { tools: [pageTool("first")], nextCursor: "A" }],
     ["A", { tools: [pageTool("second")], nextCursor: "B" }],
     ["B", { tools: [pageTool("third")], nextCursor: "A" }],
   ]);
-  const { transport, requestedCursors } = await paginatingServer((cursor) =>
-    pages.get(cursor)!
-  );
+  const { transport, requestedCursors } = await paginatingServer((cursor) => pages.get(cursor)!);
 
-  const error = await assertRejects(
-    () => mcp({ name: "cycle-server", transport }),
-    Error,
-  );
-  assertStringIncludes(error.message, "cycle-server");
-  assertStringIncludes(error.message, "A");
-  assertEquals(requestedCursors, [undefined, "A", "B"]);
+  const error = await mcp({ name: "cycle-server", transport }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("cycle-server");
+  expect((error as Error).message).toContain("A");
+  expect(requestedCursors).toStrictEqual([undefined, "A", "B"]);
 });
 
-Deno.test("mcp - endless unique cursors stop at the page cap", async () => {
+test("mcp - endless unique cursors stop at the page cap", async () => {
   const { transport, requestedCursors } = await paginatingServer((cursor) => ({
     tools: [pageTool(`tool_${cursor ?? "0"}`)],
-    nextCursor: cursor === undefined
-      ? "page-1"
-      : `page-${Number(cursor.slice(5)) + 1}`,
+    nextCursor: cursor === undefined ? "page-1" : `page-${Number(cursor.slice(5)) + 1}`,
   }));
 
   // Every cursor is fresh, so only the page cap can stop this server.
-  const error = await assertRejects(
-    () => mcp({ name: "endless", transport }),
-    Error,
-  );
-  assertStringIncludes(error.message, "endless");
-  assertStringIncludes(error.message, "100 pages");
-  assertStringIncludes(error.message, "100 tools");
+  const error = await mcp({ name: "endless", transport }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("endless");
+  expect((error as Error).message).toContain("100 pages");
+  expect((error as Error).message).toContain("100 tools");
   // Exactly 100 requests — the loop is bounded, not merely slow.
-  assertEquals(requestedCursors.length, 100);
+  expect(requestedCursors.length).toBe(100);
 });
 
-Deno.test("mcp - a well-behaved paginating server returns every page", async () => {
-  const pages = new Map<
-    string | undefined,
-    { tools: ToolDef[]; nextCursor?: string }
-  >([
+test("mcp - a well-behaved paginating server returns every page", async () => {
+  const pages = new Map<string | undefined, { tools: ToolDef[]; nextCursor?: string }>([
     [undefined, { tools: [pageTool("first")], nextCursor: "p2" }],
     ["p2", { tools: [pageTool("second")], nextCursor: "p3" }],
     ["p3", { tools: [pageTool("third")] }],
   ]);
-  const { transport, requestedCursors } = await paginatingServer((cursor) =>
-    pages.get(cursor)!
-  );
+  const { transport, requestedCursors } = await paginatingServer((cursor) => pages.get(cursor)!);
 
   const connection = await mcp({ name: "paged", transport });
   try {
-    assertEquals(
-      connection.tools().map((tool) => tool.name),
-      ["paged_first", "paged_second", "paged_third"],
-    );
-    assertEquals(requestedCursors, [undefined, "p2", "p3"]);
+    expect(connection.tools().map((tool) => tool.name)).toStrictEqual([
+      "paged_first",
+      "paged_second",
+      "paged_third",
+    ]);
+    expect(requestedCursors).toStrictEqual([undefined, "p2", "p3"]);
   } finally {
     await connection.close();
   }
 });
 
-Deno.test("mcp - refresh hits the same pagination bound as the eager listing", async () => {
+test("mcp - refresh hits the same pagination bound as the eager listing", async () => {
   // Terminate after one page so mcp() connects cleanly; flip to an echo
   // loop before refreshing to prove the later listing is guarded too.
   let echo = false;
@@ -541,22 +482,17 @@ Deno.test("mcp - refresh hits the same pagination bound as the eager listing", a
 
   const connection = await mcp({ name: "flipper", transport });
   try {
-    assertEquals(
-      connection.tools().map((tool) => tool.name),
-      ["flipper_only"],
-    );
+    expect(connection.tools().map((tool) => tool.name)).toStrictEqual(["flipper_only"]);
 
     echo = true;
-    const error = await assertRejects(() => connection.refresh(), Error);
-    assertStringIncludes(error.message, "flipper");
-    assertStringIncludes(error.message, "stuck");
+    const error = await connection.refresh().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("flipper");
+    expect((error as Error).message).toContain("stuck");
 
     // The failed refresh leaves the prior snapshot usable.
-    assertEquals(
-      connection.tools().map((tool) => tool.name),
-      ["flipper_only"],
-    );
-    assertEquals(requestedCursors, [undefined, undefined, "stuck"]);
+    expect(connection.tools().map((tool) => tool.name)).toStrictEqual(["flipper_only"]);
+    expect(requestedCursors).toStrictEqual([undefined, undefined, "stuck"]);
   } finally {
     await connection.close();
   }

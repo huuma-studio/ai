@@ -16,9 +16,7 @@ export class PassthroughSchema implements Schema<Record<string, unknown>> {
     this.#jsonSchema = jsonSchema;
   }
 
-  validate(
-    value: unknown,
-  ): { value: Record<string, unknown>; errors: undefined } {
+  validate(value: unknown): { value: Record<string, unknown>; errors: undefined } {
     // Tool calls without arguments arrive as null/undefined props; MCP
     // servers expect an (empty) arguments object.
     return {

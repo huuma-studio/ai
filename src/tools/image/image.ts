@@ -1,4 +1,5 @@
-import { encodeBase64 } from "@std/encoding/base64";
+import { Buffer } from "node:buffer";
+import type { FileHandle } from "node:fs/promises";
 import { object } from "@huuma/validate/object";
 import { string } from "@huuma/validate/string";
 import { type Tool, tool, type ToolOutput, toolOutput } from "../mod.ts";
@@ -19,12 +20,7 @@ export interface ImageToolOptions {
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
 /** MIME types the magic-byte sniffer can detect. */
-const SNIFFABLE_IMAGE_MIME_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-];
+const SNIFFABLE_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 /** Magic-byte signatures of the supported image formats. */
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -47,12 +43,12 @@ const WEBP_SIGNATURE = [0x57, 0x45, 0x42, 0x50]; // "WEBP", at offset 8
  *
  * @example
  * ```typescript
- * import { agent } from "jsr:@huuma/ai/agent";
- * import { openai } from "jsr:@huuma/ai/models/openai";
- * import { image } from "jsr:@huuma/ai/tools";
+ * import { agent } from "@huuma/ai/agent";
+ * import { openai } from "@huuma/ai/models/openai";
+ * import { image } from "@huuma/ai/tools";
  *
  * const assistant = agent({
- *   model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+ *   model: openai({ apiKey: process.env.OPENAI_API_KEY }),
  *   modelId: "gpt-5.5",
  *   systemPrompt: "You describe images concisely.",
  *   tools: [image()],
@@ -66,13 +62,10 @@ const WEBP_SIGNATURE = [0x57, 0x45, 0x42, 0x50]; // "WEBP", at offset 8
  * @param options Optional size cap and allowed MIME types.
  * @returns A {@link Tool} that attaches image files to its tool results.
  */
-export function image(
-  {
-    maxBytes = DEFAULT_MAX_BYTES,
-    allowedMimeTypes = SNIFFABLE_IMAGE_MIME_TYPES,
-  }: ImageToolOptions = {},
-  // deno-lint-ignore no-explicit-any
-): Tool<any, ToolOutput<string>> {
+export function image({
+  maxBytes = DEFAULT_MAX_BYTES,
+  allowedMimeTypes = SNIFFABLE_IMAGE_MIME_TYPES,
+}: ImageToolOptions = {}): Tool<any, ToolOutput<string>> {
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
     throw new TypeError("Image maxBytes must be a finite, positive number");
   }
@@ -99,31 +92,30 @@ export function image(
         }
         bytes = await readBounded(file, path, maxBytes, context.signal);
       } finally {
-        file.close();
+        await file.close();
       }
 
       const mimeType = sniffImageMime(bytes);
       if (mimeType === undefined) {
         throw new Error(
-          `Unsupported image format: ${path}. Supported formats: ${
-            SNIFFABLE_IMAGE_MIME_TYPES.join(", ")
-          }.`,
+          `Unsupported image format: ${path}. Supported formats: ${SNIFFABLE_IMAGE_MIME_TYPES.join(
+            ", ",
+          )}.`,
         );
       }
 
       if (!allowedMimeTypes.includes(mimeType)) {
         throw new Error(
-          `Image type not allowed: ${path} is ${mimeType}. Allowed types: ${
-            allowedMimeTypes.join(", ")
-          }.`,
+          `Image type not allowed: ${path} is ${mimeType}. Allowed types: ${allowedMimeTypes.join(
+            ", ",
+          )}.`,
         );
       }
 
-      const data = encodeBase64(bytes);
-      return toolOutput(
-        `Image loaded: ${path} (${mimeType}, ${bytes.byteLength} bytes).`,
-        [{ file: { mimeType, data } }],
-      );
+      const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+      return toolOutput(`Image loaded: ${path} (${mimeType}, ${bytes.byteLength} bytes).`, [
+        { file: { mimeType, data } },
+      ]);
     },
   });
 }
@@ -139,7 +131,7 @@ function throwIfAborted(signal: AbortSignal): void {
  * abort signal is checked between reads.
  */
 async function readBounded(
-  file: Deno.FsFile,
+  file: FileHandle,
   path: string,
   maxBytes: number,
   signal: AbortSignal,
@@ -150,8 +142,8 @@ async function readBounded(
     const buffer = new Uint8Array(64 * 1024);
     while (total <= maxBytes) {
       throwIfAborted(signal);
-      const read = await file.read(buffer);
-      if (read === null) break;
+      const { bytesRead: read } = await file.read(buffer, 0, buffer.length);
+      if (read === 0) break;
       total += read;
       chunks.push(buffer.slice(0, read));
     }
@@ -184,9 +176,7 @@ function concatBytes(chunks: Uint8Array[], length: number): Uint8Array {
 function sniffImageMime(bytes: Uint8Array): string | undefined {
   if (hasPrefix(bytes, PNG_SIGNATURE)) return "image/png";
   if (hasPrefix(bytes, JPEG_SIGNATURE)) return "image/jpeg";
-  if (
-    hasPrefix(bytes, GIF87a_SIGNATURE) || hasPrefix(bytes, GIF89a_SIGNATURE)
-  ) {
+  if (hasPrefix(bytes, GIF87a_SIGNATURE) || hasPrefix(bytes, GIF89a_SIGNATURE)) {
     return "image/gif";
   }
   if (hasPrefix(bytes, RIFF_SIGNATURE) && hasPrefix(bytes, WEBP_SIGNATURE, 8)) {
@@ -195,11 +185,7 @@ function sniffImageMime(bytes: Uint8Array): string | undefined {
   return undefined;
 }
 
-function hasPrefix(
-  bytes: Uint8Array,
-  signature: number[],
-  offset = 0,
-): boolean {
+function hasPrefix(bytes: Uint8Array, signature: number[], offset = 0): boolean {
   if (bytes.length < offset + signature.length) return false;
   return signature.every((byte, index) => bytes[offset + index] === byte);
 }

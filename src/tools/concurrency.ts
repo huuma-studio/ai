@@ -11,13 +11,8 @@
  * non-integers, and non-finite values would deadlock or mislead, so they
  * throw a {@linkcode TypeError}.
  */
-export function validateMaxConcurrency(
-  maxConcurrency: number | undefined,
-): void {
-  if (
-    maxConcurrency !== undefined &&
-    (!Number.isInteger(maxConcurrency) || maxConcurrency < 1)
-  ) {
+export function validateMaxConcurrency(maxConcurrency: number | undefined): void {
+  if (maxConcurrency !== undefined && (!Number.isInteger(maxConcurrency) || maxConcurrency < 1)) {
     throw new TypeError("maxConcurrency must be a positive integer");
   }
 }
@@ -44,9 +39,7 @@ export async function mapSettled<T, R>(
   maxConcurrency?: number,
 ): Promise<PromiseSettledResult<R>[]> {
   if (maxConcurrency === undefined) {
-    return await Promise.allSettled(
-      items.map((item, index) => mapper(item, index)),
-    );
+    return await Promise.allSettled(items.map((item, index) => mapper(item, index)));
   }
   validateMaxConcurrency(maxConcurrency);
 
@@ -66,10 +59,7 @@ export async function mapSettled<T, R>(
       }
     }
   };
-  const workers = Array.from(
-    { length: Math.min(maxConcurrency, items.length) },
-    () => runWorker(),
-  );
+  const workers = Array.from({ length: Math.min(maxConcurrency, items.length) }, () => runWorker());
   await Promise.all(workers);
   return results;
 }

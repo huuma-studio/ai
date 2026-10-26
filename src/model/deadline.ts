@@ -10,7 +10,7 @@
  * @module
  */
 
-import { abortable } from "@/model/abortable.ts";
+import { abortable } from "./abortable.ts";
 
 /** Message of the `TimeoutError` a model call rejects with once its
  * deadline expires. */
@@ -77,10 +77,7 @@ export function deadlineFrom(options: DeadlineOptions): Deadline {
   let clear: () => void = () => {};
   if (options.timeout !== undefined) {
     const controller = new AbortController();
-    const expire = () =>
-      controller.abort(
-        new DOMException(MODEL_TIMEOUT_MESSAGE, "TimeoutError"),
-      );
+    const expire = () => controller.abort(new DOMException(MODEL_TIMEOUT_MESSAGE, "TimeoutError"));
     if (options.timeout === 0) {
       expire();
     } else {
@@ -91,7 +88,7 @@ export function deadlineFrom(options: DeadlineOptions): Deadline {
   }
 
   const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
-  const errorFrom = (error: unknown) => signal?.aborted ? signal.reason : error;
+  const errorFrom = (error: unknown) => (signal?.aborted ? signal.reason : error);
 
   return {
     signal,
@@ -111,8 +108,6 @@ export function deadlineFrom(options: DeadlineOptions): Deadline {
 
 function validateTimeout(timeout: number | undefined): void {
   if (timeout !== undefined && (!Number.isFinite(timeout) || timeout < 0)) {
-    throw new TypeError(
-      "Model timeout must be a finite, non-negative number",
-    );
+    throw new TypeError("Model timeout must be a finite, non-negative number");
   }
 }

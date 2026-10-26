@@ -1,16 +1,20 @@
+import { mkdir, rm, writeFile as writeTextFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { object } from "@huuma/validate/object";
 import { type Tool, tool } from "../mod.ts";
 import { string } from "@huuma/validate/string";
-import { dirname } from "@std/path/dirname";
 import { editFile } from "./edit_file.ts";
 import { readFile } from "./read_file.ts";
+import {
+  ALREADY_EXISTS,
+  hasErrorCode,
+  IS_A_DIRECTORY,
+  NOT_FOUND,
+  PERMISSION_DENIED,
+} from "../fs_errors.ts";
 
 export { editFile } from "./edit_file.ts";
-export {
-  DEFAULT_READ_FILE_MAX_BYTES,
-  readFile,
-  type ReadFileOptions,
-} from "./read_file.ts";
+export { DEFAULT_READ_FILE_MAX_BYTES, readFile, type ReadFileOptions } from "./read_file.ts";
 
 /** Result returned by mutating file-system tools. */
 export interface FileOperationResult {
@@ -24,7 +28,6 @@ export interface FileOperationResult {
  *
  * @returns A {@link Tool} that overwrites the given file path with the supplied content.
  */
-// deno-lint-ignore no-explicit-any
 export function writeFile(): Tool<any, FileOperationResult> {
   return tool({
     name: "write_file",
@@ -37,16 +40,14 @@ export function writeFile(): Tool<any, FileOperationResult> {
     fn: async ({ path, content }) => {
       try {
         // Ensure the directory exists before writing
-        await Deno.mkdir(dirname(path), { recursive: true });
-        await Deno.writeTextFile(path, content);
+        await mkdir(dirname(path), { recursive: true });
+        await writeTextFile(path, content);
         return { success: true, path };
       } catch (error) {
-        if (error instanceof Deno.errors.PermissionDenied) {
-          throw new Error(
-            `Permission denied: ${path}. Make sure to run with --allow-write.`,
-          );
+        if (hasErrorCode(error, ...PERMISSION_DENIED)) {
+          throw new Error(`Permission denied: ${path}`);
         }
-        if (error instanceof Deno.errors.IsADirectory) {
+        if (hasErrorCode(error, IS_A_DIRECTORY)) {
           throw new Error(`Path is a directory, not a file: ${path}`);
         }
         throw error;
@@ -59,7 +60,6 @@ export function writeFile(): Tool<any, FileOperationResult> {
  *
  * @returns A {@link Tool} that creates directories (and parents) on demand.
  */
-// deno-lint-ignore no-explicit-any
 export function createDirectory(): Tool<any, FileOperationResult> {
   return tool({
     name: "create_directory",
@@ -70,18 +70,14 @@ export function createDirectory(): Tool<any, FileOperationResult> {
     }),
     fn: async ({ path }) => {
       try {
-        await Deno.mkdir(path, { recursive: true });
+        await mkdir(path, { recursive: true });
         return { success: true, path };
       } catch (error) {
-        if (error instanceof Deno.errors.PermissionDenied) {
-          throw new Error(
-            `Permission denied: ${path}. Make sure to run with --allow-write.`,
-          );
+        if (hasErrorCode(error, ...PERMISSION_DENIED)) {
+          throw new Error(`Permission denied: ${path}`);
         }
-        if (error instanceof Deno.errors.AlreadyExists) {
-          throw new Error(
-            `Path already exists and is not a directory: ${path}`,
-          );
+        if (hasErrorCode(error, ALREADY_EXISTS)) {
+          throw new Error(`Path already exists and is not a directory: ${path}`);
         }
         throw error;
       }
@@ -93,27 +89,23 @@ export function createDirectory(): Tool<any, FileOperationResult> {
  *
  * @returns A {@link Tool} that removes files or directories.
  */
-// deno-lint-ignore no-explicit-any
 export function deleteFile(): Tool<any, FileOperationResult> {
   return tool({
     name: "delete_file",
-    description:
-      "Delete a file or directory at the given path. Deletes directories recursively.",
+    description: "Delete a file or directory at the given path. Deletes directories recursively.",
     input: object({
       path: string(),
     }),
     fn: async ({ path }) => {
       try {
-        await Deno.remove(path, { recursive: true });
+        await rm(path, { recursive: true });
         return { success: true, path };
       } catch (error) {
-        if (error instanceof Deno.errors.NotFound) {
+        if (hasErrorCode(error, NOT_FOUND)) {
           throw new Error(`File or directory not found: ${path}`);
         }
-        if (error instanceof Deno.errors.PermissionDenied) {
-          throw new Error(
-            `Permission denied: ${path}. Make sure to run with --allow-write.`,
-          );
+        if (hasErrorCode(error, ...PERMISSION_DENIED)) {
+          throw new Error(`Permission denied: ${path}`);
         }
         throw error;
       }
@@ -125,13 +117,6 @@ export function deleteFile(): Tool<any, FileOperationResult> {
  *
  * @returns An array containing read, write, create-directory, delete, and edit-file tools.
  */
-// deno-lint-ignore no-explicit-any
 export function files(): Tool<any, unknown>[] {
-  return [
-    readFile(),
-    writeFile(),
-    createDirectory(),
-    deleteFile(),
-    editFile(),
-  ];
+  return [readFile(), writeFile(), createDirectory(), deleteFile(), editFile()];
 }

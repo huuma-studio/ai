@@ -7,9 +7,7 @@ const TRUNCATE_AT = 59;
 /** Validate a server namespace. Throws unless it matches `[A-Za-z0-9_-]+`. */
 export function validateServerName(name: string): void {
   if (!NAME_PATTERN.test(name)) {
-    throw new RangeError(
-      `mcp server name "${name}" must match [A-Za-z0-9_-]+`,
-    );
+    throw new RangeError(`mcp server name "${name}" must match [A-Za-z0-9_-]+`);
   }
 }
 

@@ -1,6 +1,6 @@
-import type { FileContent } from "@/mod.ts";
-import { type ToolOutput, toolOutput } from "@/tools/mod.ts";
-import type { McpCallResult, McpContentBlock } from "@/tools/mcp/types.ts";
+import type { FileContent } from "../../mod.ts";
+import { type ToolOutput, toolOutput } from "../mod.ts";
+import type { McpCallResult, McpContentBlock } from "./types.ts";
 
 /** Blocks that flatten to text; `image`/`audio` become files instead. */
 type NonMediaBlock = Exclude<McpContentBlock, { type: "image" | "audio" }>;
@@ -20,24 +20,18 @@ type NonMediaBlock = Exclude<McpContentBlock, { type: "image" | "audio" }>;
  * tool result's `files` (ADR 0004) — delivery is then the adapters'
  * job, including their fail-loud rules for unsupported media.
  */
-export function flattenResult(
-  result: McpCallResult,
-): string | ToolOutput<string> {
+export function flattenResult(result: McpCallResult): string | ToolOutput<string> {
   // MRTR (resultType "input_required") is handled in client.ts's callTool
   // before this function is ever called — keeping a second copy here would
   // let the directly tested fallback message drift from the production
   // path (which has the tool name available for a better message).
   if (result.isError) {
     const text = (result.content ?? [])
-      .filter(
-        (block): block is Extract<McpContentBlock, { type: "text" }> =>
-          block.type === "text",
-      )
+      .filter((block): block is Extract<McpContentBlock, { type: "text" }> => block.type === "text")
       .map((block) => block.text)
       .join("\n");
-    const structured = result.structuredContent !== undefined
-      ? JSON.stringify(result.structuredContent)
-      : "";
+    const structured =
+      result.structuredContent !== undefined ? JSON.stringify(result.structuredContent) : "";
     throw new Error(text || structured || "MCP tool call failed");
   }
 
@@ -51,9 +45,10 @@ export function flattenResult(
     }
   }
 
-  const output = result.structuredContent !== undefined
-    ? JSON.stringify(result.structuredContent)
-    : texts.join("\n");
+  const output =
+    result.structuredContent !== undefined
+      ? JSON.stringify(result.structuredContent)
+      : texts.join("\n");
 
   return files.length ? toolOutput(output, files) : output;
 }

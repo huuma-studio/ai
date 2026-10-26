@@ -1,15 +1,10 @@
-import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
-import type { Message, ModelMessage, ToolMessage } from "@/mod.ts";
-import { tool } from "@/tools/mod.ts";
+import { expect, test } from "vite-plus/test";
+import type { Message, ModelMessage, ToolMessage } from "../../src/mod.ts";
+import { tool } from "../../src/tools/mod.ts";
 import { object, type Schema, string } from "@huuma/validate";
-import {
-  openai,
-  openAIMessagesFrom,
-  OpenAIModel,
-  openAIToolsFrom,
-} from "./mod.ts";
+import { openai, openAIMessagesFrom, OpenAIModel, openAIToolsFrom } from "./mod.ts";
 
-Deno.test("openAIToolsFrom converts tools correctly", () => {
+test("openAIToolsFrom converts tools correctly", () => {
   const testTool = tool({
     name: "test_tool",
     description: "A test tool",
@@ -18,17 +13,14 @@ Deno.test("openAIToolsFrom converts tools correctly", () => {
   });
 
   const openAITools = openAIToolsFrom([testTool]);
-  assertEquals(openAITools.length, 1);
-  assertEquals(openAITools[0].type, "function");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((openAITools[0] as any).function.name, "test_tool");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((openAITools[0] as any).function.description, "A test tool");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((openAITools[0] as any).function.parameters, { type: "string" });
+  expect(openAITools.length).toStrictEqual(1);
+  expect(openAITools[0].type).toStrictEqual("function");
+  expect((openAITools[0] as any).function.name).toStrictEqual("test_tool");
+  expect((openAITools[0] as any).function.description).toStrictEqual("A test tool");
+  expect((openAITools[0] as any).function.parameters).toStrictEqual({ type: "string" });
 });
 
-Deno.test("openAIToolsFrom reuses the tool's cached JSON Schema", () => {
+test("openAIToolsFrom reuses the tool's cached JSON Schema", () => {
   const testTool = tool({
     name: "test_tool",
     description: "A test tool",
@@ -38,21 +30,13 @@ Deno.test("openAIToolsFrom reuses the tool's cached JSON Schema", () => {
 
   const [first] = openAIToolsFrom([testTool]);
   const [second] = openAIToolsFrom([testTool]);
-  // deno-lint-ignore no-explicit-any
   const firstFunction = (first as any).function as { parameters?: object };
-  // deno-lint-ignore no-explicit-any
   const secondFunction = (second as any).function as { parameters?: object };
-  assertEquals(
-    firstFunction.parameters === secondFunction.parameters,
-    true,
-  );
-  assertEquals(
-    firstFunction.parameters === (testTool.jsonSchema as object),
-    true,
-  );
+  expect(firstFunction.parameters === secondFunction.parameters).toStrictEqual(true);
+  expect(firstFunction.parameters === (testTool.jsonSchema as object)).toStrictEqual(true);
 });
 
-Deno.test("OpenAIModel converts a tool's schema once across repeated generate and stream calls", async () => {
+test("OpenAIModel converts a tool's schema once across repeated generate and stream calls", async () => {
   const wrapped = object({ query: string() });
   let conversions = 0;
   const counting: Schema<unknown> & { conversions: number } = {
@@ -78,18 +62,17 @@ Deno.test("OpenAIModel converts a tool's schema once across repeated generate an
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (requestInput: string | URL | Request, init) => {
-      const url = typeof requestInput === "string"
-        ? requestInput
-        : requestInput instanceof URL
-        ? requestInput.toString()
-        : requestInput.url;
+      const url =
+        typeof requestInput === "string"
+          ? requestInput
+          : requestInput instanceof URL
+            ? requestInput.toString()
+            : requestInput.url;
       if (!url.includes("/v1/chat/completions")) {
         return Promise.resolve(new Response("Not found", { status: 404 }));
       }
 
-      const body = JSON.parse(
-        (init as { body?: string })?.body ?? "{}",
-      ) as Record<string, unknown>;
+      const body = JSON.parse((init as { body?: string })?.body ?? "{}") as Record<string, unknown>;
       bodies.push(body);
 
       if (body.stream === true) {
@@ -97,9 +80,7 @@ Deno.test("OpenAIModel converts a tool's schema once across repeated generate an
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(
-              encoder.encode(
-                'data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n',
-              ),
+              encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}\n\n'),
             );
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -117,11 +98,13 @@ Deno.test("OpenAIModel converts a tool's schema once across repeated generate an
         new Response(
           JSON.stringify({
             id: "chatcmpl-123",
-            choices: [{
-              index: 0,
-              message: { role: "assistant", content: "Hello" },
-              finish_reason: "stop",
-            }],
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "Hello" },
+                finish_reason: "stop",
+              },
+            ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
@@ -141,259 +124,277 @@ Deno.test("OpenAIModel converts a tool's schema once across repeated generate an
     // drain
   }
 
-  assertEquals(counting.conversions, 1);
-  assertEquals(bodies.length, 3);
-  const expectedTools = [{
-    type: "function",
-    function: {
-      name: "counted",
-      description: "Counts schema conversions.",
-      parameters: {
-        type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"],
+  expect(counting.conversions).toStrictEqual(1);
+  expect(bodies.length).toStrictEqual(3);
+  const expectedTools = [
+    {
+      type: "function",
+      function: {
+        name: "counted",
+        description: "Counts schema conversions.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
       },
     },
-  }];
+  ];
   for (const body of bodies) {
-    assertEquals(body.tools, expectedTools);
+    expect(body.tools).toStrictEqual(expectedTools);
   }
 });
 
-Deno.test("openAIMessagesFrom converts user message", () => {
+test("openAIMessagesFrom converts user message", () => {
   const msg: Message = { role: "user", contents: "Hello" };
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result, [{ role: "user", content: "Hello" }]);
+  expect(result).toStrictEqual([{ role: "user", content: "Hello" }]);
 });
 
-Deno.test("openAIMessagesFrom converts user message with array contents", () => {
+test("openAIMessagesFrom converts user message with array contents", () => {
   const msg: Message = {
     role: "user",
     contents: [{ text: "Hello" }, { text: " world!" }],
   };
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result, [{ role: "user", content: "Hello world!" }]);
+  expect(result).toStrictEqual([{ role: "user", content: "Hello world!" }]);
 });
 
-Deno.test("openAIMessagesFrom maps base64 images to data URLs", () => {
+test("openAIMessagesFrom maps base64 images to data URLs", () => {
+  const msg: Message = {
+    role: "user",
+    contents: [{ text: "What is this?" }, { file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+  };
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "What is this?" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,aGVsbG8=" },
+        },
+      ],
+    },
+  ]);
+});
+
+test("openAIMessagesFrom passes image URLs through", () => {
   const msg: Message = {
     role: "user",
     contents: [
-      { text: "What is this?" },
-      { file: { mimeType: "image/png", data: "aGVsbG8=" } },
-    ],
-  };
-  assertEquals(openAIMessagesFrom([msg]), [{
-    role: "user",
-    content: [
-      { type: "text", text: "What is this?" },
       {
-        type: "image_url",
-        image_url: { url: "data:image/png;base64,aGVsbG8=" },
+        file: { mimeType: "image/png", url: "https://example.com/a.png" },
       },
     ],
-  }]);
-});
-
-Deno.test("openAIMessagesFrom passes image URLs through", () => {
-  const msg: Message = {
-    role: "user",
-    contents: [{
-      file: { mimeType: "image/png", url: "https://example.com/a.png" },
-    }],
   };
-  assertEquals(openAIMessagesFrom([msg]), [{
-    role: "user",
-    content: [{
-      type: "image_url",
-      image_url: { url: "https://example.com/a.png" },
-    }],
-  }]);
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        {
+          type: "image_url",
+          image_url: { url: "https://example.com/a.png" },
+        },
+      ],
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom maps audio data to input_audio formats", () => {
+test("openAIMessagesFrom maps audio data to input_audio formats", () => {
   const wav: Message = {
     role: "user",
     contents: [{ file: { mimeType: "audio/wav", data: "aGVsbG8=" } }],
   };
-  assertEquals(openAIMessagesFrom([wav]), [{
-    role: "user",
-    content: [{
-      type: "input_audio",
-      input_audio: { data: "aGVsbG8=", format: "wav" },
-    }],
-  }]);
+  expect(openAIMessagesFrom([wav])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_audio",
+          input_audio: { data: "aGVsbG8=", format: "wav" },
+        },
+      ],
+    },
+  ]);
 
   const mp3: Message = {
     role: "user",
     contents: [{ file: { mimeType: "audio/mpeg", data: "aGVsbG8=" } }],
   };
-  assertEquals(openAIMessagesFrom([mp3]), [{
-    role: "user",
-    content: [{
-      type: "input_audio",
-      input_audio: { data: "aGVsbG8=", format: "mp3" },
-    }],
-  }]);
+  expect(openAIMessagesFrom([mp3])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_audio",
+          input_audio: { data: "aGVsbG8=", format: "mp3" },
+        },
+      ],
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom throws on audio by URL", () => {
+test("openAIMessagesFrom throws on audio by URL", () => {
   const msg: Message = {
     role: "user",
-    contents: [{
-      file: { mimeType: "audio/wav", url: "https://example.com/a.wav" },
-    }],
+    contents: [
+      {
+        file: { mimeType: "audio/wav", url: "https://example.com/a.wav" },
+      },
+    ],
   };
-  assertThrows(
-    () => openAIMessagesFrom([msg]),
-    RangeError,
-    "audio by URL",
-  );
+  expect(() => openAIMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => openAIMessagesFrom([msg])).toThrow("audio by URL");
 });
 
-Deno.test("openAIMessagesFrom maps base64 PDFs to file parts with default filename", () => {
+test("openAIMessagesFrom maps base64 PDFs to file parts with default filename", () => {
   const msg: Message = {
     role: "user",
     contents: [{ file: { mimeType: "application/pdf", data: "aGVsbG8=" } }],
   };
-  assertEquals(openAIMessagesFrom([msg]), [{
-    role: "user",
-    content: [{
-      type: "file",
-      file: {
-        filename: "file.pdf",
-        file_data: "data:application/pdf;base64,aGVsbG8=",
-      },
-    }],
-  }]);
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        {
+          type: "file",
+          file: {
+            filename: "file.pdf",
+            file_data: "data:application/pdf;base64,aGVsbG8=",
+          },
+        },
+      ],
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom keeps explicit PDF filenames", () => {
+test("openAIMessagesFrom keeps explicit PDF filenames", () => {
   const msg: Message = {
     role: "user",
-    contents: [{
-      file: {
-        mimeType: "application/pdf",
-        data: "aGVsbG8=",
-        name: "report.pdf",
+    contents: [
+      {
+        file: {
+          mimeType: "application/pdf",
+          data: "aGVsbG8=",
+          name: "report.pdf",
+        },
       },
-    }],
+    ],
   };
-  assertEquals(openAIMessagesFrom([msg]), [{
-    role: "user",
-    content: [{
-      type: "file",
-      file: {
-        filename: "report.pdf",
-        file_data: "data:application/pdf;base64,aGVsbG8=",
-      },
-    }],
-  }]);
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
+    {
+      role: "user",
+      content: [
+        {
+          type: "file",
+          file: {
+            filename: "report.pdf",
+            file_data: "data:application/pdf;base64,aGVsbG8=",
+          },
+        },
+      ],
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom throws on PDFs by URL", () => {
+test("openAIMessagesFrom throws on PDFs by URL", () => {
   const msg: Message = {
     role: "user",
-    contents: [{
-      file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
-    }],
+    contents: [
+      {
+        file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+      },
+    ],
   };
-  assertThrows(
-    () => openAIMessagesFrom([msg]),
-    RangeError,
-    "PDFs by URL",
-  );
+  expect(() => openAIMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => openAIMessagesFrom([msg])).toThrow("PDFs by URL");
 });
 
-Deno.test("openAIMessagesFrom throws on unsupported file types", () => {
+test("openAIMessagesFrom throws on unsupported file types", () => {
   const msg: Message = {
     role: "user",
     contents: [{ file: { mimeType: "video/mp4", data: "aGVsbG8=" } }],
   };
-  assertThrows(
-    () => openAIMessagesFrom([msg]),
-    RangeError,
-    'file content of type "video/mp4"',
-  );
+  expect(() => openAIMessagesFrom([msg])).toThrow(RangeError);
+  expect(() => openAIMessagesFrom([msg])).toThrow('file content of type "video/mp4"');
 });
 
-Deno.test("openAIMessagesFrom converts system message with array contents", () => {
+test("openAIMessagesFrom converts system message with array contents", () => {
   const msg: Message = {
     role: "system",
     contents: [{ text: "You are " }, { text: "an AI." }],
   };
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result, [{ role: "system", content: "You are an AI." }]);
+  expect(result).toStrictEqual([{ role: "system", content: "You are an AI." }]);
 });
 
-Deno.test("openAIMessagesFrom converts system message", () => {
+test("openAIMessagesFrom converts system message", () => {
   const msg: Message = {
     role: "system",
     contents: "You are a helpful assistant.",
   };
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result, [{
-    role: "system",
-    content: "You are a helpful assistant.",
-  }]);
+  expect(result).toStrictEqual([
+    {
+      role: "system",
+      content: "You are a helpful assistant.",
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom converts model message with tool calls", () => {
+test("openAIMessagesFrom converts model message with tool calls", () => {
   const msgWithContent: Message = {
     role: "model",
     contents: [
       { text: "Thinking..." },
-      // deno-lint-ignore no-explicit-any
       { toolCall: { id: "1", name: "tool1", props: { arg: "val" } as any } },
     ],
-    // deno-lint-ignore no-explicit-any
     toolCalls: [{ id: "1", name: "tool1", props: { arg: "val" } as any }],
   };
 
   const result = openAIMessagesFrom([msgWithContent]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "assistant");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).content, "Thinking...");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).tool_calls, [{
-    id: "1",
-    type: "function",
-    function: { name: "tool1", arguments: '{"arg":"val"}' },
-  }]);
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("assistant");
+  expect((result[0] as any).content).toStrictEqual("Thinking...");
+  expect((result[0] as any).tool_calls).toStrictEqual([
+    {
+      id: "1",
+      type: "function",
+      function: { name: "tool1", arguments: '{"arg":"val"}' },
+    },
+  ]);
 });
 
-Deno.test("openAIMessagesFrom converts tool message", () => {
+test("openAIMessagesFrom converts tool message", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [
-      { toolResult: { id: "1", name: "tool1", result: { output: "success" } } },
-    ],
+    contents: [{ toolResult: { id: "1", name: "tool1", result: { output: "success" } } }],
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "tool");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).content, "success");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).tool_call_id, "1");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as any).content).toStrictEqual("success");
+  expect((result[0] as any).tool_call_id).toStrictEqual("1");
 });
 
-Deno.test("openAIMessagesFrom appends a synthetic user message for tool result files", () => {
+test("openAIMessagesFrom appends a synthetic user message for tool result files", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [{
-      toolResult: {
-        id: "1",
-        name: "screenshot",
-        result: { output: "captured" },
-        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "screenshot",
+          result: { output: "captured" },
+          files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+        },
       },
-    }],
+    ],
   };
 
-  assertEquals(openAIMessagesFrom([msg]), [
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
     { role: "tool", tool_call_id: "1", content: "captured" },
     {
       role: "user",
@@ -408,7 +409,7 @@ Deno.test("openAIMessagesFrom appends a synthetic user message for tool result f
   ]);
 });
 
-Deno.test("openAIMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
+test("openAIMessagesFrom aggregates files of multiple tool results into one synthetic user message", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -438,7 +439,7 @@ Deno.test("openAIMessagesFrom aggregates files of multiple tool results into one
     ],
   };
 
-  assertEquals(openAIMessagesFrom([msg]), [
+  expect(openAIMessagesFrom([msg])).toStrictEqual([
     { role: "tool", tool_call_id: "1", content: "captured" },
     { role: "tool", tool_call_id: "2", content: "found" },
     { role: "tool", tool_call_id: "3", content: "photographed" },
@@ -460,28 +461,29 @@ Deno.test("openAIMessagesFrom aggregates files of multiple tool results into one
   ]);
 });
 
-Deno.test("openAIMessagesFrom throws on tool result PDFs by URL", () => {
+test("openAIMessagesFrom throws on tool result PDFs by URL", () => {
   const msg: ToolMessage = {
     role: "tool",
-    contents: [{
-      toolResult: {
-        id: "1",
-        name: "report",
-        result: { output: "generated" },
-        files: [{
-          file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
-        }],
+    contents: [
+      {
+        toolResult: {
+          id: "1",
+          name: "report",
+          result: { output: "generated" },
+          files: [
+            {
+              file: { mimeType: "application/pdf", url: "https://example.com/a.pdf" },
+            },
+          ],
+        },
       },
-    }],
+    ],
   };
 
-  assertThrows(
-    () => openAIMessagesFrom([msg]),
-    RangeError,
-  );
+  expect(() => openAIMessagesFrom([msg])).toThrow(RangeError);
 });
 
-Deno.test("openAIMessagesFrom converts tool message with non-string output object", () => {
+test("openAIMessagesFrom converts tool message with non-string output object", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -496,15 +498,13 @@ Deno.test("openAIMessagesFrom converts tool message with non-string output objec
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "tool");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).content, '{"ok":true,"data":[1,2]}');
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).tool_call_id, "2");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as any).content).toStrictEqual('{"ok":true,"data":[1,2]}');
+  expect((result[0] as any).tool_call_id).toStrictEqual("2");
 });
 
-Deno.test("openAIMessagesFrom prefers error over output when both set", () => {
+test("openAIMessagesFrom prefers error over output when both set", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -519,11 +519,10 @@ Deno.test("openAIMessagesFrom prefers error over output when both set", () => {
   };
 
   const result = openAIMessagesFrom([msg]);
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).content, '{"message":"boom"}');
+  expect((result[0] as any).content).toStrictEqual('{"message":"boom"}');
 });
 
-Deno.test("openAIMessagesFrom drops fully empty assistant messages", () => {
+test("openAIMessagesFrom drops fully empty assistant messages", () => {
   const msg: Message = {
     role: "model",
     contents: [],
@@ -531,30 +530,24 @@ Deno.test("openAIMessagesFrom drops fully empty assistant messages", () => {
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 0);
+  expect(result.length).toStrictEqual(0);
 });
 
-Deno.test("openAIMessagesFrom keeps assistant with only tool calls", () => {
+test("openAIMessagesFrom keeps assistant with only tool calls", () => {
   const msg: Message = {
     role: "model",
-    contents: [
-      // deno-lint-ignore no-explicit-any
-      { toolCall: { id: "a", name: "t", props: {} as any } },
-    ],
-    // deno-lint-ignore no-explicit-any
+    contents: [{ toolCall: { id: "a", name: "t", props: {} as any } }],
     toolCalls: [{ id: "a", name: "t", props: {} as any }],
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "assistant");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).content, undefined);
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).tool_calls.length, 1);
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("assistant");
+  expect((result[0] as any).content).toStrictEqual(undefined);
+  expect((result[0] as any).tool_calls.length).toStrictEqual(1);
 });
 
-Deno.test("openAIMessagesFrom converts tool message with error output", () => {
+test("openAIMessagesFrom converts tool message with error output", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -569,35 +562,24 @@ Deno.test("openAIMessagesFrom converts tool message with error output", () => {
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "tool");
-  assertEquals(
-    // deno-lint-ignore no-explicit-any
-    (result[0] as any).content,
-    '{"message":"Something went wrong"}',
-  );
-  // deno-lint-ignore no-explicit-any
-  assertEquals((result[0] as any).tool_call_id, "3");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as any).content).toStrictEqual('{"message":"Something went wrong"}');
+  expect((result[0] as any).tool_call_id).toStrictEqual("3");
 });
 
-Deno.test("OpenAIModel.generate calls OpenAI API and returns mapped result", async () => {
+test("OpenAIModel.generate calls OpenAI API and returns mapped result", async () => {
   let fetchCalled = false;
-  // deno-lint-ignore no-explicit-any
   let requestBody: any = null;
 
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, init) => {
       fetchCalled = true;
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
-        requestBody = JSON.parse(
-          (init as { body?: string })?.body ?? "{}",
-        );
+        requestBody = JSON.parse((init as { body?: string })?.body ?? "{}");
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -605,14 +587,16 @@ Deno.test("OpenAIModel.generate calls OpenAI API and returns mapped result", asy
               object: "chat.completion",
               created: 1677652288,
               model: "gpt-4o",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "Hello! how can I help you today?",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: "Hello! how can I help you today?",
+                  },
+                  finish_reason: "stop",
                 },
-                finish_reason: "stop",
-              }],
+              ],
               usage: {
                 prompt_tokens: 9,
                 completion_tokens: 12,
@@ -635,58 +619,58 @@ Deno.test("OpenAIModel.generate calls OpenAI API and returns mapped result", asy
     messages: [{ role: "user", contents: "Hi" }],
   });
 
-  assertEquals(fetchCalled, true);
-  assertEquals(requestBody.model, "gpt-4o");
-  assertEquals(requestBody.messages, [{ role: "user", content: "Hi" }]);
-  assertEquals(result.modelId, "gpt-4o");
-  assertEquals(result.messages.length, 1);
-  assertEquals(result.messages[0].role, "model");
-  assertEquals(result.messages[0].contents, [{
-    text: "Hello! how can I help you today?",
-  }]);
-  assertEquals(result.usage, {
+  expect(fetchCalled).toStrictEqual(true);
+  expect(requestBody.model).toStrictEqual("gpt-4o");
+  expect(requestBody.messages).toStrictEqual([{ role: "user", content: "Hi" }]);
+  expect(result.modelId).toStrictEqual("gpt-4o");
+  expect(result.messages.length).toStrictEqual(1);
+  expect(result.messages[0].role).toStrictEqual("model");
+  expect(result.messages[0].contents).toStrictEqual([
+    {
+      text: "Hello! how can I help you today?",
+    },
+  ]);
+  expect(result.usage).toStrictEqual({
     inputTokens: 9,
     outputTokens: 12,
     totalTokens: 21,
   });
 });
 
-Deno.test("OpenAIModel.generate handles tool calls", async () => {
-  // deno-lint-ignore no-explicit-any
+test("OpenAIModel.generate handles tool calls", async () => {
   let requestBody: any = null;
 
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
-        requestBody = JSON.parse(
-          (init as { body?: string })?.body ?? "{}",
-        );
+        requestBody = JSON.parse((init as { body?: string })?.body ?? "{}");
         return Promise.resolve(
           new Response(
             JSON.stringify({
               id: "chatcmpl-123",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: null,
-                  tool_calls: [{
-                    id: "call_abc",
-                    type: "function",
-                    function: {
-                      name: "get_weather",
-                      arguments: '{"location":"San Francisco"}',
-                    },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_abc",
+                        type: "function",
+                        function: {
+                          name: "get_weather",
+                          arguments: '{"location":"San Francisco"}',
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
                 },
-                finish_reason: "tool_calls",
-              }],
+              ],
               usage: {
                 prompt_tokens: 50,
                 completion_tokens: 20,
@@ -709,53 +693,52 @@ Deno.test("OpenAIModel.generate handles tool calls", async () => {
     messages: [{ role: "user", contents: "What is the weather?" }],
   });
 
-  assertEquals(requestBody.model, "gpt-4o");
-  assertEquals(result.modelId, "gpt-4o");
-  assertEquals(result.messages.length, 1);
+  expect(requestBody.model).toStrictEqual("gpt-4o");
+  expect(result.modelId).toStrictEqual("gpt-4o");
+  expect(result.messages.length).toStrictEqual(1);
   const msg = result.messages[0] as ModelMessage;
-  assertEquals(msg.role, "model");
-  // deno-lint-ignore no-explicit-any
+  expect(msg.role).toStrictEqual("model");
   const expectedProps = { location: "San Francisco" } as any;
-  assertEquals(msg.contents, [{
-    toolCall: {
+  expect(msg.contents).toStrictEqual([
+    {
+      toolCall: {
+        id: "call_abc",
+        name: "get_weather",
+        props: expectedProps,
+      },
+    },
+  ]);
+  expect(msg.toolCalls).toStrictEqual([
+    {
       id: "call_abc",
       name: "get_weather",
       props: expectedProps,
     },
-  }]);
-  assertEquals(msg.toolCalls, [{
-    id: "call_abc",
-    name: "get_weather",
-    props: expectedProps,
-  }]);
+  ]);
 });
-Deno.test("OpenAIModel.generate prepends system prompt if provided", async () => {
-  // deno-lint-ignore no-explicit-any
+test("OpenAIModel.generate prepends system prompt if provided", async () => {
   let requestBody: any = null;
 
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
-        requestBody = JSON.parse(
-          (init as { body?: string })?.body ?? "{}",
-        );
+        requestBody = JSON.parse((init as { body?: string })?.body ?? "{}");
         return Promise.resolve(
           new Response(
             JSON.stringify({
               id: "chatcmpl-123",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "Response",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: "Response",
+                  },
                 },
-              }],
+              ],
             }),
             {
               status: 200,
@@ -774,13 +757,13 @@ Deno.test("OpenAIModel.generate prepends system prompt if provided", async () =>
     messages: [{ role: "user", contents: "Hi" }],
   });
 
-  assertEquals(requestBody.messages, [
+  expect(requestBody.messages).toStrictEqual([
     { role: "system", content: "You are a helpful assistant" },
     { role: "user", content: "Hi" },
   ]);
 });
 
-Deno.test("openAIMessagesFrom drops thinking from model messages", () => {
+test("openAIMessagesFrom drops thinking from model messages", () => {
   const msg: Message = {
     role: "model",
     contents: [{ text: "Hello" }],
@@ -789,14 +772,14 @@ Deno.test("openAIMessagesFrom drops thinking from model messages", () => {
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 1);
-  assertEquals(result[0].role, "assistant");
-  assertEquals((result[0] as { content?: string }).content, "Hello");
+  expect(result.length).toStrictEqual(1);
+  expect(result[0].role).toStrictEqual("assistant");
+  expect((result[0] as { content?: string }).content).toStrictEqual("Hello");
   // @ts-expect-error reasoning_content should not be present
-  assertEquals(result[0].reasoning_content, undefined);
+  expect(result[0].reasoning_content).toStrictEqual(undefined);
 });
 
-Deno.test("openAIMessagesFrom drops fully empty assistant even with thinking", () => {
+test("openAIMessagesFrom drops fully empty assistant even with thinking", () => {
   const msg: Message = {
     role: "model",
     contents: [],
@@ -805,10 +788,10 @@ Deno.test("openAIMessagesFrom drops fully empty assistant even with thinking", (
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 0);
+  expect(result.length).toStrictEqual(0);
 });
 
-Deno.test("openAIMessagesFrom converts tool message with multiple tool results", () => {
+test("openAIMessagesFrom converts tool message with multiple tool results", () => {
   const msg: ToolMessage = {
     role: "tool",
     contents: [
@@ -818,38 +801,37 @@ Deno.test("openAIMessagesFrom converts tool message with multiple tool results",
   };
 
   const result = openAIMessagesFrom([msg]);
-  assertEquals(result.length, 2);
-  assertEquals(result[0].role, "tool");
-  assertEquals((result[0] as { tool_call_id?: string }).tool_call_id, "1");
-  assertEquals((result[0] as { content?: string }).content, "result1");
-  assertEquals(result[1].role, "tool");
-  assertEquals((result[1] as { tool_call_id?: string }).tool_call_id, "2");
-  assertEquals((result[1] as { content?: string }).content, "result2");
+  expect(result.length).toStrictEqual(2);
+  expect(result[0].role).toStrictEqual("tool");
+  expect((result[0] as { tool_call_id?: string }).tool_call_id).toStrictEqual("1");
+  expect((result[0] as { content?: string }).content).toStrictEqual("result1");
+  expect(result[1].role).toStrictEqual("tool");
+  expect((result[1] as { tool_call_id?: string }).tool_call_id).toStrictEqual("2");
+  expect((result[1] as { content?: string }).content).toStrictEqual("result2");
 });
 
-Deno.test("OpenAIModel.generate handles reasoning_content", async () => {
+test("OpenAIModel.generate handles reasoning_content", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               id: "chatcmpl-123",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "The answer is 42.",
-                  reasoning_content: "Let me think...",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: "The answer is 42.",
+                    reasoning_content: "Let me think...",
+                  },
+                  finish_reason: "stop",
                 },
-                finish_reason: "stop",
-              }],
+              ],
             }),
             {
               status: 200,
@@ -867,43 +849,44 @@ Deno.test("OpenAIModel.generate handles reasoning_content", async () => {
     messages: [{ role: "user", contents: "What is the meaning of life?" }],
   });
 
-  assertEquals(result.messages.length, 1);
+  expect(result.messages.length).toStrictEqual(1);
   const msg = result.messages[0] as ModelMessage;
-  assertEquals(msg.role, "model");
-  assertEquals(msg.contents, [{ text: "The answer is 42." }]);
-  assertEquals(msg.thinking, "Let me think...");
+  expect(msg.role).toStrictEqual("model");
+  expect(msg.contents).toStrictEqual([{ text: "The answer is 42." }]);
+  expect(msg.thinking).toStrictEqual("Let me think...");
 });
 
-Deno.test("OpenAIModel.generate handles invalid JSON in tool call arguments", async () => {
+test("OpenAIModel.generate handles invalid JSON in tool call arguments", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               id: "chatcmpl-123",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: null,
-                  tool_calls: [{
-                    id: "call_bad",
-                    type: "function",
-                    function: {
-                      name: "broken_tool",
-                      arguments: "this is not json",
-                    },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_bad",
+                        type: "function",
+                        function: {
+                          name: "broken_tool",
+                          arguments: "this is not json",
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
                 },
-                finish_reason: "tool_calls",
-              }],
+              ],
             }),
             {
               status: 200,
@@ -921,36 +904,29 @@ Deno.test("OpenAIModel.generate handles invalid JSON in tool call arguments", as
     messages: [{ role: "user", contents: "Call the tool" }],
   });
 
-  assertEquals(result.messages.length, 1);
+  expect(result.messages.length).toStrictEqual(1);
   const msg = result.messages[0] as ModelMessage;
-  assertEquals(msg.toolCalls.length, 1);
-  assertEquals(msg.toolCalls[0].id, "call_bad");
-  assertEquals(msg.toolCalls[0].name, "broken_tool");
-  assertEquals(msg.toolCalls[0].props, {});
+  expect(msg.toolCalls.length).toStrictEqual(1);
+  expect(msg.toolCalls[0].id).toStrictEqual("call_bad");
+  expect(msg.toolCalls[0].name).toStrictEqual("broken_tool");
+  expect(msg.toolCalls[0].props).toStrictEqual({});
 });
 
-Deno.test("OpenAIModel.stream streams content and maps correctly", async () => {
+test("OpenAIModel.stream streams content and maps correctly", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
             controller.enqueue(
-              encoder.encode(
-                'data: {"choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\n',
-              ),
+              encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\n'),
             );
             controller.enqueue(
-              encoder.encode(
-                'data: {"choices":[{"index":0,"delta":{"content":" world"}}]}\n\n',
-              ),
+              encoder.encode('data: {"choices":[{"index":0,"delta":{"content":" world"}}]}\n\n'),
             );
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -977,24 +953,20 @@ Deno.test("OpenAIModel.stream streams content and maps correctly", async () => {
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].modelId, "gpt-4o");
-  assertEquals(results[0].messages[0].contents, [{ text: "Hello" }]);
-  assertEquals(results[1].messages[0].contents, [{ text: " world" }]);
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].modelId).toStrictEqual("gpt-4o");
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Hello" }]);
+  expect(results[1].messages[0].contents).toStrictEqual([{ text: " world" }]);
 });
 
-Deno.test("OpenAIModel.stream requests usage and yields a final usage chunk", async () => {
-  // deno-lint-ignore no-explicit-any
+test("OpenAIModel.stream requests usage and yields a final usage chunk", async () => {
   let requestBody: any = null;
 
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         requestBody = JSON.parse((init as { body?: string })?.body ?? "{}");
         const encoder = new TextEncoder();
@@ -1019,9 +991,7 @@ Deno.test("OpenAIModel.stream requests usage and yields a final usage chunk", as
         const stream = new ReadableStream({
           start(controller) {
             for (const chunk of chunks) {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             }
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -1048,10 +1018,10 @@ Deno.test("OpenAIModel.stream requests usage and yields a final usage chunk", as
     results.push(chunk);
   }
 
-  assertEquals(requestBody.stream_options, { include_usage: true });
-  assertEquals(results.length, 2);
-  assertEquals(results[0].messages[0].contents, [{ text: "Hi" }]);
-  assertEquals(results[1], {
+  expect(requestBody.stream_options).toStrictEqual({ include_usage: true });
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Hi" }]);
+  expect(results[1]).toStrictEqual({
     modelId: "gpt-4o",
     messages: [],
     usage: {
@@ -1064,15 +1034,12 @@ Deno.test("OpenAIModel.stream requests usage and yields a final usage chunk", as
   });
 });
 
-Deno.test("OpenAIModel.stream streams thinking/reasoning correctly", async () => {
+test("OpenAIModel.stream streams thinking/reasoning correctly", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
@@ -1083,12 +1050,8 @@ Deno.test("OpenAIModel.stream streams thinking/reasoning correctly", async () =>
             const chunk2 = {
               choices: [{ index: 0, delta: { reasoning_content: " process" } }],
             };
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`),
-            );
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
           },
@@ -1114,80 +1077,83 @@ Deno.test("OpenAIModel.stream streams thinking/reasoning correctly", async () =>
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
+  expect(results.length).toStrictEqual(2);
   const msg1 = results[0].messages[0] as ModelMessage;
   const msg2 = results[1].messages[0] as ModelMessage;
-  assertEquals(msg1.thinking, "Thinking");
-  assertEquals(msg2.thinking, " process");
+  expect(msg1.thinking).toStrictEqual("Thinking");
+  expect(msg2.thinking).toStrictEqual(" process");
 });
 
-Deno.test("OpenAIModel.stream streams tool calls correctly", async () => {
+test("OpenAIModel.stream streams tool calls correctly", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
             // Chunk 1: Send tool ID and name
             const chunk1 = {
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    id: "call_123",
-                    type: "function",
-                    function: {
-                      name: "get_weather",
-                    },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_123",
+                        type: "function",
+                        function: {
+                          name: "get_weather",
+                        },
+                      },
+                    ],
+                  },
                 },
-              }],
+              ],
             };
             // Chunk 2: Send partial arguments (invalid JSON)
             const chunk2 = {
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    function: {
-                      arguments: '{"loc',
-                    },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        function: {
+                          arguments: '{"loc',
+                        },
+                      },
+                    ],
+                  },
                 },
-              }],
+              ],
             };
             // Chunk 3: Send rest of arguments (valid JSON)
             const chunk3 = {
-              choices: [{
-                index: 0,
-                delta: {
-                  tool_calls: [{
-                    index: 0,
-                    function: {
-                      arguments: 'ation":"SF"}',
-                    },
-                  }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        function: {
+                          arguments: 'ation":"SF"}',
+                        },
+                      },
+                    ],
+                  },
                 },
-              }],
+              ],
             };
 
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`),
-            );
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`),
-            );
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(chunk3)}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk1)}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk2)}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk3)}\n\n`));
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
           },
@@ -1215,55 +1181,55 @@ Deno.test("OpenAIModel.stream streams tool calls correctly", async () => {
 
   // The tool call is emitted once, after its arguments are complete,
   // instead of partially on every delta.
-  assertEquals(results.length, 1);
+  expect(results.length).toStrictEqual(1);
   const msg = results[0].messages[0] as ModelMessage;
-  assertEquals(msg.toolCalls.length, 1);
-  assertEquals(msg.toolCalls[0].id, "call_123");
-  assertEquals(msg.toolCalls[0].name, "get_weather");
-  // deno-lint-ignore no-explicit-any
-  assertEquals(msg.toolCalls[0].props, { location: "SF" } as any);
-  assertEquals(msg.contents, [{ toolCall: msg.toolCalls[0] }]);
+  expect(msg.toolCalls.length).toStrictEqual(1);
+  expect(msg.toolCalls[0].id).toStrictEqual("call_123");
+  expect(msg.toolCalls[0].name).toStrictEqual("get_weather");
+  expect(msg.toolCalls[0].props).toStrictEqual({ location: "SF" } as any);
+  expect(msg.contents).toStrictEqual([{ toolCall: msg.toolCalls[0] }]);
 });
 
-Deno.test("OpenAIModel.stream flushes tool calls on finish_reason", async () => {
+test("OpenAIModel.stream flushes tool calls on finish_reason", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const chunks = [
           {
-            choices: [{
-              index: 0,
-              delta: {
-                tool_calls: [{
-                  index: 0,
-                  id: "call_1",
-                  type: "function",
-                  function: { name: "get_weather", arguments: '{"a":1}' },
-                }],
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_1",
+                      type: "function",
+                      function: { name: "get_weather", arguments: '{"a":1}' },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
           },
           {
-            choices: [{
-              index: 0,
-              delta: { content: "Done" },
-              finish_reason: "tool_calls",
-            }],
+            choices: [
+              {
+                index: 0,
+                delta: { content: "Done" },
+                finish_reason: "tool_calls",
+              },
+            ],
           },
         ];
         const stream = new ReadableStream({
           start(controller) {
             for (const chunk of chunks) {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             }
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -1290,60 +1256,62 @@ Deno.test("OpenAIModel.stream flushes tool calls on finish_reason", async () => 
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].messages[0].contents, [{ text: "Done" }]);
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "Done" }]);
   const toolMsg = results[1].messages[0] as ModelMessage;
-  assertEquals(toolMsg.toolCalls, [
-    // deno-lint-ignore no-explicit-any
+  expect(toolMsg.toolCalls).toStrictEqual([
     { id: "call_1", name: "get_weather", props: { a: 1 } as any },
   ]);
 });
 
-Deno.test("OpenAIModel.stream emits earlier tool call when a new index starts", async () => {
+test("OpenAIModel.stream emits earlier tool call when a new index starts", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const chunks = [
           {
-            choices: [{
-              index: 0,
-              delta: {
-                tool_calls: [{
-                  index: 0,
-                  id: "call_1",
-                  type: "function",
-                  function: { name: "tool_a", arguments: "{}" },
-                }],
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_1",
+                      type: "function",
+                      function: { name: "tool_a", arguments: "{}" },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
           },
           {
-            choices: [{
-              index: 0,
-              delta: {
-                tool_calls: [{
-                  index: 1,
-                  id: "call_2",
-                  type: "function",
-                  function: { name: "tool_b", arguments: '{"b":2}' },
-                }],
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 1,
+                      id: "call_2",
+                      type: "function",
+                      function: { name: "tool_b", arguments: '{"b":2}' },
+                    },
+                  ],
+                },
               },
-            }],
+            ],
           },
         ];
         const stream = new ReadableStream({
           start(controller) {
             for (const chunk of chunks) {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             }
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -1370,40 +1338,38 @@ Deno.test("OpenAIModel.stream emits earlier tool call when a new index starts", 
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
+  expect(results.length).toStrictEqual(2);
   const first = results[0].messages[0] as ModelMessage;
-  assertEquals(first.toolCalls[0].id, "call_1");
-  assertEquals(first.toolCalls[0].name, "tool_a");
+  expect(first.toolCalls[0].id).toStrictEqual("call_1");
+  expect(first.toolCalls[0].name).toStrictEqual("tool_a");
   const second = results[1].messages[0] as ModelMessage;
-  assertEquals(second.toolCalls[0].id, "call_2");
-  assertEquals(second.toolCalls[0].name, "tool_b");
-  // deno-lint-ignore no-explicit-any
-  assertEquals(second.toolCalls[0].props, { b: 2 } as any);
+  expect(second.toolCalls[0].id).toStrictEqual("call_2");
+  expect(second.toolCalls[0].name).toStrictEqual("tool_b");
+  expect(second.toolCalls[0].props).toStrictEqual({ b: 2 } as any);
 });
 
-Deno.test("OpenAIModel.generate maps refusal to text content", async () => {
+test("OpenAIModel.generate maps refusal to text content", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
               id: "chatcmpl-123",
-              choices: [{
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: null,
-                  refusal: "I can't help with that.",
+              choices: [
+                {
+                  index: 0,
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    refusal: "I can't help with that.",
+                  },
+                  finish_reason: "stop",
                 },
-                finish_reason: "stop",
-              }],
+              ],
             }),
             {
               status: 200,
@@ -1421,21 +1387,20 @@ Deno.test("OpenAIModel.generate maps refusal to text content", async () => {
     messages: [{ role: "user", contents: "Hi" }],
   });
 
-  assertEquals(result.messages.length, 1);
-  assertEquals(result.messages[0].contents, [{
-    text: "I can't help with that.",
-  }]);
+  expect(result.messages.length).toStrictEqual(1);
+  expect(result.messages[0].contents).toStrictEqual([
+    {
+      text: "I can't help with that.",
+    },
+  ]);
 });
 
-Deno.test("OpenAIModel.stream maps refusal deltas to text content", async () => {
+test("OpenAIModel.stream maps refusal deltas to text content", async () => {
   const model = new OpenAIModel({
     apiKey: "test-key",
     fetch: (input: string | URL | Request, _init) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/v1/chat/completions")) {
         const encoder = new TextEncoder();
         const chunks = [
@@ -1445,9 +1410,7 @@ Deno.test("OpenAIModel.stream maps refusal deltas to text content", async () => 
         const stream = new ReadableStream({
           start(controller) {
             for (const chunk of chunks) {
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
             }
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
@@ -1474,25 +1437,27 @@ Deno.test("OpenAIModel.stream maps refusal deltas to text content", async () => 
     results.push(chunk);
   }
 
-  assertEquals(results.length, 2);
-  assertEquals(results[0].messages[0].contents, [{ text: "I can't" }]);
-  assertEquals(results[1].messages[0].contents, [{
-    text: " help with that.",
-  }]);
+  expect(results.length).toStrictEqual(2);
+  expect(results[0].messages[0].contents).toStrictEqual([{ text: "I can't" }]);
+  expect(results[1].messages[0].contents).toStrictEqual([
+    {
+      text: " help with that.",
+    },
+  ]);
 });
 
-Deno.test("openai factory returns OpenAIModel instance", () => {
+test("openai factory returns OpenAIModel instance", () => {
   const model = openai({ apiKey: "test" });
-  assertInstanceOf(model, OpenAIModel);
+  expect(model).toBeInstanceOf(OpenAIModel);
 });
 
-Deno.test("openai factory accepts options", () => {
+test("openai factory accepts options", () => {
   const model = openai({ apiKey: "test-key", baseURL: "https://example.com" });
-  assertInstanceOf(model, OpenAIModel);
+  expect(model).toBeInstanceOf(OpenAIModel);
 });
 
-Deno.test("OpenAIModel has expected methods", () => {
+test("OpenAIModel has expected methods", () => {
   const model = new OpenAIModel({ apiKey: "test" });
-  assertEquals(typeof model.generate, "function");
-  assertEquals(typeof model.stream, "function");
+  expect(typeof model.generate).toStrictEqual("function");
+  expect(typeof model.stream).toStrictEqual("function");
 });
