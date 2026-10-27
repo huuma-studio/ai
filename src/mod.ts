@@ -64,7 +64,7 @@ export interface ModelMessage extends MessageWithRole {
   /** Optional reasoning or thinking text exposed by supported providers. */
   thinking?: string;
   /** Provider-specific metadata needed to round-trip thinking state. */
-  thinkingMeta?: Record<string, unknown | string | null | undefined>;
+  thinkingMeta?: Record<string, unknown>;
 }
 
 /** User input message. */

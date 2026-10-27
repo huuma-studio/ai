@@ -76,7 +76,7 @@ async function connectFixture(options: { allowedTools?: string[] } = {}) {
       switch (name) {
         case "echo":
           return {
-            content: [{ type: "text", text: `echo: ${args?.message}` }],
+            content: [{ type: "text", text: `echo: ${String(args?.message)}` }],
           };
         case "add": {
           const sum = Number(args?.a) + Number(args?.b);
@@ -121,8 +121,8 @@ test("mcp - lists and wraps tools with prefixed names and verbatim schemas", asy
   const { connection } = await connectFixture();
   try {
     const names = connection.tools().map((tool) => tool.name);
-    expect(names, `echo missing in ${names}`).toContain("fixture_echo");
-    expect(names, `add missing in ${names}`).toContain("fixture_add");
+    expect(names, `echo missing in ${names.join(", ")}`).toContain("fixture_echo");
+    expect(names, `add missing in ${names.join(", ")}`).toContain("fixture_add");
     expect(connection.tools().length).toBe(7);
 
     const echo = connection.tools().find((tool) => tool.name === "fixture_echo");

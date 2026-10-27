@@ -43,7 +43,7 @@ export const DEFAULT_CLI_TIMEOUT = 120_000;
  * rest of the conversation in the same request — counted once JSON-escaped,
  * so an output that escapes large cannot grow past it on the wire.
  */
-export const DEFAULT_CLI_MAX_OUTPUT_BYTES = 512 * 1024;
+export const DEFAULT_CLI_MAX_OUTPUT_BYTES: number = 512 * 1024;
 
 /** Create a tool that executes allow-listed CLI commands.
  *

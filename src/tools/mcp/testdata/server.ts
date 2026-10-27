@@ -85,7 +85,7 @@ server.setRequestHandler(
         };
       case "greet":
         return {
-          content: [{ type: "text", text: `Hello, ${args?.name}!` }],
+          content: [{ type: "text", text: `Hello, ${String(args?.name)}!` }],
         };
       default:
         return { content: [{ type: "text", text: "ok" }] };

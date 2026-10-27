@@ -68,8 +68,6 @@ export interface Callable<T> {
  * for long or unbounded iteration counts.
  */
 export class Workflow<T> {
-  #name: string;
-  #description?: string;
   #status: WorkflowStatus = WorkflowStatus.CREATED;
   #start: Callable<T>;
   #state?: T;
@@ -77,9 +75,7 @@ export class Workflow<T> {
   #maxSteps?: number;
 
   /** Create a workflow instance. */
-  constructor({ name, description, start, state, maxSteps }: WorkflowOptions<T>) {
-    this.#name = name;
-    this.#description = description;
+  constructor({ start, state, maxSteps }: WorkflowOptions<T>) {
     this.#start = start;
     this.#state = state;
     this.#maxSteps = maxSteps;
@@ -211,7 +207,7 @@ export class Decision<T> implements Callable<T> {
   /** Create a decision with condition, then branch, and else branch. */
   constructor({
     condition,
-    then: then,
+    then,
     else: _else,
   }: {
     /** Predicate used to choose a branch. */

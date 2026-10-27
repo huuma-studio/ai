@@ -108,7 +108,7 @@ function settleHeap(): number {
   for (let i = 0; i < 600; i++) {
     // ~0.5 MB of pointers: above V8's large-object threshold, so the
     // chunk bypasses the young generation and forces old-space growth.
-    const chunk: unknown[] = new Array(128_000);
+    const chunk: unknown[] = Array.from({ length: 128_000 });
     chunk.fill({ chunk: i });
     if (chunk.length === 0) throw new Error("unreachable");
     const current = process.memoryUsage().heapUsed;

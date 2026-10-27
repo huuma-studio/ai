@@ -682,10 +682,14 @@ function toolOutputString(result: ToolResultContent["toolResult"]["result"]): st
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
 
+  // Last resort for values JSON cannot encode (functions, symbols, bigints,
+  // cycles): their default string form is better than no output.
   try {
     const json = JSON.stringify(value);
+    // oxlint-disable-next-line typescript/no-base-to-string
     return json ?? String(value);
   } catch {
+    // oxlint-disable-next-line typescript/no-base-to-string
     return String(value);
   }
 }

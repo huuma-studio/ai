@@ -43,7 +43,7 @@ export async function mapSettled<T, R>(
   }
   validateMaxConcurrency(maxConcurrency);
 
-  const results = new Array<PromiseSettledResult<R>>(items.length);
+  const results = Array.from<PromiseSettledResult<R>>({ length: items.length });
   let next = 0;
   const runWorker = async (): Promise<void> => {
     while (next < items.length) {

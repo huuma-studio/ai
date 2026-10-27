@@ -64,7 +64,7 @@ test("mcp - stdio round-trip against a child-process server", async () => {
 
   try {
     const names = fixture.tools().map((tool) => tool.name);
-    expect(names, `add missing in ${names}`).toContain("fixture_add");
+    expect(names, `add missing in ${names.join(", ")}`).toContain("fixture_add");
     expect(names, `echo_json missing`).toContain("fixture_echo_json");
     expect(names, `fail missing`).toContain("fixture_fail");
 

@@ -15,7 +15,7 @@ test("workflow runs chained steps sequentially", async () => {
 });
 
 test("workflow sets status to FAILED and rethrows on step error", async () => {
-  const boom = step((_: number): number => {
+  const boom = step((): number => {
     throw new Error("boom");
   });
   const w = workflow({ name: "failing", state: 1, start: boom });
@@ -113,6 +113,8 @@ test("decision executes the matching branch", async () => {
   const oddPath = step((n: number) => n + 1);
   const d = decision({
     condition: (n: number) => n % 2 === 0,
+    // `then` is the decision option's name; the object is never awaited.
+    // oxlint-disable-next-line unicorn/no-thenable
     then: evenPath,
     else: oddPath,
   });
@@ -127,6 +129,8 @@ test("decision executes the matching branch", async () => {
 test("decision counts toward stepsCount", async () => {
   const d = decision({
     condition: (n: number) => n > 0,
+    // `then` is the decision option's name; the object is never awaited.
+    // oxlint-disable-next-line unicorn/no-thenable
     then: step((n: number) => n * 2),
     else: step((n: number) => n),
   });

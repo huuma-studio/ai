@@ -26,7 +26,11 @@ async function requestBodyFrom(
   init?: RequestInit,
 ): Promise<Record<string, unknown>> {
   const body =
-    input instanceof Request ? await input.clone().text() : (init?.body?.toString() ?? "{}");
+    input instanceof Request
+      ? await input.clone().text()
+      : typeof init?.body === "string"
+        ? init.body
+        : "{}";
   return JSON.parse(body) as Record<string, unknown>;
 }
 
