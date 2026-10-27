@@ -18,3 +18,27 @@ jobs:
       - run: vp test
       # Catches JSR publish errors (slow types, missing exports) before merge.
       - run: vp run jsr:dry-run
+
+  # The library targets Node, Deno and Bun; run the suite on the other two.
+  runtimes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [deno, bun]
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the dependencies both runtimes run the tests against.
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: "24"
+          cache: true
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.x
+      - run: vp run test:${{ matrix.runtime }}

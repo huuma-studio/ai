@@ -19,7 +19,9 @@
   },
   "scripts": {
     "check": "vp check",
-    "test": "vp test"
+    "test": "vp test",
+    "test:deno": "deno run -A node_modules/vitest/vitest.mjs run",
+    "test:bun": "bun --bun node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.5",
@@ -36,7 +38,8 @@
     "@types/node": "^24",
     "jsr": "0.14.3",
     "vite": "^8",
-    "vite-plus": "1.1.0"
+    "vite-plus": "1.1.0",
+    "vitest": "5.0.3"
   },
   "packageManager": "pnpm@12.11.2"
 }

@@ -467,6 +467,8 @@ requests.
 pnpm install
 vp check
 vp test
+vp run test:deno   # the same suite on Deno
+vp run test:bun    # and on Bun
 vp run jsr:dry-run
 ```
 
