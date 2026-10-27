@@ -40,19 +40,19 @@ export type McpContentBlock =
   | { type: "image"; data: string; mimeType: string }
   | { type: "audio"; data: string; mimeType: string }
   | {
-    type: "resource_link";
-    uri: string;
-    name?: string;
-    description?: string;
-    mimeType?: string;
-    size?: number;
-    title?: string;
-    icons?: McpIcon[];
-  }
+      type: "resource_link";
+      uri: string;
+      name?: string;
+      description?: string;
+      mimeType?: string;
+      size?: number;
+      title?: string;
+      icons?: McpIcon[];
+    }
   | {
-    type: "resource";
-    resource: { uri: string; mimeType?: string; text?: string; blob?: string };
-  };
+      type: "resource";
+      resource: { uri: string; mimeType?: string; text?: string; blob?: string };
+    };
 
 /**
  * Result type discriminator for tool call results (spec 2026-07-28).
@@ -133,19 +133,14 @@ export interface McpHttpTransportOptions {
  */
 export interface McpTransport {
   start(): Promise<void>;
-  // deno-lint-ignore no-explicit-any
   send(message: any, options?: any): Promise<void>;
   close(): Promise<void>;
   onclose?: () => void;
   onerror?: (error: Error) => void;
-  // deno-lint-ignore no-explicit-any
   onmessage?: (message: any, extra?: any) => void;
   sessionId?: string;
   setProtocolVersion?: (version: string) => void;
 }
 
 /** Transport configuration: shape decides the transport. */
-export type McpTransportOptions =
-  | McpStdioTransportOptions
-  | McpHttpTransportOptions
-  | McpTransport;
+export type McpTransportOptions = McpStdioTransportOptions | McpHttpTransportOptions | McpTransport;

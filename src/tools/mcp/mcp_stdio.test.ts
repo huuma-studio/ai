@@ -1,65 +1,117 @@
-import { assert, assertEquals, assertRejects, assertStrictEquals, assertStringIncludes } from "@std/assert";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, expect, test } from "vite-plus/test";
 // Dev-only SDK import for the pre-built transport; publish excludes tests.
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mcp, type McpTransport } from "@/tools/mcp/mcp.ts";
+import { mcp, type McpTransport } from "./mcp.ts";
 
-const FIXTURE = new URL("./testdata/server.ts", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("./testdata/server.ts", import.meta.url));
 
-// Guards the Deno node-compat path (child process spawn, stdio framing) —
-// the SDK's least-tested surface under Deno. Deno's sanitizers fail this
-// test if the child process leaks past close().
-Deno.test("mcp - stdio round-trip against a child-process server", async () => {
+// Every child here writes its PID to the file named by its last argument,
+// so each test can check that the child exited: close(), a failed
+// handshake and a cancelled one must all terminate it.
+const WRITE_PID = `require("node:fs").writeFileSync(process.argv.at(-1), String(process.pid));`;
+
+const tempDirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+/** A path for a child's PID file, in a temp dir removed after the test. */
+async function pidFilePath(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "huuma-ai-mcp-"));
+  tempDirs.push(dir);
+  return join(dir, "pid");
+}
+
+/** Waits up to 5 s for the process whose PID is in `pidFile` to exit. */
+async function expectExited(pidFile: string): Promise<void> {
+  const pid = Number(await readFile(pidFile, "utf8"));
+  expect(pid, "child wrote no PID").toBeGreaterThan(0);
+  const deadline = Date.now() + 5_000;
+  while (isRunning(pid)) {
+    if (Date.now() > deadline) {
+      process.kill(pid, "SIGKILL");
+      expect.fail(`child ${pid} still running 5 s after cleanup`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+// Guards the child-process path (spawn, stdio framing) end to end. Node
+// strips the fixture's TypeScript types natively, so it runs without a
+// loader. close() must terminate the child.
+test("mcp - stdio round-trip against a child-process server", async () => {
+  const pidFile = await pidFilePath();
   const fixture = await mcp({
     name: "fixture",
     transport: {
-      command: Deno.execPath(),
-      args: ["run", "--allow-read", "--allow-env", FIXTURE],
+      command: process.execPath,
+      args: [FIXTURE, pidFile],
     },
   });
 
   try {
     const names = fixture.tools().map((tool) => tool.name);
-    assert(names.includes("fixture_add"), `add missing in ${names}`);
-    assert(names.includes("fixture_echo_json"), `echo_json missing`);
-    assert(names.includes("fixture_fail"), `fail missing`);
+    expect(names, `add missing in ${names}`).toContain("fixture_add");
+    expect(names, `echo_json missing`).toContain("fixture_echo_json");
+    expect(names, `fail missing`).toContain("fixture_fail");
 
     const add = fixture.tools().find((tool) => tool.name === "fixture_add");
-    assertEquals(await add?.call({ a: 1, b: 2 }), "3");
+    expect(await add?.call({ a: 1, b: 2 })).toBe("3");
   } finally {
     await fixture.close();
   }
+  await expectExited(pidFile);
 });
 
 // A process that speaks JSON-RPC but rejects the MCP handshake: the child
 // is already running when connect() fails, so connect() must close the
-// transport — the sanitizers fail this test if the child leaks.
+// transport rather than leak the child.
 const NOT_AN_MCP_SERVER = `
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  for await (const chunk of Deno.stdin.readable) {
-    for (const line of decoder.decode(chunk).split("\\n")) {
+  ${WRITE_PID}
+  let buffer = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split("\\n");
+    buffer = lines.pop();
+    for (const line of lines) {
       if (!line.trim()) continue;
       const { id } = JSON.parse(line);
       if (id === undefined) continue;
-      await Deno.stdout.write(encoder.encode(JSON.stringify({
+      process.stdout.write(JSON.stringify({
         jsonrpc: "2.0",
         id,
         error: { code: -32600, message: "not an MCP server" },
-      }) + "\\n"));
+      }) + "\\n");
     }
-  }
+  });
 `;
 
-Deno.test("mcp - stdio child is cleaned up when the handshake fails", async () => {
-  await assertRejects(() =>
+test("mcp - stdio child is cleaned up when the handshake fails", async () => {
+  const pidFile = await pidFilePath();
+  await expect(
     mcp({
       name: "broken",
       transport: {
-        command: Deno.execPath(),
-        args: ["eval", NOT_AN_MCP_SERVER],
+        command: process.execPath,
+        args: ["--eval", NOT_AN_MCP_SERVER, pidFile],
       },
-    })
-  );
+    }),
+  ).rejects.toThrow();
+  await expectExited(pidFile);
 });
 
 /**
@@ -78,10 +130,7 @@ async function firstStderrOutput(
   try {
     await new Promise<void>((resolve, reject) => {
       transport.stderr?.once("data", () => resolve());
-      timer = setTimeout(
-        () => reject(new Error("child never wrote to stderr")),
-        10_000,
-      );
+      timer = setTimeout(() => reject(new Error("child never wrote to stderr")), 10_000);
     });
   } catch (error) {
     controller.abort();
@@ -95,23 +144,25 @@ async function firstStderrOutput(
   }
 }
 
-// A child that prints to stderr, then reads stdin forever without ever
+// A child that prints to stderr, then keeps stdin open forever without ever
 // answering `initialize`, holding the handshake open until the caller aborts.
 const STALLING_SERVER = `
-  await Deno.stderr.write(new TextEncoder().encode("booting slowly\\n"));
-  for await (const _ of Deno.stdin.readable) { /* never reply */ }
+  ${WRITE_PID}
+  process.stderr.write("booting slowly\\n");
+  process.stdin.resume(); // never reply
 `;
 
-Deno.test("mcp - aborting the stdio handshake rejects with the reason and cleans up the child", async () => {
+test("mcp - aborting the stdio handshake rejects with the reason and cleans up the child", async () => {
   // A pre-built SDK transport (the escape hatch) lets the test watch the
   // same stderr stream the client captures from. mcp() attaches its
   // capture listener synchronously, before this test's listener, and
   // listeners run in registration order — so once the test sees the
   // output, the client has already captured it and the stderr-enrichment
   // path is live when the abort lands.
+  const pidFile = await pidFilePath();
   const transport = new StdioClientTransport({
-    command: Deno.execPath(),
-    args: ["eval", STALLING_SERVER],
+    command: process.execPath,
+    args: ["--eval", STALLING_SERVER, pidFile],
     stderr: "pipe",
   });
   const controller = new AbortController();
@@ -128,23 +179,26 @@ Deno.test("mcp - aborting the stdio handshake rejects with the reason and cleans
   controller.abort(reason);
 
   // Exactly the caller's reason — not wrapped with the captured stderr.
-  // The sanitizers fail this test if the child outlives the rejection.
-  const error = await assertRejects(() => pending);
-  assertStrictEquals(error, reason);
+  // connect() closes the transport before rejecting, so the child does not
+  // outlive the rejection.
+  const error = await pending.catch((e: unknown) => e);
+  expect(error).toBe(reason);
+  await expectExited(pidFile);
 });
 
 // Prints a diagnostic, then rejects the MCP handshake like
 // NOT_AN_MCP_SERVER.
 const FAILING_SERVER = `
-  await Deno.stderr.write(new TextEncoder().encode("missing libnss3\\n"));
+  process.stderr.write("missing libnss3\\n");
   ${NOT_AN_MCP_SERVER}
 `;
 
-Deno.test("mcp - an abort during cleanup keeps a failed handshake's stderr diagnostics", async () => {
+test("mcp - an abort during cleanup keeps a failed handshake's stderr diagnostics", async () => {
   const controller = new AbortController();
+  const pidFile = await pidFilePath();
   const transport = new StdioClientTransport({
-    command: Deno.execPath(),
-    args: ["eval", FAILING_SERVER],
+    command: process.execPath,
+    args: ["--eval", FAILING_SERVER, pidFile],
     stderr: "pipe",
   });
   // The handshake fails on its own; the abort must land while connect()
@@ -169,7 +223,10 @@ Deno.test("mcp - an abort during cleanup keeps a failed handshake's stderr diagn
   // Make sure the diagnostic was captured, bounded like the test above.
   await firstStderrOutput(transport, pending, controller);
 
-  const error = await assertRejects(() => pending, Error);
-  assertStringIncludes(error.message, "not an MCP server");
-  assertStringIncludes(error.message, "Child stderr: missing libnss3");
+  const error = await pending.catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  const { message } = error as Error;
+  expect(message).toContain("not an MCP server");
+  expect(message).toContain("Child stderr: missing libnss3");
+  await expectExited(pidFile);
 });

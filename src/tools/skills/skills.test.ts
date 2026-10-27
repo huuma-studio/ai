@@ -1,22 +1,15 @@
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
-import { join } from "@std/path";
-import { callTool, tools } from "@/tools/mod.ts";
-import { skills } from "@/tools/skills/skills.ts";
-import { agent } from "@/agent/mod.ts";
-import type {
-  BaseModel,
-  JSONSchema,
-  Message,
-  ModelResult,
-} from "@/agent/mod.ts";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect, test } from "vite-plus/test";
+import { callTool, tools } from "../mod.ts";
+import { skills } from "./skills.ts";
+import { agent } from "../../agent/mod.ts";
+import type { BaseModel, JSONSchema, Message, ModelResult } from "../../agent/mod.ts";
 
 /** Absolute path to the fixture skills tree (also exercises finding 4). */
-const FIXTURES = new URL("./testdata/skills", import.meta.url).pathname;
+const FIXTURES = fileURLToPath(new URL("./testdata/skills", import.meta.url));
 
 type ListResult = { name: string; description: string }[];
 type RetrieveResult = {
@@ -35,13 +28,13 @@ function collector() {
   return { warnings, onWarning };
 }
 
-Deno.test("skills - lists valid skills only, sorted, { name, description }", async () => {
+test("skills - lists valid skills only, sorted, { name, description }", async () => {
   const { onWarning } = collector();
   const [list] = skills({ path: FIXTURES, onWarning });
 
-  const result = await list.call({}) as ListResult;
+  const result = (await list.call({})) as ListResult;
 
-  assertEquals(result, [
+  expect(result).toStrictEqual([
     {
       name: "commit-style",
       description: "Draft a conventional-commit message from staged changes.",
@@ -57,7 +50,7 @@ Deno.test("skills - lists valid skills only, sorted, { name, description }", asy
   ]);
 });
 
-Deno.test("skills - warns once per broken fixture, never for non-skills", async () => {
+test("skills - warns once per broken fixture, never for non-skills", async () => {
   const { warnings, onWarning } = collector();
   const [list] = skills({ path: FIXTURES, onWarning });
 
@@ -66,183 +59,173 @@ Deno.test("skills - warns once per broken fixture, never for non-skills", async 
   // Exactly four diagnostics: broken-yaml, no-frontmatter, missing-desc,
   // and the duplicate name. `not-a-skill` (no SKILL.md) and the stray
   // `README.md` are skipped silently.
-  assertEquals(warnings.length, 4);
+  expect(warnings.length).toStrictEqual(4);
 
-  assertStringIncludes(
-    warnings.find((w) => w.includes("broken-yaml"))!,
-    "broken-yaml/SKILL.md",
-  );
-  assertStringIncludes(
-    warnings.find((w) => w.includes("no-frontmatter"))!,
-    "no-frontmatter/SKILL.md",
-  );
-  assertStringIncludes(
-    warnings.find((w) => w.includes("missing-desc"))!,
-    "missing-desc/SKILL.md",
-  );
-  assertStringIncludes(
-    warnings.find((w) => w.includes("dupe-b"))!,
-    "dupe-b/SKILL.md",
-  );
+  expect(warnings.find((w) => w.includes("broken-yaml"))!).toContain("broken-yaml/SKILL.md");
+  expect(warnings.find((w) => w.includes("no-frontmatter"))!).toContain("no-frontmatter/SKILL.md");
+  expect(warnings.find((w) => w.includes("missing-desc"))!).toContain("missing-desc/SKILL.md");
+  expect(warnings.find((w) => w.includes("dupe-b"))!).toContain("dupe-b/SKILL.md");
 
   // Non-skills must not produce diagnostics.
-  assertEquals(warnings.some((w) => w.includes("not-a-skill")), false);
-  assertEquals(warnings.some((w) => w.includes("README.md")), false);
+  expect(warnings.some((w) => w.includes("not-a-skill"))).toBe(false);
+  expect(warnings.some((w) => w.includes("README.md"))).toBe(false);
 });
 
-Deno.test("skills - retrieve by name returns instructions, metadata, list allowed-tools, absolute path", async () => {
+test("skills - retrieve by name returns instructions, metadata, list allowed-tools, absolute path", async () => {
   const { onWarning } = collector();
   const [, retrieve] = skills({ path: FIXTURES, onWarning });
 
-  const skill = await retrieve.call({ name: "web-research" }) as RetrieveResult;
+  const skill = (await retrieve.call({ name: "web-research" })) as RetrieveResult;
 
-  assertEquals(skill.name, "web-research");
-  assertEquals(skill.description, "Research a topic on the web and summarize findings with sources.");
+  expect(skill.name).toStrictEqual("web-research");
+  expect(skill.description).toStrictEqual(
+    "Research a topic on the web and summarize findings with sources.",
+  );
   // metadata preserved verbatim (finding 2 regression).
-  assertEquals(skill.metadata, { author: "huuma", tags: ["research", "web"] });
+  expect(skill.metadata).toStrictEqual({ author: "huuma", tags: ["research", "web"] });
   // list-form allowed-tools accepted (finding 3 regression).
-  assertEquals(skill["allowed-tools"], ["fetchWebsite", "search"]);
+  expect(skill["allowed-tools"]).toStrictEqual(["fetchWebsite", "search"]);
   // absolute skill folder path (finding 13).
-  assertEquals(skill.path, join(FIXTURES, "web-research"));
-  assertStringIncludes(skill.instructions, "# Web research");
-  assertStringIncludes(skill.instructions, "references/sources.md");
+  expect(skill.path).toStrictEqual(join(FIXTURES, "web-research"));
+  expect(skill.instructions).toContain("# Web research");
+  expect(skill.instructions).toContain("references/sources.md");
 });
 
-Deno.test("skills - retrieve by folder name resolves the same skill", async () => {
+test("skills - retrieve by folder name resolves the same skill", async () => {
   const { onWarning } = collector();
   const [, retrieve] = skills({ path: FIXTURES, onWarning });
 
   // dupe-a's frontmatter name is "duplicate-skill"; its folder is "dupe-a".
-  const byFolder = await retrieve.call({ name: "dupe-a" }) as RetrieveResult;
-  const byName = await retrieve.call({ name: "duplicate-skill" }) as RetrieveResult;
+  const byFolder = (await retrieve.call({ name: "dupe-a" })) as RetrieveResult;
+  const byName = (await retrieve.call({ name: "duplicate-skill" })) as RetrieveResult;
 
-  assertEquals(byFolder.path, join(FIXTURES, "dupe-a"));
-  assertEquals(byName.path, join(FIXTURES, "dupe-a"));
-  assertEquals(byFolder.instructions, byName.instructions);
+  expect(byFolder.path).toStrictEqual(join(FIXTURES, "dupe-a"));
+  expect(byName.path).toStrictEqual(join(FIXTURES, "dupe-a"));
+  expect(byFolder.instructions).toStrictEqual(byName.instructions);
 });
 
-Deno.test("skills - string-form allowed-tools parses", async () => {
+test("skills - string-form allowed-tools parses", async () => {
   const { onWarning } = collector();
   const [, retrieve] = skills({ path: FIXTURES, onWarning });
 
-  const skill = await retrieve.call({ name: "commit-style" }) as RetrieveResult;
-  assertEquals(skill["allowed-tools"], "cli");
+  const skill = (await retrieve.call({ name: "commit-style" })) as RetrieveResult;
+  expect(skill["allowed-tools"]).toStrictEqual("cli");
 });
 
-Deno.test("skills - unknown name throws listing available skills", async () => {
+test("skills - unknown name throws listing available skills", async () => {
   const { onWarning } = collector();
   const [, retrieve] = skills({ path: FIXTURES, onWarning });
 
-  await assertRejects(
-    () => retrieve.call({ name: "nope" }),
-    Error,
+  await expect(retrieve.call({ name: "nope" })).rejects.toThrow(
     'Skill "nope" not found. Available skills: commit-style, duplicate-skill, web-research',
   );
 });
 
-Deno.test("skills - duplicate name resolves to the sorted-first folder (dupe-a)", async () => {
+test("skills - duplicate name resolves to the sorted-first folder (dupe-a)", async () => {
   const { onWarning } = collector();
   const [, retrieve] = skills({ path: FIXTURES, onWarning });
 
-  const skill = await retrieve.call({ name: "duplicate-skill" }) as RetrieveResult;
-  assertEquals(skill.path, join(FIXTURES, "dupe-a"));
+  const skill = (await retrieve.call({ name: "duplicate-skill" })) as RetrieveResult;
+  expect(skill.path).toStrictEqual(join(FIXTURES, "dupe-a"));
 });
 
-Deno.test("skills - missing skills directory yields an empty list with no warning", async () => {
+test("skills - missing skills directory yields an empty list with no warning", async () => {
   const { warnings, onWarning } = collector();
-  const missing = new URL("./testdata/does-not-exist", import.meta.url).pathname;
+  const missing = fileURLToPath(new URL("./testdata/does-not-exist", import.meta.url));
   const [list] = skills({ path: missing, onWarning });
 
-  const result = await list.call({}) as ListResult;
-  assertEquals(result, []);
-  assertEquals(warnings, []);
+  const result = (await list.call({})) as ListResult;
+  expect(result).toStrictEqual([]);
+  expect(warnings).toStrictEqual([]);
 });
 
-Deno.test("skills - absolute path option works", async () => {
+test("skills - absolute path option works", async () => {
   const { onWarning } = collector();
   // FIXTURES is already absolute; asserting the factory accepts it directly.
-  assert(FIXTURES.startsWith("/"), "fixture path must be absolute");
+  // fixture path must be absolute
+  expect(FIXTURES.startsWith("/")).toBe(true);
   const [list] = skills({ path: FIXTURES, onWarning });
 
-  const result = await list.call({}) as ListResult;
-  assertEquals(result.length, 3);
+  const result = (await list.call({})) as ListResult;
+  expect(result.length).toStrictEqual(3);
 });
 
-Deno.test("skills - concurrent first calls share one scan", async () => {
+test("skills - concurrent first calls share one scan", async () => {
   const { warnings, onWarning } = collector();
   const [list, retrieve] = skills({ path: FIXTURES, onWarning });
 
   // Fire both tools without awaiting between them. A single scan emits
   // exactly one duplicate-name warning; two scans would emit two.
-  await Promise.all([
-    list.call({}),
-    retrieve.call({ name: "web-research" }),
-  ]);
+  await Promise.all([list.call({}), retrieve.call({ name: "web-research" })]);
 
   const dupes = warnings.filter((w) => w.includes("Duplicate skill name"));
-  assertEquals(dupes.length, 1);
+  expect(dupes.length).toStrictEqual(1);
 });
 
-Deno.test("skills - a rejected scan retries on the next call", async (t) => {
-  const tempDir = await Deno.makeTempDir();
-  const target = join(tempDir, "skills");
-  // Start as a file: readDir rejects with NotADirectory.
-  await Deno.writeTextFile(target, "not a directory");
+test("skills - a rejected scan retries on the next call", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+  try {
+    const target = join(tempDir, "skills");
+    // Start as a file: readdir rejects with ENOTDIR.
+    await writeFile(target, "not a directory");
 
-  const { onWarning } = collector();
-  const [list] = skills({ path: target, onWarning });
+    const { onWarning } = collector();
+    const [list] = skills({ path: target, onWarning });
 
-  await assertRejects(() => list.call({}), Deno.errors.NotADirectory);
+    await expect(list.call({})).rejects.toMatchObject({ code: "ENOTDIR" });
 
-  // Replace the file with a directory containing a valid skill folder.
-  await Deno.remove(target);
-  await Deno.mkdir(target);
-  await Deno.mkdir(join(target, "temp-skill"));
-  await Deno.writeTextFile(
-    join(target, "temp-skill", "SKILL.md"),
-    [
-      "---",
-      "name: temp-skill",
-      "description: A skill created after the first scan failed.",
-      "---",
-      "# Temp",
-    ].join("\n"),
-  );
-
-  const result = await list.call({}) as ListResult;
-  assertEquals(result, [{
-    name: "temp-skill",
-    description: "A skill created after the first scan failed.",
-  }]);
-
-  await t.step({ name: "cleanup", fn: () => Deno.remove(tempDir, { recursive: true }) });
-});
-
-Deno.test({
-  name:
-    "skills - a symlink whose target cannot be traversed warns instead of vanishing",
-  ignore: Deno.build.os === "windows",
-  async fn() {
-    // Put the real skill under a dir that will be locked, outside the scan
-    // root, so only the symlink path hits `Deno.stat` and the locked parent
-    // makes that stat throw `PermissionDenied`.
-    const outer = await Deno.makeTempDir();
-    const scanRoot = await Deno.makeTempDir();
-    const real = join(outer, "real");
-    await Deno.mkdir(join(real, "skill"), { recursive: true });
-    await Deno.writeTextFile(
-      join(real, "skill", "SKILL.md"),
-      ["---", "name: locked", "description: Behind a permission-denied symlink.", "---", ""].join("\n"),
+    // Replace the file with a directory containing a valid skill folder.
+    await rm(target);
+    await mkdir(target);
+    await mkdir(join(target, "temp-skill"));
+    await writeFile(
+      join(target, "temp-skill", "SKILL.md"),
+      [
+        "---",
+        "name: temp-skill",
+        "description: A skill created after the first scan failed.",
+        "---",
+        "# Temp",
+      ].join("\n"),
     );
-    await Deno.symlink(real, join(scanRoot, "link"));
-    await Deno.chmod(outer, 0o000);
+
+    const result = (await list.call({})) as ListResult;
+    expect(result).toStrictEqual([
+      {
+        name: "temp-skill",
+        description: "A skill created after the first scan failed.",
+      },
+    ]);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32")(
+  "skills - a symlink whose target cannot be traversed warns instead of vanishing",
+  async () => {
+    // Put the real skill under a dir that will be locked, outside the scan
+    // root, so only the symlink path hits `stat` and the locked parent
+    // makes that stat throw `EACCES`.
+    const outer = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+    const scanRoot = await mkdtemp(join(tmpdir(), "huuma-ai-"));
+    const real = join(outer, "real");
+    await mkdir(join(real, "skill"), { recursive: true });
+    await writeFile(
+      join(real, "skill", "SKILL.md"),
+      ["---", "name: locked", "description: Behind a permission-denied symlink.", "---", ""].join(
+        "\n",
+      ),
+    );
+    await symlink(real, join(scanRoot, "link"));
+    await chmod(outer, 0o000);
 
     try {
       // Bail out on hosts where the perm trick doesn't deny (e.g. root),
       // so the test never false-fails there.
       let denied = false;
       try {
-        await Deno.stat(join(scanRoot, "link"));
+        await stat(join(scanRoot, "link"));
       } catch {
         denied = true;
       }
@@ -251,26 +234,23 @@ Deno.test({
       const { warnings, onWarning } = collector();
       const [list] = skills({ path: scanRoot, onWarning });
 
-      const result = await list.call({}) as ListResult;
-      assertEquals(result, []);
-      assert(
-        warnings.some((w) =>
-          w.includes("link") && w.includes("Failed to inspect")),
+      const result = (await list.call({})) as ListResult;
+      expect(result).toStrictEqual([]);
+      expect(
+        warnings.some((w) => w.includes("link") && w.includes("Failed to inspect")),
         `expected a symlink-inspection warning, got: ${JSON.stringify(warnings)}`,
-      );
+      ).toBe(true);
     } finally {
-      await Deno.chmod(outer, 0o700);
-      await Deno.remove(outer, { recursive: true });
-      await Deno.remove(scanRoot, { recursive: true });
+      await chmod(outer, 0o700);
+      await rm(outer, { recursive: true, force: true });
+      await rm(scanRoot, { recursive: true, force: true });
     }
   },
-});
+);
 
 // --- Agent end-to-end -------------------------------------------------------
 
-type ScriptedResponse =
-  | Message[]
-  | { messages: Message[]; usage?: unknown };
+type ScriptedResponse = Message[] | { messages: Message[]; usage?: unknown };
 
 class StubModel implements BaseModel<string> {
   #responses: ScriptedResponse[];
@@ -307,7 +287,7 @@ function modelToolCall(name: string, props: Record<string, unknown>): Message {
   };
 }
 
-Deno.test("skills - agent end-to-end through Agent.run", async () => {
+test("skills - agent end-to-end through Agent.run", async () => {
   const { onWarning } = collector();
   const [listSkills, retrieveSkill] = skills({ path: FIXTURES, onWarning });
 
@@ -328,16 +308,16 @@ Deno.test("skills - agent end-to-end through Agent.run", async () => {
 
   // Two tool turns then the final model message.
   const last = messages.at(-1)!;
-  assertEquals(last.role, "model");
+  expect(last.role).toStrictEqual("model");
   const finalText = last.contents[0] as { text: string };
-  assertEquals(finalText.text, "Done.");
+  expect(finalText.text).toStrictEqual("Done.");
 
   const toolMessages = messages.filter((m) => m.role === "tool");
-  assertEquals(toolMessages.length, 2);
+  expect(toolMessages.length).toStrictEqual(2);
 
   // The retrieve result reaches the model via callTool.
   const afterRetrieve = await callTool(tools([listSkills, retrieveSkill]))([
     modelToolCall("retrieve_skill", { name: "commit-style" }),
   ]);
-  assertEquals(afterRetrieve.at(-1)!.role, "tool");
+  expect(afterRetrieve.at(-1)!.role).toStrictEqual("tool");
 });

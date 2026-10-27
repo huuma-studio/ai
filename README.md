@@ -1,23 +1,31 @@
 # @huuma/ai
 
-Composable AI primitives for Deno and TypeScript: unified chat-model adapters,
-agent orchestration, workflows, and tool factories.
+Composable AI primitives for TypeScript: unified chat-model adapters,
+agent orchestration, workflows, and tool factories. Runs on Node.js, Deno and
+Bun.
+
+## Install
+
+```sh
+pnpm add jsr:@huuma/ai   # Node.js
+deno add jsr:@huuma/ai   # Deno
+```
 
 ## Example
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { openai } from "jsr:@huuma/ai/models/openai";
-import { cli } from "jsr:@huuma/ai/tools";
+import { agent } from "@huuma/ai/agent";
+import { openai } from "@huuma/ai/models/openai";
+import { cli } from "@huuma/ai/tools";
 
 const assistant = agent({
-  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  model: openai({ apiKey: process.env.OPENAI_API_KEY }),
   modelId: "gpt-5.5",
   systemPrompt: "You are a concise TypeScript assistant.",
-  tools: [cli({ allowedCommands: ["deno"] })],
+  tools: [cli({ allowedCommands: ["node"] })],
 });
 
-const messages = await assistant.run("Check the current Deno version.");
+const messages = await assistant.run("Check the current Node.js version.");
 console.log(messages.at(-1));
 ```
 
@@ -99,11 +107,11 @@ through model-generated tool calls.
 The same agent can be backed by Mistral:
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { mistral } from "jsr:@huuma/ai/models/mistral";
+import { agent } from "@huuma/ai/agent";
+import { mistral } from "@huuma/ai/models/mistral";
 
 const assistant = agent({
-  model: mistral({ apiKey: Deno.env.get("MISTRAL_API_KEY") }),
+  model: mistral({ apiKey: process.env.MISTRAL_API_KEY }),
   modelId: "mistral-large-latest",
   systemPrompt: "You are a concise TypeScript assistant.",
 });
@@ -112,11 +120,11 @@ const assistant = agent({
 The same agent can be backed by Z.AI (GLM Coding Plan):
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { zai } from "jsr:@huuma/ai/models/zai";
+import { agent } from "@huuma/ai/agent";
+import { zai } from "@huuma/ai/models/zai";
 
 const assistant = agent({
-  model: zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") }),
+  model: zai({ apiKey: process.env.ZAI_CODING_API_KEY! }),
   modelId: "glm-5.3",
   systemPrompt: "You are a concise TypeScript assistant.",
 });
@@ -132,10 +140,10 @@ Z.AI-specific options — `thinking`, `reasoning_effort`, `do_sample`, and
 `tool_stream` — are passed through the `options` field:
 
 ```typescript
-import { zai } from "jsr:@huuma/ai/models/zai";
-import { cli } from "jsr:@huuma/ai/tools";
+import { zai } from "@huuma/ai/models/zai";
+import { cli } from "@huuma/ai/tools";
 
-const model = zai({ apiKey: Deno.env.get("ZAI_CODING_API_KEY") });
+const model = zai({ apiKey: process.env.ZAI_CODING_API_KEY! });
 
 // Generation with thinking controls
 const result = await model.generate({
@@ -165,19 +173,19 @@ An agent can delegate tasks to another agent through the `subagent` tool. The
 sub-agent runs its own loop and only its final answer reaches the parent:
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { openai } from "jsr:@huuma/ai/models/openai";
-import { cli, subagent } from "jsr:@huuma/ai/tools";
+import { agent } from "@huuma/ai/agent";
+import { openai } from "@huuma/ai/models/openai";
+import { cli, subagent } from "@huuma/ai/tools";
 
 const researcher = agent({
-  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  model: openai({ apiKey: process.env.OPENAI_API_KEY }),
   modelId: "gpt-5.5",
   systemPrompt: "You research topics and answer concisely.",
-  tools: [cli({ allowedCommands: ["deno"] })],
+  tools: [cli({ allowedCommands: ["node"] })],
 });
 
 const assistant = agent({
-  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  model: openai({ apiKey: process.env.OPENAI_API_KEY }),
   modelId: "gpt-5.5",
   systemPrompt: "You are a concise TypeScript assistant.",
   tools: [
@@ -198,24 +206,24 @@ holds an IANA MIME type plus either base64 `data` (no data-URL prefix) or a
 publicly reachable `url` — exactly one of the two:
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { anthropic } from "jsr:@huuma/ai/models/anthropic";
+import { agent } from "@huuma/ai/agent";
+import { anthropic } from "@huuma/ai/models/anthropic";
 
 const assistant = agent({
-  model: anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") }),
+  model: anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
   modelId: "claude-sonnet-4-6",
   systemPrompt: "You describe images concisely.",
 });
 
-import { encodeBase64 } from "jsr:@std/encoding/base64";
+import { readFile } from "node:fs/promises";
 
-const image = await Deno.readFile("photo.png");
+const image = await readFile("photo.png");
 const messages = await assistant.run([
   { text: "What is in this image?" },
   {
     file: {
       mimeType: "image/png",
-      data: encodeBase64(image),
+      data: image.toString("base64"),
     },
   },
 ]);
@@ -243,9 +251,9 @@ Tools can return media alongside their output by wrapping the return
 value with `toolOutput`:
 
 ```typescript
-import { tool, toolOutput } from "jsr:@huuma/ai/tools";
-import { object, string } from "jsr:@huuma/validate";
-import { encodeBase64 } from "jsr:@std/encoding/base64";
+import { tool, toolOutput } from "@huuma/ai/tools";
+import { object, string } from "@huuma/validate";
+import { Buffer } from "node:buffer";
 
 const screenshot = tool({
   name: "screenshot",
@@ -254,7 +262,7 @@ const screenshot = tool({
   fn: async ({ url }) => {
     const png = await capture(url); // Uint8Array
     return toolOutput("Screenshot captured.", [
-      { file: { mimeType: "image/png", data: encodeBase64(png) } },
+      { file: { mimeType: "image/png", data: Buffer.from(png).toString("base64") } },
     ]);
   },
 });
@@ -283,12 +291,12 @@ bytes — never the file extension — and attaches the image through the
 mechanism above:
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { openai } from "jsr:@huuma/ai/models/openai";
-import { image } from "jsr:@huuma/ai/tools";
+import { agent } from "@huuma/ai/agent";
+import { openai } from "@huuma/ai/models/openai";
+import { image } from "@huuma/ai/tools";
 
 const assistant = agent({
-  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  model: openai({ apiKey: process.env.OPENAI_API_KEY }),
   modelId: "gpt-5.5",
   systemPrompt: "You describe images concisely.",
   tools: [image()],
@@ -341,7 +349,7 @@ at most `maxBytes` of the page (2 MiB by default), cancelling the rest of
 the download.
 
 ```typescript
-import { fetchWebsite, readFile } from "jsr:@huuma/ai/tools";
+import { fetchWebsite, readFile } from "@huuma/ai/tools";
 
 const tools = [
   readFile({ maxBytes: 256 * 1024 }),
@@ -360,7 +368,7 @@ rejecting the call.
 ordinary tools — nothing else changes:
 
 ```typescript
-import { mcp } from "jsr:@huuma/ai/tools";
+import { mcp } from "@huuma/ai/tools";
 
 const deepwiki = await mcp({
   name: "deepwiki", // model-visible tools become deepwiki_<tool>
@@ -416,9 +424,9 @@ list and misconfigured skills warn through `onWarning` instead of failing
 the scan — and the scan is cached for the factory's lifetime:
 
 ```typescript
-import { agent } from "jsr:@huuma/ai/agent";
-import { openai } from "jsr:@huuma/ai/models/openai";
-import { skills } from "jsr:@huuma/ai/tools";
+import { agent } from "@huuma/ai/agent";
+import { openai } from "@huuma/ai/models/openai";
+import { skills } from "@huuma/ai/tools";
 
 const [listSkills, retrieveSkill] = skills({
   path: "./.agents/skills", // default
@@ -426,7 +434,7 @@ const [listSkills, retrieveSkill] = skills({
 });
 
 const assistant = agent({
-  model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+  model: openai({ apiKey: process.env.OPENAI_API_KEY }),
   modelId: "gpt-5.5",
   systemPrompt: "You follow skill instructions precisely.",
   tools: [listSkills, retrieveSkill],
@@ -436,12 +444,31 @@ const assistant = agent({
 Construct a new factory to re-scan disk; the cache does not watch files.
 Design record: `docs/adr/0005-skills-as-a-tool-factory.md`.
 
-## Permissions
+## Runtimes
 
-Some bundled tools require Deno permissions when called, such as `--allow-read`,
+The model adapters only need `fetch` and run in any JavaScript runtime,
+including browsers and edge workers. The adapters don't read environment
+variables themselves, so pass API keys explicitly; some provider SDKs still fall
+back to their own variables, such as `OPENAI_API_KEY`. The bundled tools use
+`node:` built-ins (file system, child processes), which Node.js, Deno and Bun
+all provide.
+
+On Deno, some bundled tools require permissions when called, such as `--allow-read`,
 `--allow-write`, `--allow-run`, `--allow-net`, or `--allow-env`, depending on
 the tool and provider configuration. MCP transports: stdio needs
 `--allow-run --allow-read --allow-env`; Streamable HTTP needs `--allow-net`.
 The `skills` factory needs `--allow-read` for the skills directory.
 The `image` factory needs `--allow-read` for the image files the model
 requests.
+
+## Development
+
+```sh
+pnpm install
+vp check
+vp test
+vp run jsr:dry-run
+```
+
+JSR publishes from `jsr.json`, whose import map names the JSR and npm versions;
+`package.json` only drives the Node tooling.

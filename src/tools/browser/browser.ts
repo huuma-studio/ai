@@ -1,5 +1,5 @@
 import { object } from "@huuma/validate/object";
-import { type Tool, tool } from "@/tools/mod.ts";
+import { type Tool, tool } from "../mod.ts";
 import { string } from "@huuma/validate/string";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import {
@@ -7,7 +7,7 @@ import {
   readTextBounded,
   validateMaxBytes,
   withTruncationNotice,
-} from "@/tools/bounded_text.ts";
+} from "../bounded_text.ts";
 
 /** Options for configuring the fetch-website tool. */
 export interface FetchWebsiteOptions {
@@ -48,22 +48,16 @@ const END_OF_BODY_GRACE_MS = 100;
  * @param options Optional timeout and body-size cap.
  * @returns A {@link Tool} that downloads the given URL and returns Markdown text.
  */
-export function fetchWebsite(
-  options?: FetchWebsiteOptions,
-  // deno-lint-ignore no-explicit-any
-): Tool<any, string> {
+export function fetchWebsite(options?: FetchWebsiteOptions): Tool<any, string> {
   const timeout = options?.timeout ?? DEFAULT_FETCH_WEBSITE_TIMEOUT;
   const maxBytes = options?.maxBytes ?? DEFAULT_FETCH_WEBSITE_MAX_BYTES;
   validateMaxBytes(maxBytes);
 
   return tool({
     name: "fetch_website",
-    description:
-      `Fetch a website and return its content as Markdown converted from the HTML. Pages larger than ${
-        formatBytes(maxBytes)
-      } are truncated, and the request times out after ${
-        formatDuration(timeout)
-      }.`,
+    description: `Fetch a website and return its content as Markdown converted from the HTML. Pages larger than ${formatBytes(
+      maxBytes,
+    )} are truncated, and the request times out after ${formatDuration(timeout)}.`,
     input: object({
       url: string(),
     }),
@@ -73,21 +67,17 @@ export function fetchWebsite(
         const response = await fetch(url, { signal });
         if (!response.ok) {
           await response.body?.cancel();
-          throw new Error(
-            `Failed to fetch ${url}: ${response.status} ${response.statusText}`,
-          );
+          throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
         }
         const total = Number(response.headers.get("content-length"));
         const contentLength = Number.isFinite(total) ? total : undefined;
         const { text, truncated } = await readTextBounded(
-          response.body ?? ReadableStream.from([]),
+          response.body ?? new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
           maxBytes,
           { endOfStreamGrace: endOfBodyGrace(contentLength, maxBytes) },
         );
         const markdown = NodeHtmlMarkdown.translate(text);
-        return truncated
-          ? withTruncationNotice(markdown, maxBytes, contentLength)
-          : markdown;
+        return truncated ? withTruncationNotice(markdown, maxBytes, contentLength) : markdown;
       } catch (error) {
         if (error instanceof Error) {
           throw new Error(`Error fetching ${url}: ${error.message}`);
@@ -105,10 +95,7 @@ export function fetchWebsite(
  * closes right after its last chunk, while waiting indefinitely would hang
  * on a server that holds the connection open.
  */
-function endOfBodyGrace(
-  contentLength: number | undefined,
-  maxBytes: number,
-): number | undefined {
+function endOfBodyGrace(contentLength: number | undefined, maxBytes: number): number | undefined {
   return contentLength === maxBytes ? undefined : END_OF_BODY_GRACE_MS;
 }
 

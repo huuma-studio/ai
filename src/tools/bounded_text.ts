@@ -36,7 +36,7 @@ export interface ReadTextBoundedOptions {
   endOfStreamGrace?: number;
   /**
    * Keep a byte-order mark at the start of the stream as U+FEFF instead of
-   * dropping it, as `Deno.readTextFile` does. Then every byte of the stream
+   * dropping it, as `TextDecoder` does by default. Then every byte of the stream
    * is in the text.
    */
   ignoreBOM?: boolean;
@@ -174,9 +174,7 @@ export async function* readLines<T>(
   try {
     while (true) {
       const { done, value } = await reader.read();
-      const text = done
-        ? decoder.decode()
-        : decoder.decode(value, { stream: true });
+      const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
       let start = 0;
       while (true) {
         const end = text.indexOf("\n", start);
@@ -212,10 +210,7 @@ export async function* readLines<T>(
  * grow sixfold in the request; this bounds what is actually sent. The cut
  * never splits a surrogate pair.
  */
-export function fitJsonString(
-  text: string,
-  maxBytes: number,
-): { text: string; trimmed: boolean } {
+export function fitJsonString(text: string, maxBytes: number): { text: string; trimmed: boolean } {
   let size = 0;
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index);
@@ -229,9 +224,7 @@ export function fitJsonString(
       cost = 1;
     } else if (code < 0x800) {
       cost = 2;
-    } else if (
-      isHighSurrogate(code) && isLowSurrogate(text.charCodeAt(index + 1))
-    ) {
+    } else if (isHighSurrogate(code) && isLowSurrogate(text.charCodeAt(index + 1))) {
       cost = 4;
       units = 2;
     } else if (isHighSurrogate(code) || isLowSurrogate(code)) {
@@ -266,17 +259,9 @@ function isLowSurrogate(code: number): boolean {
  * @param total The source's full size, named in the note when it is known
  * to exceed what is shown.
  */
-export function withTruncationNotice(
-  text: string,
-  shownBytes: number,
-  total?: number,
-): string {
-  const size = total !== undefined && total > shownBytes
-    ? ` of ${formatBytes(total)}`
-    : "";
-  return `${text}\n\n…[truncated: showing the first ${
-    formatBytes(shownBytes)
-  }${size}]`;
+export function withTruncationNotice(text: string, shownBytes: number, total?: number): string {
+  const size = total !== undefined && total > shownBytes ? ` of ${formatBytes(total)}` : "";
+  return `${text}\n\n…[truncated: showing the first ${formatBytes(shownBytes)}${size}]`;
 }
 
 /** Format a byte count for a tool description or note, e.g. `512 KiB`. */

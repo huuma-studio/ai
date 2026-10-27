@@ -1,13 +1,6 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
-import type { BaseModel, Message } from "@/model/mod.ts";
-import {
-  anthropic,
-  google,
-  mistral,
-  ollama,
-  openai,
-  zai,
-} from "./mod.ts";
+import { expect, test } from "vite-plus/test";
+import type { BaseModel, Message } from "../src/model/mod.ts";
+import { anthropic, google, mistral, ollama, openai, zai } from "./mod.ts";
 
 /**
  * Every adapter must hand the caller's signal to the transport, so that
@@ -19,11 +12,7 @@ import {
 const adapters: [string, () => BaseModel<string>, string][] = [
   ["openai", () => openai({ apiKey: "test", maxRetries: 0 }), "gpt-5.5"],
   ["zai", () => zai({ apiKey: "test" }), "glm-5.3"],
-  [
-    "anthropic",
-    () => anthropic({ apiKey: "test", maxRetries: 0 }),
-    "claude-opus-4-7",
-  ],
+  ["anthropic", () => anthropic({ apiKey: "test", maxRetries: 0 }), "claude-opus-4-7"],
   ["mistral", () => mistral({ apiKey: "test" }), "mistral-large-latest"],
   ["google", () => google({ apiKey: "test" }), "gemini-3-pro-preview"],
   ["ollama", () => ollama({ host: "http://localhost:11434" }), "llama3"],
@@ -43,8 +32,7 @@ function stubHangingFetch(): {
     resolveFetched = resolve;
   });
   globalThis.fetch = (input, init) => {
-    const signal = init?.signal ??
-      (input instanceof Request ? input.signal : undefined);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     if (!signal) {
       return Promise.reject(new Error("request carries no signal"));
     }
@@ -56,7 +44,7 @@ function stubHangingFetch(): {
       });
     });
   };
-  return { fetched, restore: () => globalThis.fetch = original };
+  return { fetched, restore: () => (globalThis.fetch = original) };
 }
 
 /** Replaces `fetch` with a streaming response whose headers arrive at
@@ -66,22 +54,26 @@ function stubHangingFetch(): {
 function stubStalledStreamFetch(contentType: string): () => void {
   const original = globalThis.fetch;
   globalThis.fetch = (input, init) => {
-    const signal = init?.signal ??
-      (input instanceof Request ? input.signal : undefined);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        signal?.addEventListener(
-          "abort",
-          () => controller.error(signal.reason),
-          { once: true },
-        );
+        signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
       },
     });
-    return Promise.resolve(
-      new Response(body, { headers: { "content-type": contentType } }),
-    );
+    return Promise.resolve(new Response(body, { headers: { "content-type": contentType } }));
   };
-  return () => globalThis.fetch = original;
+  return () => (globalThis.fetch = original);
+}
+
+/** Resolves with the reason `promise` rejects with; fails the test if it
+ * fulfils instead. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  return expect.fail("expected the call to reject");
 }
 
 /** Rejects if `promise` has not settled within `ms` — an adapter that
@@ -90,10 +82,7 @@ function stubStalledStreamFetch(contentType: string): () => void {
 async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`the abort did not reach the transport`)),
-      ms,
-    );
+    timer = setTimeout(() => reject(new Error(`the abort did not reach the transport`)), ms);
   });
   try {
     return await Promise.race([promise, deadline]);
@@ -104,7 +93,7 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 for (const [name, create, modelId] of adapters) {
   for (const method of ["generate", "stream"] as const) {
-    Deno.test(`${name} - ${method} forwards the signal to the transport`, async () => {
+    test(`${name} - ${method} forwards the signal to the transport`, async () => {
       const { fetched, restore } = stubHangingFetch();
       try {
         const model = create();
@@ -119,8 +108,8 @@ for (const [name, create, modelId] of adapters) {
         const transportSignal = await within(fetched, 2_000);
         controller.abort(new Error("stop"));
 
-        await within(assertRejects(() => pending), 2_000);
-        assertEquals(transportSignal.aborted, true);
+        await within(rejection(pending), 2_000);
+        expect(transportSignal.aborted).toBe(true);
       } finally {
         restore();
       }
@@ -133,10 +122,8 @@ const streamContentTypes: Record<string, string> = {
 };
 
 for (const [name, create, modelId] of adapters) {
-  Deno.test(`${name} - aborting a stream mid-iteration ends it with an error`, async () => {
-    const restore = stubStalledStreamFetch(
-      streamContentTypes[name] ?? "text/event-stream",
-    );
+  test(`${name} - aborting a stream mid-iteration ends it with an error`, async () => {
+    const restore = stubStalledStreamFetch(streamContentTypes[name] ?? "text/event-stream");
     try {
       const controller = new AbortController();
       const stream = await within(
@@ -148,14 +135,14 @@ for (const [name, create, modelId] of adapters) {
       next.catch(() => {});
       controller.abort(new Error("stop"));
 
-      await within(assertRejects(() => next), 2_000);
+      await within(rejection(next), 2_000);
     } finally {
       restore();
     }
   });
 }
 
-Deno.test("openai - no buffered tool call is delivered after an abort", async () => {
+test("openai - no buffered tool call is delivered after an abort", async () => {
   // One chunk completes two tool calls, which the adapter yields back to
   // back without reading the transport again; the body then stalls.
   const chunk = {
@@ -163,30 +150,26 @@ Deno.test("openai - no buffered tool call is delivered after an abort", async ()
     object: "chat.completion.chunk",
     created: 0,
     model: "gpt-5.5",
-    choices: [{
-      index: 0,
-      delta: {
-        tool_calls: [
-          { index: 0, id: "a", type: "function", function: { name: "first", arguments: "{}" } },
-          { index: 1, id: "b", type: "function", function: { name: "second", arguments: "{}" } },
-        ],
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [
+            { index: 0, id: "a", type: "function", function: { name: "first", arguments: "{}" } },
+            { index: 1, id: "b", type: "function", function: { name: "second", arguments: "{}" } },
+          ],
+        },
+        finish_reason: "tool_calls",
       },
-      finish_reason: "tool_calls",
-    }],
+    ],
   };
   const original = globalThis.fetch;
   globalThis.fetch = (_input, init) => {
     const signal = init?.signal;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`),
-        );
-        signal?.addEventListener(
-          "abort",
-          () => controller.error(signal.reason),
-          { once: true },
-        );
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
       },
     });
     return Promise.resolve(
@@ -203,11 +186,11 @@ Deno.test("openai - no buffered tool call is delivered after an abort", async ()
     });
 
     const first = await within(stream.next(), 2_000);
-    assertEquals(first.value?.messages[0].role, "model");
+    expect(first.value?.messages[0].role).toBe("model");
     controller.abort(reason);
 
-    const error = await within(assertRejects(() => stream.next()), 2_000);
-    assertStrictEquals(error, reason);
+    const error = await within(rejection(stream.next()), 2_000);
+    expect(error).toBe(reason);
   } finally {
     globalThis.fetch = original;
   }

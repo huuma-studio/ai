@@ -1,11 +1,5 @@
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
-import { agent, DEFAULT_MAX_MODEL_CALLS, FINISH_TURN_TOOL } from "@/agent/mod.ts";
+import { expect, test } from "vite-plus/test";
+import { agent, DEFAULT_MAX_MODEL_CALLS, FINISH_TURN_TOOL } from "./mod.ts";
 import type {
   BaseModel,
   JSONSchema,
@@ -14,13 +8,11 @@ import type {
   ModelUsage,
   ToolMessage,
   ToolResultContent,
-} from "@/agent/mod.ts";
-import { tool } from "@/tools/mod.ts";
+} from "./mod.ts";
+import { tool } from "../tools/mod.ts";
 import { object, string } from "@huuma/validate";
 
-type ScriptedResponse =
-  | Message[]
-  | { messages: Message[]; usage?: ModelUsage };
+type ScriptedResponse = Message[] | { messages: Message[]; usage?: ModelUsage };
 
 class StubModel implements BaseModel<string> {
   calls: { messages: Message[]; system?: string }[] = [];
@@ -60,7 +52,7 @@ function modelMessage(text: string): Message {
   return { role: "model", contents: [{ text }], toolCalls: [] };
 }
 
-Deno.test("agent - run sends the prompt and returns the conversation", async () => {
+test("agent - run sends the prompt and returns the conversation", async () => {
   const model = new StubModel([[modelMessage("Hello!")]]);
   const assistant = agent({
     model,
@@ -70,15 +62,12 @@ Deno.test("agent - run sends the prompt and returns the conversation", async () 
 
   const messages = await assistant.run("Hi");
 
-  assertEquals(messages, [
-    { role: "user", contents: "Hi" },
-    modelMessage("Hello!"),
-  ]);
-  assertEquals(model.calls[0].system, "Be helpful.");
-  assertEquals(model.calls[0].messages, [{ role: "user", contents: "Hi" }]);
+  expect(messages).toStrictEqual([{ role: "user", contents: "Hi" }, modelMessage("Hello!")]);
+  expect(model.calls[0].system).toStrictEqual("Be helpful.");
+  expect(model.calls[0].messages).toStrictEqual([{ role: "user", contents: "Hi" }]);
 });
 
-Deno.test("agent - run passes text and file prompt parts through verbatim", async () => {
+test("agent - run passes text and file prompt parts through verbatim", async () => {
   const model = new StubModel([[modelMessage("A cat.")]]);
   const assistant = agent({
     model,
@@ -92,16 +81,11 @@ Deno.test("agent - run passes text and file prompt parts through verbatim", asyn
   ];
   const messages = await assistant.run(prompt);
 
-  assertEquals(model.calls[0].messages, [
-    { role: "user", contents: prompt },
-  ]);
-  assertEquals(messages, [
-    { role: "user", contents: prompt },
-    modelMessage("A cat."),
-  ]);
+  expect(model.calls[0].messages).toStrictEqual([{ role: "user", contents: prompt }]);
+  expect(messages).toStrictEqual([{ role: "user", contents: prompt }, modelMessage("A cat.")]);
 });
 
-Deno.test("agent - run continues from prior history", async () => {
+test("agent - run continues from prior history", async () => {
   const history: Message[] = [
     { role: "user", contents: "What is Deno?" },
     modelMessage("A JavaScript runtime."),
@@ -115,29 +99,31 @@ Deno.test("agent - run continues from prior history", async () => {
 
   const messages = await assistant.run("Who created it?", history);
 
-  assertEquals(model.calls[0].messages, [
+  expect(model.calls[0].messages).toStrictEqual([
     ...history,
     { role: "user", contents: "Who created it?" },
   ]);
-  assertEquals(messages, [
+  expect(messages).toStrictEqual([
     ...history,
     { role: "user", contents: "Who created it?" },
     modelMessage("Ryan Dahl."),
   ]);
 });
 
-Deno.test("agent - run executes tool calls and feeds results back", async () => {
+test("agent - run executes tool calls and feeds results back", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
     props: { name: "Huuma" } as unknown as JSONSchema,
   };
   const model = new StubModel([
-    [{
-      role: "model",
-      contents: [{ toolCall }],
-      toolCalls: [toolCall],
-    }],
+    [
+      {
+        role: "model",
+        contents: [{ toolCall }],
+        toolCalls: [toolCall],
+      },
+    ],
     [modelMessage("Greeted Huuma.")],
   ]);
 
@@ -161,29 +147,31 @@ Deno.test("agent - run executes tool calls and feeds results back", async () => 
 
   const messages = await assistant.run("Greet Huuma");
 
-  assertEquals(greetedWith, ["Huuma"]);
+  expect(greetedWith).toStrictEqual(["Huuma"]);
 
   const toolMessage = messages.at(-2);
-  assertEquals(toolMessage?.role, "tool");
-  assertEquals(messages.at(-1), modelMessage("Greeted Huuma."));
+  expect(toolMessage?.role).toStrictEqual("tool");
+  expect(messages.at(-1)).toStrictEqual(modelMessage("Greeted Huuma."));
 
   // the second model call sees the tool result
-  assertEquals(model.calls.length, 2);
-  assertEquals(model.calls[1].messages.at(-1)?.role, "tool");
+  expect(model.calls.length).toStrictEqual(2);
+  expect(model.calls[1].messages.at(-1)?.role).toStrictEqual("tool");
 });
 
-Deno.test("agent - onMessage receives each emitted message in order", async () => {
+test("agent - onMessage receives each emitted message in order", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
     props: { name: "Huuma" } as unknown as JSONSchema,
   };
   const model = new StubModel([
-    [{
-      role: "model",
-      contents: [{ toolCall }],
-      toolCalls: [toolCall],
-    }],
+    [
+      {
+        role: "model",
+        contents: [{ toolCall }],
+        toolCalls: [toolCall],
+      },
+    ],
     [modelMessage("Greeted Huuma.")],
   ]);
 
@@ -208,16 +196,11 @@ Deno.test("agent - onMessage receives each emitted message in order", async () =
 
   const messages = await assistant.run("Greet Huuma");
 
-  assertEquals(emitted, messages);
-  assertEquals(emitted.map((message) => message.role), [
-    "user",
-    "model",
-    "tool",
-    "model",
-  ]);
+  expect(emitted).toStrictEqual(messages);
+  expect(emitted.map((message) => message.role)).toStrictEqual(["user", "model", "tool", "model"]);
 });
 
-Deno.test("agent - onMessage does not receive prior history", async () => {
+test("agent - onMessage does not receive prior history", async () => {
   const history: Message[] = [
     { role: "user", contents: "What is Deno?" },
     modelMessage("A JavaScript runtime."),
@@ -236,13 +219,13 @@ Deno.test("agent - onMessage does not receive prior history", async () => {
 
   await assistant.run("Who created it?", history);
 
-  assertEquals(emitted, [
+  expect(emitted).toStrictEqual([
     { role: "user", contents: "Who created it?" },
     modelMessage("Ryan Dahl."),
   ]);
 });
 
-Deno.test("agent - per-run onMessage overrides the agent-level callback", async () => {
+test("agent - per-run onMessage overrides the agent-level callback", async () => {
   const model = new StubModel([[modelMessage("Hello!")]]);
 
   const agentLevel: Message[] = [];
@@ -262,15 +245,12 @@ Deno.test("agent - per-run onMessage overrides the agent-level callback", async 
     },
   });
 
-  assertEquals(agentLevel, []);
-  assertEquals(runLevel, messages);
+  expect(agentLevel).toStrictEqual([]);
+  expect(runLevel).toStrictEqual(messages);
 });
 
-Deno.test("agent - per-run onMessage attributes messages of concurrent runs", async () => {
-  const model = new StubModel([
-    [modelMessage("First answer.")],
-    [modelMessage("Second answer.")],
-  ]);
+test("agent - per-run onMessage attributes messages of concurrent runs", async () => {
+  const model = new StubModel([[modelMessage("First answer.")], [modelMessage("Second answer.")]]);
 
   const assistant = agent({
     model,
@@ -293,11 +273,11 @@ Deno.test("agent - per-run onMessage attributes messages of concurrent runs", as
     }),
   ]);
 
-  assertEquals(emittedA, messagesA);
-  assertEquals(emittedB, messagesB);
+  expect(emittedA).toStrictEqual(messagesA);
+  expect(emittedB).toStrictEqual(messagesB);
 });
 
-Deno.test("agent - onMessage errors warn but do not abort the run", async () => {
+test("agent - onMessage errors warn but do not abort the run", async () => {
   const model = new StubModel([[modelMessage("Hello!")]]);
 
   const assistant = agent({
@@ -317,19 +297,16 @@ Deno.test("agent - onMessage errors warn but do not abort the run", async () => 
   try {
     const messages = await assistant.run("Hi");
 
-    assertEquals(messages, [
-      { role: "user", contents: "Hi" },
-      modelMessage("Hello!"),
-    ]);
+    expect(messages).toStrictEqual([{ role: "user", contents: "Hi" }, modelMessage("Hello!")]);
     // one warning per emitted message (user + model)
-    assertEquals(warnings.length, 2);
-    assertEquals(warnings[0][0], "[Huuma Agent] onMessage callback failed:");
+    expect(warnings.length).toStrictEqual(2);
+    expect(warnings[0][0]).toStrictEqual("[Huuma Agent] onMessage callback failed:");
   } finally {
     console.warn = originalWarn;
   }
 });
 
-Deno.test("agent - onMessage receives accumulated usage across model calls", async () => {
+test("agent - onMessage receives accumulated usage across model calls", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
@@ -337,11 +314,13 @@ Deno.test("agent - onMessage receives accumulated usage across model calls", asy
   };
   const model = new StubModel([
     {
-      messages: [{
-        role: "model",
-        contents: [{ toolCall }],
-        toolCalls: [toolCall],
-      }],
+      messages: [
+        {
+          role: "model",
+          contents: [{ toolCall }],
+          toolCalls: [toolCall],
+        },
+      ],
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     },
     {
@@ -374,7 +353,7 @@ Deno.test("agent - onMessage receives accumulated usage across model calls", asy
   // user prompt precedes any model call, the first model message and
   // the tool result reflect the first call, and the final model
   // message covers the whole run.
-  assertEquals(reported, [
+  expect(reported).toStrictEqual([
     undefined,
     { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
@@ -382,7 +361,7 @@ Deno.test("agent - onMessage receives accumulated usage across model calls", asy
   ]);
 });
 
-Deno.test("agent - onMessage usage stays undefined without model usage", async () => {
+test("agent - onMessage usage stays undefined without model usage", async () => {
   const model = new StubModel([[modelMessage("Hello!")]]);
 
   const reported: (ModelUsage | undefined)[] = [];
@@ -397,13 +376,11 @@ Deno.test("agent - onMessage usage stays undefined without model usage", async (
 
   await assistant.run("Hi");
 
-  assertEquals(reported, [undefined, undefined]);
+  expect(reported).toStrictEqual([undefined, undefined]);
 });
 
-Deno.test("agent - onMessage usage stays undefined for empty usage objects", async () => {
-  const model = new StubModel([
-    { messages: [modelMessage("Hello!")], usage: {} },
-  ]);
+test("agent - onMessage usage stays undefined for empty usage objects", async () => {
+  const model = new StubModel([{ messages: [modelMessage("Hello!")], usage: {} }]);
 
   const reported: (ModelUsage | undefined)[] = [];
   const assistant = agent({
@@ -417,10 +394,10 @@ Deno.test("agent - onMessage usage stays undefined for empty usage objects", asy
 
   await assistant.run("Hi");
 
-  assertEquals(reported, [undefined, undefined]);
+  expect(reported).toStrictEqual([undefined, undefined]);
 });
 
-Deno.test("agent - onMessage usage snapshots are mutation-safe", async () => {
+test("agent - onMessage usage snapshots are mutation-safe", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
@@ -428,11 +405,13 @@ Deno.test("agent - onMessage usage snapshots are mutation-safe", async () => {
   };
   const model = new StubModel([
     {
-      messages: [{
-        role: "model",
-        contents: [{ toolCall }],
-        toolCalls: [toolCall],
-      }],
+      messages: [
+        {
+          role: "model",
+          contents: [{ toolCall }],
+          toolCalls: [toolCall],
+        },
+      ],
       usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
     },
     {
@@ -466,10 +445,10 @@ Deno.test("agent - onMessage usage snapshots are mutation-safe", async () => {
     },
   });
 
-  assertEquals(totals, [undefined, 7, 7, 9]);
+  expect(totals).toStrictEqual([undefined, 7, 7, 9]);
 });
 
-Deno.test("agent - run surfaces model errors", async () => {
+test("agent - run surfaces model errors", async () => {
   const model = new StubModel([]);
   const assistant = agent({
     model,
@@ -477,11 +456,9 @@ Deno.test("agent - run surfaces model errors", async () => {
     systemPrompt: "Be helpful.",
   });
 
-  await assertRejects(
-    () => assistant.run("Hi"),
-    Error,
-    "No scripted response left",
-  );
+  const error = await assistant.run("Hi").catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("No scripted response left");
 });
 
 // --- finish_turn helpers -------------------------------------------------
@@ -500,9 +477,7 @@ function finishTurnCall(
   };
 }
 
-function finishTurnModelMessage(
-  ...calls: ReturnType<typeof finishTurnCall>[]
-): Message {
+function finishTurnModelMessage(...calls: ReturnType<typeof finishTurnCall>[]): Message {
   const toolCalls = calls.map((c) => c.toolCall);
   return {
     role: "model",
@@ -533,7 +508,7 @@ function resultOf(message: Message | undefined, index = 0): ToolResultContent {
 
 // --- onMessageError policy ----------------------------------------------
 
-Deno.test("agent - onMessageError 'throw' rejects on prompt delivery and skips the model", async () => {
+test("agent - onMessageError 'throw' rejects on prompt delivery and skips the model", async () => {
   const model = new StubModel([[modelMessage("Hi")]]);
   const assistant = agent({
     model,
@@ -545,15 +520,13 @@ Deno.test("agent - onMessageError 'throw' rejects on prompt delivery and skips t
     onMessageError: "throw",
   });
 
-  await assertRejects(
-    () => assistant.run("Hi"),
-    Error,
-    "consumer failure",
-  );
-  assertEquals(model.calls.length, 0);
+  const error = await assistant.run("Hi").catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("consumer failure");
+  expect(model.calls.length).toStrictEqual(0);
 });
 
-Deno.test("agent - onMessageError 'throw' rejects on model delivery and skips tool calls", async () => {
+test("agent - onMessageError 'throw' rejects on model delivery and skips tool calls", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
@@ -587,17 +560,15 @@ Deno.test("agent - onMessageError 'throw' rejects on model delivery and skips to
     onMessageError: "throw",
   });
 
-  await assertRejects(
-    () => assistant.run("Greet Huuma"),
-    Error,
-    "consumer failure",
-  );
+  const error = await assistant.run("Greet Huuma").catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("consumer failure");
   // prompt was emitted, model message delivery threw, tool never ran
-  assertEquals(calls, 2);
-  assertEquals(greetedWith, []);
+  expect(calls).toStrictEqual(2);
+  expect(greetedWith).toStrictEqual([]);
 });
 
-Deno.test("agent - onMessageError 'throw' rejects on tool-result delivery and skips the next model request", async () => {
+test("agent - onMessageError 'throw' rejects on tool-result delivery and skips the next model request", async () => {
   const toolCall = {
     id: "call-1",
     name: "greet",
@@ -627,17 +598,15 @@ Deno.test("agent - onMessageError 'throw' rejects on tool-result delivery and sk
     onMessageError: "throw",
   });
 
-  await assertRejects(
-    () => assistant.run("Greet Huuma"),
-    Error,
-    "consumer failure",
-  );
+  const error = await assistant.run("Greet Huuma").catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("consumer failure");
   // prompt + model message + tool result emitted; tool ran; second model call never made
-  assertEquals(calls, 3);
-  assertEquals(model.calls.length, 1);
+  expect(calls).toStrictEqual(3);
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - per-run onMessageError overrides the agent-level policy", async () => {
+test("agent - per-run onMessageError overrides the agent-level policy", async () => {
   const model = new StubModel([[modelMessage("Hi")]]);
   const assistant = agent({
     model,
@@ -654,17 +623,14 @@ Deno.test("agent - per-run onMessageError overrides the agent-level policy", asy
   console.warn = (...args: unknown[]) => warnings.push(args);
   try {
     const messages = await assistant.run("Hi", [], { onMessageError: "warn" });
-    assertEquals(messages, [
-      { role: "user", contents: "Hi" },
-      modelMessage("Hi"),
-    ]);
-    assertEquals(warnings.length, 2);
+    expect(messages).toStrictEqual([{ role: "user", contents: "Hi" }, modelMessage("Hi")]);
+    expect(warnings.length).toStrictEqual(2);
   } finally {
     console.warn = originalWarn;
   }
 });
 
-Deno.test("agent - onMessageError defaults to 'warn' when unset at both levels", async () => {
+test("agent - onMessageError defaults to 'warn' when unset at both levels", async () => {
   const model = new StubModel([[modelMessage("Hi")]]);
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
@@ -679,7 +645,7 @@ Deno.test("agent - onMessageError defaults to 'warn' when unset at both levels",
       },
     });
     await assistant.run("Hi");
-    assertEquals(warnings.length, 2);
+    expect(warnings.length).toStrictEqual(2);
   } finally {
     console.warn = originalWarn;
   }
@@ -687,7 +653,7 @@ Deno.test("agent - onMessageError defaults to 'warn' when unset at both levels",
 
 // --- finish_turn enablement --------------------------------------------
 
-Deno.test("agent - finish_turn tool is absent by default", async () => {
+test("agent - finish_turn tool is absent by default", async () => {
   const seen: string[] = [];
   const model = new StubModel([[modelMessage("Hi")]]);
   const assistant = agent({
@@ -705,10 +671,10 @@ Deno.test("agent - finish_turn tool is absent by default", async () => {
   };
 
   await assistant.run("Hi");
-  assertEquals(seen, []);
+  expect(seen).toStrictEqual([]);
 });
 
-Deno.test("agent - finish_turn tool is present when opted in", async () => {
+test("agent - finish_turn tool is present when opted in", async () => {
   const seen: string[] = [];
   const model = new StubModel([[modelMessage("Hi")]]);
   const assistant = agent({
@@ -725,10 +691,10 @@ Deno.test("agent - finish_turn tool is present when opted in", async () => {
   };
 
   await assistant.run("Hi");
-  assertEquals(seen, [FINISH_TURN_TOOL]);
+  expect(seen).toStrictEqual([FINISH_TURN_TOOL]);
 });
 
-Deno.test("agent - consumer tool named finish_turn fails construction", () => {
+test("agent - consumer tool named finish_turn fails construction", () => {
   const model = new StubModel([]);
   const conflicting = tool({
     name: FINISH_TURN_TOOL,
@@ -737,26 +703,29 @@ Deno.test("agent - consumer tool named finish_turn fails construction", () => {
     fn: () => "ok",
   });
 
-  assertThrows(
-    () =>
-      agent({
-        model,
-        modelId: "stub",
-        systemPrompt: "Be helpful.",
-        tools: [conflicting],
-      }),
-    Error,
-    FINISH_TURN_TOOL,
-  );
+  expect(() =>
+    agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      tools: [conflicting],
+    }),
+  ).toThrow(Error);
+  expect(() =>
+    agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      tools: [conflicting],
+    }),
+  ).toThrow(FINISH_TURN_TOOL);
 });
 
 // --- finish_turn successful termination ---------------------------------
 
-Deno.test("agent - a valid finish_turn emits model + tool messages and stops the run", async () => {
+test("agent - a valid finish_turn emits model + tool messages and stops the run", async () => {
   const model = new StubModel([
-    [finishTurnModelMessage(
-      finishTurnCall("call-1", "question", "Which database should I use?"),
-    )],
+    [finishTurnModelMessage(finishTurnCall("call-1", "question", "Which database should I use?"))],
   ]);
   const assistant = agent({
     model,
@@ -772,29 +741,29 @@ Deno.test("agent - a valid finish_turn emits model + tool messages and stops the
     },
   });
 
-  assertEquals(emitted.map((m) => m.role), ["user", "model", "tool"]);
+  expect(emitted.map((m) => m.role)).toStrictEqual(["user", "model", "tool"]);
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [{
-    toolResult: {
-      id: "call-1",
-      name: FINISH_TURN_TOOL,
-      result: {
-        output: {
-          outcome: "question",
-          message: "Which database should I use?",
+  expect(toolMessage.contents).toStrictEqual([
+    {
+      toolResult: {
+        id: "call-1",
+        name: FINISH_TURN_TOOL,
+        result: {
+          output: {
+            outcome: "question",
+            message: "Which database should I use?",
+          },
         },
       },
     },
-  }]);
+  ]);
   // Only one model request was made; no follow-up after the tool result.
-  assertEquals(model.calls.length, 1);
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - finish_turn message is preserved verbatim, not trimmed", async () => {
+test("agent - finish_turn message is preserved verbatim, not trimmed", async () => {
   const model = new StubModel([
-    [finishTurnModelMessage(
-      finishTurnCall("call-1", "completion", "  done  \n"),
-    )],
+    [finishTurnModelMessage(finishTurnCall("call-1", "completion", "  done  \n"))],
   ]);
   const assistant = agent({
     model,
@@ -805,13 +774,13 @@ Deno.test("agent - finish_turn message is preserved verbatim, not trimmed", asyn
 
   const messages = await assistant.run("Hi");
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(resultOf(toolMessage, 0).toolResult.result.output, {
+  expect(resultOf(toolMessage, 0).toolResult.result.output).toStrictEqual({
     outcome: "completion",
     message: "  done  \n",
   });
 });
 
-Deno.test("agent - finish_turn remains terminal when a sibling tool fails", async () => {
+test("agent - finish_turn remains terminal when a sibling tool fails", async () => {
   const boomCall = {
     id: "call-1",
     name: "boom",
@@ -819,11 +788,13 @@ Deno.test("agent - finish_turn remains terminal when a sibling tool fails", asyn
   };
   const finishCall = finishTurnCall("call-2", "completion", "Done.");
   const model = new StubModel([
-    [{
-      role: "model",
-      contents: [{ toolCall: boomCall }, finishCall],
-      toolCalls: [boomCall, finishCall.toolCall],
-    }],
+    [
+      {
+        role: "model",
+        contents: [{ toolCall: boomCall }, finishCall],
+        toolCalls: [boomCall, finishCall.toolCall],
+      },
+    ],
   ]);
   const boom = tool({
     name: "boom",
@@ -843,18 +814,18 @@ Deno.test("agent - finish_turn remains terminal when a sibling tool fails", asyn
 
   const messages = await assistant.run("Hi");
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents.length, 2);
+  expect(toolMessage.contents.length).toStrictEqual(2);
   // Both calls received a result.
-  assertEquals(resultOf(toolMessage, 0).toolResult.result.error, "boom");
-  assertEquals(resultOf(toolMessage, 1).toolResult.result.output, {
+  expect(resultOf(toolMessage, 0).toolResult.result.error).toStrictEqual("boom");
+  expect(resultOf(toolMessage, 1).toolResult.result.output).toStrictEqual({
     outcome: "completion",
     message: "Done.",
   });
   // The run stopped after the tool result despite the sibling failure.
-  assertEquals(model.calls.length, 1);
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - finish_turn beside a successful sibling tool still stops", async () => {
+test("agent - finish_turn beside a successful sibling tool still stops", async () => {
   const greetCall = {
     id: "call-1",
     name: "greet",
@@ -862,11 +833,13 @@ Deno.test("agent - finish_turn beside a successful sibling tool still stops", as
   };
   const finishCall = finishTurnCall("call-2", "completion", "Done.");
   const model = new StubModel([
-    [{
-      role: "model",
-      contents: [{ toolCall: greetCall }, finishCall],
-      toolCalls: [greetCall, finishCall.toolCall],
-    }],
+    [
+      {
+        role: "model",
+        contents: [{ toolCall: greetCall }, finishCall],
+        toolCalls: [greetCall, finishCall.toolCall],
+      },
+    ],
   ]);
   const greetedWith: string[] = [];
   const greet = tool({
@@ -887,17 +860,15 @@ Deno.test("agent - finish_turn beside a successful sibling tool still stops", as
   });
 
   await assistant.run("Hi");
-  assertEquals(greetedWith, ["Huuma"]);
-  assertEquals(model.calls.length, 1);
+  expect(greetedWith).toStrictEqual(["Huuma"]);
+  expect(model.calls.length).toStrictEqual(1);
 });
 
 // --- finish_turn invalid and duplicate calls ----------------------------
 
-Deno.test("agent - invalid finish_turn outcome yields an error result and a retry opportunity", async () => {
+test("agent - invalid finish_turn outcome yields an error result and a retry opportunity", async () => {
   const model = new StubModel([
-    [finishTurnModelMessage(
-      finishTurnCall("call-1", "wip", "huh?"),
-    )],
+    [finishTurnModelMessage(finishTurnCall("call-1", "wip", "huh?"))],
     [modelMessage("Recovered.")],
   ]);
   const assistant = agent({
@@ -909,21 +880,16 @@ Deno.test("agent - invalid finish_turn outcome yields an error result and a retr
 
   const messages = await assistant.run("Hi");
   const firstTool = messages.at(-2) as ToolMessage;
-  assertEquals(resultOf(firstTool, 0).toolResult.name, FINISH_TURN_TOOL);
-  assertEquals(
-    typeof resultOf(firstTool, 0).toolResult.result.error,
-    "string",
-  );
+  expect(resultOf(firstTool, 0).toolResult.name).toStrictEqual(FINISH_TURN_TOOL);
+  expect(typeof resultOf(firstTool, 0).toolResult.result.error).toStrictEqual("string");
   // The run did not stop — a second model request was made.
-  assertEquals(model.calls.length, 2);
-  assertEquals(messages.at(-1), modelMessage("Recovered."));
+  expect(model.calls.length).toStrictEqual(2);
+  expect(messages.at(-1)).toStrictEqual(modelMessage("Recovered."));
 });
 
-Deno.test("agent - blank finish_turn message yields an error result and a retry opportunity", async () => {
+test("agent - blank finish_turn message yields an error result and a retry opportunity", async () => {
   const model = new StubModel([
-    [finishTurnModelMessage(
-      finishTurnCall("call-1", "question", "   \n\t "),
-    )],
+    [finishTurnModelMessage(finishTurnCall("call-1", "question", "   \n\t "))],
     [modelMessage("Recovered.")],
   ]);
   const assistant = agent({
@@ -935,19 +901,20 @@ Deno.test("agent - blank finish_turn message yields an error result and a retry 
 
   const messages = await assistant.run("Hi");
   const firstTool = messages.at(-2) as ToolMessage;
-  assertEquals(
-    resultOf(firstTool, 0).toolResult.result.error,
+  expect(resultOf(firstTool, 0).toolResult.result.error).toStrictEqual(
     "finish_turn message must contain at least one non-whitespace character",
   );
-  assertEquals(model.calls.length, 2);
+  expect(model.calls.length).toStrictEqual(2);
 });
 
-Deno.test("agent - duplicate finish_turn calls each receive a deterministic error and the run continues", async () => {
+test("agent - duplicate finish_turn calls each receive a deterministic error and the run continues", async () => {
   const model = new StubModel([
-    [finishTurnModelMessage(
-      finishTurnCall("call-1", "question", "A?"),
-      finishTurnCall("call-2", "completion", "B."),
-    )],
+    [
+      finishTurnModelMessage(
+        finishTurnCall("call-1", "question", "A?"),
+        finishTurnCall("call-2", "completion", "B."),
+      ),
+    ],
     [modelMessage("Recovered.")],
   ]);
   const assistant = agent({
@@ -959,22 +926,20 @@ Deno.test("agent - duplicate finish_turn calls each receive a deterministic erro
 
   const messages = await assistant.run("Hi");
   const firstTool = messages.at(-2) as ToolMessage;
-  assertEquals(firstTool.contents.length, 2);
-  assertEquals(
-    resultOf(firstTool, 0).toolResult.result.error,
+  expect(firstTool.contents.length).toStrictEqual(2);
+  expect(resultOf(firstTool, 0).toolResult.result.error).toStrictEqual(
     resultOf(firstTool, 1).toolResult.result.error,
   );
-  assertEquals(
-    resultOf(firstTool, 0).toolResult.result.error,
+  expect(resultOf(firstTool, 0).toolResult.result.error).toStrictEqual(
     "Issue exactly one finish_turn call per turn; multiple finish_turn calls in a single response are not allowed.",
   );
   // Non-terminal: the model gets another request.
-  assertEquals(model.calls.length, 2);
+  expect(model.calls.length).toStrictEqual(2);
 });
 
 // --- history continuation with finish_turn ------------------------------
 
-Deno.test("agent - history ending in a successful finish_turn result can be continued without a dangling tool call", async () => {
+test("agent - history ending in a successful finish_turn result can be continued without a dangling tool call", async () => {
   const priorTool: Message = toolMessageOf({
     id: "call-1",
     name: FINISH_TURN_TOOL,
@@ -984,9 +949,7 @@ Deno.test("agent - history ending in a successful finish_turn result can be cont
   });
   const history: Message[] = [
     { role: "user", contents: "Set up a DB." },
-    finishTurnModelMessage(
-      finishTurnCall("call-1", "question", "Which database?"),
-    ),
+    finishTurnModelMessage(finishTurnCall("call-1", "question", "Which database?")),
     priorTool,
   ];
   const model = new StubModel([[modelMessage("Got it.")]]);
@@ -1005,22 +968,23 @@ Deno.test("agent - history ending in a successful finish_turn result can be cont
   });
 
   // History is not re-emitted; only the new prompt and the new reply.
-  assertEquals(emitted, [
-    { role: "user", contents: "Postgres." },
-    modelMessage("Got it."),
-  ]);
-  assertEquals(model.calls[0].messages, [
+  expect(emitted).toStrictEqual([{ role: "user", contents: "Postgres." }, modelMessage("Got it.")]);
+  expect(model.calls[0].messages).toStrictEqual([
     ...history,
     { role: "user", contents: "Postgres." },
   ]);
   // No tool calls were re-executed; the returned history has no new tool message.
-  assertEquals(messages, [...history, {
-    role: "user",
-    contents: "Postgres.",
-  }, modelMessage("Got it.")]);
+  expect(messages).toStrictEqual([
+    ...history,
+    {
+      role: "user",
+      contents: "Postgres.",
+    },
+    modelMessage("Got it."),
+  ]);
 });
 
-Deno.test("agent - a run ending without finish_turn returns normally with no successful finish result", async () => {
+test("agent - a run ending without finish_turn returns normally with no successful finish result", async () => {
   const model = new StubModel([[modelMessage("Hi there.")]]);
   const assistant = agent({
     model,
@@ -1031,20 +995,19 @@ Deno.test("agent - a run ending without finish_turn returns normally with no suc
 
   const messages = await assistant.run("Hi");
   const last = messages.at(-1);
-  assertEquals(last?.role, "model");
+  expect(last?.role).toStrictEqual("model");
   // No tool message at all — the absence of a successful finish result is
   // how callers detect the non-terminal outcome.
-  assertEquals(messages.some((m) => m.role === "tool"), false);
+  expect(messages.some((m) => m.role === "tool")).toStrictEqual(false);
 });
 
 // --- unknown fields round-trip ------------------------------------------
 
-Deno.test("agent - unknown fields on prior messages survive unchanged in the returned history", async () => {
+test("agent - unknown fields on prior messages survive unchanged in the returned history", async () => {
   const history: Message[] = [
     {
       role: "user",
       contents: "Hi",
-      // deno-lint-ignore no-explicit-any
       unknownFuture: { foo: 1 } as any,
     } as Message,
     modelMessage("Hello."),
@@ -1058,11 +1021,7 @@ Deno.test("agent - unknown fields on prior messages survive unchanged in the ret
 
   const messages = await assistant.run("Bye", history);
 
-  assertEquals(
-    // deno-lint-ignore no-explicit-any
-    (messages[0] as any).unknownFuture,
-    { foo: 1 },
-  );
+  expect((messages[0] as any).unknownFuture).toStrictEqual({ foo: 1 });
 });
 
 // --- maxConcurrency ------------------------------------------------------
@@ -1090,11 +1049,8 @@ function outputsOf(message: Message): unknown[] {
   });
 }
 
-Deno.test("agent - maxConcurrency bounds overlapping tool executions", async () => {
-  const model = new StubModel([
-    [slowCallsMessage(5)],
-    [modelMessage("All done.")],
-  ]);
+test("agent - maxConcurrency bounds overlapping tool executions", async () => {
+  const model = new StubModel([[slowCallsMessage(5)], [modelMessage("All done.")]]);
   let active = 0;
   let maxActive = 0;
   const slow = tool({
@@ -1104,9 +1060,7 @@ Deno.test("agent - maxConcurrency bounds overlapping tool executions", async () 
     fn: async ({ target }) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) =>
-        setTimeout(resolve, 20 + Number(target) * 10)
-      );
+      await new Promise((resolve) => setTimeout(resolve, 20 + Number(target) * 10));
       active -= 1;
       return `done:${target}`;
     },
@@ -1122,22 +1076,19 @@ Deno.test("agent - maxConcurrency bounds overlapping tool executions", async () 
 
   const messages = await assistant.run("Go");
 
-  assertEquals(maxActive, 2);
-  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
+  expect(maxActive).toStrictEqual(2);
+  expect(outputsOf(messages.at(-2) as ToolMessage)).toStrictEqual([
     "done:0",
     "done:1",
     "done:2",
     "done:3",
     "done:4",
   ]);
-  assertEquals(messages.at(-1), modelMessage("All done."));
+  expect(messages.at(-1)).toStrictEqual(modelMessage("All done."));
 });
 
-Deno.test("agent - tool batches stay unbounded without maxConcurrency", async () => {
-  const model = new StubModel([
-    [slowCallsMessage(3)],
-    [modelMessage("All done.")],
-  ]);
+test("agent - tool batches stay unbounded without maxConcurrency", async () => {
+  const model = new StubModel([[slowCallsMessage(3)], [modelMessage("All done.")]]);
   let active = 0;
   let maxActive = 0;
   const slow = tool({
@@ -1162,19 +1113,12 @@ Deno.test("agent - tool batches stay unbounded without maxConcurrency", async ()
 
   const messages = await assistant.run("Go");
 
-  assertEquals(maxActive, 3);
-  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
-    "done:0",
-    "done:1",
-    "done:2",
-  ]);
+  expect(maxActive).toStrictEqual(3);
+  expect(outputsOf(messages.at(-2) as ToolMessage)).toStrictEqual(["done:0", "done:1", "done:2"]);
 });
 
-Deno.test("agent - per-run maxConcurrency overrides the agent-level cap", async () => {
-  const model = new StubModel([
-    [slowCallsMessage(3)],
-    [modelMessage("All done.")],
-  ]);
+test("agent - per-run maxConcurrency overrides the agent-level cap", async () => {
+  const model = new StubModel([[slowCallsMessage(3)], [modelMessage("All done.")]]);
   let active = 0;
   let maxActive = 0;
   const slow = tool({
@@ -1200,15 +1144,11 @@ Deno.test("agent - per-run maxConcurrency overrides the agent-level cap", async 
 
   const messages = await assistant.run("Go", [], { maxConcurrency: 1 });
 
-  assertEquals(maxActive, 1);
-  assertEquals(outputsOf(messages.at(-2) as ToolMessage), [
-    "done:0",
-    "done:1",
-    "done:2",
-  ]);
+  expect(maxActive).toStrictEqual(1);
+  expect(outputsOf(messages.at(-2) as ToolMessage)).toStrictEqual(["done:0", "done:1", "done:2"]);
 });
 
-Deno.test("agent - duplicate finish_turn batches honor maxConcurrency", async () => {
+test("agent - duplicate finish_turn batches honor maxConcurrency", async () => {
   const slowCalls = Array.from({ length: 3 }, (_, i) => ({
     id: `call-${i + 1}`,
     name: "slow",
@@ -1219,14 +1159,13 @@ Deno.test("agent - duplicate finish_turn batches honor maxConcurrency", async ()
     finishTurnCall("call-5", "completion", "B."),
   ];
   const model = new StubModel([
-    [{
-      role: "model",
-      contents: [
-        ...slowCalls.map((toolCall) => ({ toolCall })),
-        ...finishCalls,
-      ],
-      toolCalls: [...slowCalls, ...finishCalls.map((call) => call.toolCall)],
-    }],
+    [
+      {
+        role: "model",
+        contents: [...slowCalls.map((toolCall) => ({ toolCall })), ...finishCalls],
+        toolCalls: [...slowCalls, ...finishCalls.map((call) => call.toolCall)],
+      },
+    ],
     [modelMessage("Recovered.")],
   ]);
   let active = 0;
@@ -1255,35 +1194,40 @@ Deno.test("agent - duplicate finish_turn batches honor maxConcurrency", async ()
 
   const messages = await assistant.run("Hi");
 
-  assertEquals(maxActive, 2);
+  expect(maxActive).toStrictEqual(2);
   const firstTool = messages.at(-2) as ToolMessage;
-  assertEquals(resultOf(firstTool, 0).toolResult.result.output, "done:0");
-  assertEquals(resultOf(firstTool, 1).toolResult.result.output, "done:1");
-  assertEquals(resultOf(firstTool, 2).toolResult.result.output, "done:2");
+  expect(resultOf(firstTool, 0).toolResult.result.output).toStrictEqual("done:0");
+  expect(resultOf(firstTool, 1).toolResult.result.output).toStrictEqual("done:1");
+  expect(resultOf(firstTool, 2).toolResult.result.output).toStrictEqual("done:2");
   const duplicateError =
     "Issue exactly one finish_turn call per turn; multiple finish_turn calls in a single response are not allowed.";
-  assertEquals(resultOf(firstTool, 3).toolResult.result.error, duplicateError);
-  assertEquals(resultOf(firstTool, 4).toolResult.result.error, duplicateError);
+  expect(resultOf(firstTool, 3).toolResult.result.error).toStrictEqual(duplicateError);
+  expect(resultOf(firstTool, 4).toolResult.result.error).toStrictEqual(duplicateError);
   // The duplicate batch is non-terminal: the model gets another request.
-  assertEquals(model.calls.length, 2);
+  expect(model.calls.length).toStrictEqual(2);
 });
 
-Deno.test("agent - invalid maxConcurrency fails construction", () => {
+test("agent - invalid maxConcurrency fails construction", () => {
   const model = new StubModel([]);
-  assertThrows(
-    () =>
-      agent({
-        model,
-        modelId: "stub",
-        systemPrompt: "Be helpful.",
-        maxConcurrency: 0,
-      }),
-    TypeError,
-    "maxConcurrency must be a positive integer",
-  );
+  expect(() =>
+    agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      maxConcurrency: 0,
+    }),
+  ).toThrow(TypeError);
+  expect(() =>
+    agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      maxConcurrency: 0,
+    }),
+  ).toThrow("maxConcurrency must be a positive integer");
 });
 
-Deno.test("agent - invalid per-run maxConcurrency rejects before any model call", async () => {
+test("agent - invalid per-run maxConcurrency rejects before any model call", async () => {
   const model = new StubModel([[modelMessage("Hi")]]);
   const assistant = agent({
     model,
@@ -1291,12 +1235,10 @@ Deno.test("agent - invalid per-run maxConcurrency rejects before any model call"
     systemPrompt: "Be helpful.",
   });
 
-  await assertRejects(
-    () => assistant.run("Hi", [], { maxConcurrency: 1.5 }),
-    TypeError,
-    "maxConcurrency must be a positive integer",
-  );
-  assertEquals(model.calls.length, 0);
+  const error = await assistant.run("Hi", [], { maxConcurrency: 1.5 }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(TypeError);
+  expect((error as Error).message).toContain("maxConcurrency must be a positive integer");
+  expect(model.calls.length).toStrictEqual(0);
 });
 
 // --- maxModelCalls -------------------------------------------------------
@@ -1353,152 +1295,152 @@ function loopingAgent(
   });
 }
 
-Deno.test("agent - maxModelCalls stops a run that never stops calling tools", async () => {
+test("agent - maxModelCalls stops a run that never stops calling tools", async () => {
   const model = new FnModel(() => [toolCallMessage("noop")]);
 
-  await assertRejects(
-    () => loopingAgent(model, { maxModelCalls: 3 }).run("Loop"),
-    Error,
+  const error = await loopingAgent(model, { maxModelCalls: 3 })
+    .run("Loop")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain(
     'Agent run exceeded maxModelCalls (3) without finishing; last tool called: "noop"',
   );
-  assertEquals(model.calls.length, 3);
+  expect(model.calls.length).toStrictEqual(3);
 });
 
-Deno.test("agent - maxModelCalls defaults to DEFAULT_MAX_MODEL_CALLS", async () => {
+test("agent - maxModelCalls defaults to DEFAULT_MAX_MODEL_CALLS", async () => {
   const model = new FnModel(() => [toolCallMessage("noop")]);
 
-  await assertRejects(
-    () => loopingAgent(model).run("Loop"),
-    Error,
-    `maxModelCalls (${DEFAULT_MAX_MODEL_CALLS})`,
-  );
-  assertEquals(model.calls.length, DEFAULT_MAX_MODEL_CALLS);
+  const error = await loopingAgent(model)
+    .run("Loop")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain(`maxModelCalls (${DEFAULT_MAX_MODEL_CALLS})`);
+  expect(model.calls.length).toStrictEqual(DEFAULT_MAX_MODEL_CALLS);
 });
 
-Deno.test("agent - maxModelCalls Infinity disables the cap", async () => {
+test("agent - maxModelCalls Infinity disables the cap", async () => {
   const total = DEFAULT_MAX_MODEL_CALLS + 20;
   const model = new FnModel((call) =>
-    call < total ? [toolCallMessage("noop")] : [modelMessage("Done.")]
+    call < total ? [toolCallMessage("noop")] : [modelMessage("Done.")],
   );
 
-  const messages = await loopingAgent(model, { maxModelCalls: Infinity })
-    .run("Loop");
+  const messages = await loopingAgent(model, { maxModelCalls: Infinity }).run("Loop");
 
-  assertEquals(model.calls.length, total);
-  assertEquals(messages.at(-1), modelMessage("Done."));
+  expect(model.calls.length).toStrictEqual(total);
+  expect(messages.at(-1)).toStrictEqual(modelMessage("Done."));
 });
 
-Deno.test("agent - an agent-level maxModelCalls above the default applies", async () => {
+test("agent - an agent-level maxModelCalls above the default applies", async () => {
   const model = new FnModel(() => [toolCallMessage("noop")]);
   const cap = DEFAULT_MAX_MODEL_CALLS + 5;
 
-  await assertRejects(
-    () => loopingAgent(model, { maxModelCalls: cap }).run("Loop"),
-    Error,
-    `maxModelCalls (${cap})`,
-  );
-  assertEquals(model.calls.length, cap);
+  const error = await loopingAgent(model, { maxModelCalls: cap })
+    .run("Loop")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain(`maxModelCalls (${cap})`);
+  expect(model.calls.length).toStrictEqual(cap);
 });
 
-Deno.test("agent - the smaller of agent and per-run maxModelCalls applies", async () => {
+test("agent - the smaller of agent and per-run maxModelCalls applies", async () => {
   const lowerPerRun = new FnModel(() => [toolCallMessage("noop")]);
-  await assertRejects(
-    () =>
-      loopingAgent(lowerPerRun, { maxModelCalls: 5 }).run("Loop", [], {
-        maxModelCalls: 2,
-      }),
-    Error,
-    "maxModelCalls (2)",
-  );
-  assertEquals(lowerPerRun.calls.length, 2);
+  const lowerError = await loopingAgent(lowerPerRun, { maxModelCalls: 5 })
+    .run("Loop", [], {
+      maxModelCalls: 2,
+    })
+    .catch((e: unknown) => e);
+  expect(lowerError).toBeInstanceOf(Error);
+  expect((lowerError as Error).message).toContain("maxModelCalls (2)");
+  expect(lowerPerRun.calls.length).toStrictEqual(2);
 
   const higherPerRun = new FnModel(() => [toolCallMessage("noop")]);
-  await assertRejects(
-    () =>
-      loopingAgent(higherPerRun, { maxModelCalls: 2 }).run("Loop", [], {
-        maxModelCalls: Infinity,
-      }),
-    Error,
-    "maxModelCalls (2)",
-  );
-  assertEquals(higherPerRun.calls.length, 2);
+  const higherError = await loopingAgent(higherPerRun, { maxModelCalls: 2 })
+    .run("Loop", [], {
+      maxModelCalls: Infinity,
+    })
+    .catch((e: unknown) => e);
+  expect(higherError).toBeInstanceOf(Error);
+  expect((higherError as Error).message).toContain("maxModelCalls (2)");
+  expect(higherPerRun.calls.length).toStrictEqual(2);
 });
 
-Deno.test("agent - a run finishing exactly at maxModelCalls succeeds", async () => {
+test("agent - a run finishing exactly at maxModelCalls succeeds", async () => {
   const model = new FnModel((call) =>
-    call < 3 ? [toolCallMessage("noop")] : [modelMessage("Done.")]
+    call < 3 ? [toolCallMessage("noop")] : [modelMessage("Done.")],
   );
 
   const messages = await loopingAgent(model, { maxModelCalls: 3 }).run("Go");
 
-  assertEquals(model.calls.length, 3);
-  assertEquals(messages.at(-1), modelMessage("Done."));
+  expect(model.calls.length).toStrictEqual(3);
+  expect(messages.at(-1)).toStrictEqual(modelMessage("Done."));
 });
 
-Deno.test("agent - invalid maxModelCalls fails construction and runs", async () => {
+test("agent - invalid maxModelCalls fails construction and runs", async () => {
   for (const maxModelCalls of [0, -1, 1.5, NaN, -Infinity]) {
-    assertThrows(
-      () => loopingAgent(new FnModel(() => []), { maxModelCalls }),
-      TypeError,
+    expect(() => loopingAgent(new FnModel(() => []), { maxModelCalls })).toThrow(TypeError);
+    expect(() => loopingAgent(new FnModel(() => []), { maxModelCalls })).toThrow(
       "maxModelCalls must be a positive integer or Infinity",
     );
   }
 
   const model = new FnModel(() => [modelMessage("Hi")]);
-  await assertRejects(
-    () => loopingAgent(model).run("Hi", [], { maxModelCalls: 0 }),
-    TypeError,
+  const error = await loopingAgent(model)
+    .run("Hi", [], { maxModelCalls: 0 })
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(TypeError);
+  expect((error as Error).message).toContain(
     "maxModelCalls must be a positive integer or Infinity",
   );
-  assertEquals(model.calls.length, 0);
+  expect(model.calls.length).toStrictEqual(0);
 });
 
 // --- run cancellation ----------------------------------------------------
 
-Deno.test("agent - an already-aborted signal rejects before any model call", async () => {
+test("agent - an already-aborted signal rejects before any model call", async () => {
   const model = new FnModel(() => [modelMessage("Hi")]);
   const emitted: Message[] = [];
   const controller = new AbortController();
   const reason = new Error("stop");
   controller.abort(reason);
 
-  const error = await assertRejects(() =>
-    loopingAgent(model).run("Hi", [], {
+  const error = await loopingAgent(model)
+    .run("Hi", [], {
       signal: controller.signal,
       onMessage: (message) => {
         emitted.push(message);
       },
     })
-  );
+    .catch((e: unknown) => e);
 
-  assertStrictEquals(error, reason);
-  assertEquals(model.calls.length, 0);
-  assertEquals(emitted, []);
+  expect(error).toBe(reason);
+  expect(model.calls.length).toStrictEqual(0);
+  expect(emitted).toStrictEqual([]);
 });
 
-Deno.test("agent - aborting rejects with an AbortError when no reason is given", async () => {
+test("agent - aborting rejects with an AbortError when no reason is given", async () => {
   const controller = new AbortController();
   controller.abort();
 
-  const error = await assertRejects(() =>
-    loopingAgent(new FnModel(() => [])).run("Hi", [], {
+  const error = await loopingAgent(new FnModel(() => []))
+    .run("Hi", [], {
       signal: controller.signal,
     })
-  );
+    .catch((e: unknown) => e);
 
-  assertEquals((error as DOMException).name, "AbortError");
+  expect((error as DOMException).name).toStrictEqual("AbortError");
 });
 
-Deno.test("agent - the run signal is passed to the model adapter", async () => {
+test("agent - the run signal is passed to the model adapter", async () => {
   const model = new FnModel(() => [modelMessage("Hi")]);
   const controller = new AbortController();
 
   await loopingAgent(model).run("Hi", [], { signal: controller.signal });
 
-  assertStrictEquals(model.calls[0].signal, controller.signal);
+  expect(model.calls[0].signal).toBe(controller.signal);
 });
 
-Deno.test("agent - aborting during a model call rejects without waiting for the adapter", async () => {
+test("agent - aborting during a model call rejects without waiting for the adapter", async () => {
   const controller = new AbortController();
   const reason = new Error("stop");
   // An adapter that ignores the signal and never settles on its own.
@@ -1507,15 +1449,15 @@ Deno.test("agent - aborting during a model call rejects without waiting for the 
     return new Promise<Message[]>(() => {});
   });
 
-  const error = await assertRejects(() =>
-    loopingAgent(model).run("Hi", [], { signal: controller.signal })
-  );
+  const error = await loopingAgent(model)
+    .run("Hi", [], { signal: controller.signal })
+    .catch((e: unknown) => e);
 
-  assertStrictEquals(error, reason);
-  assertEquals(model.calls.length, 1);
+  expect(error).toBe(reason);
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - aborting during a tool batch aborts the tools and makes no further model call", async () => {
+test("agent - aborting during a tool batch aborts the tools and makes no further model call", async () => {
   const controller = new AbortController();
   const reason = new Error("stop");
   const toolSignals: AbortSignal[] = [];
@@ -1527,37 +1469,37 @@ Deno.test("agent - aborting during a tool batch aborts the tools and makes no fu
       toolSignals.push(signal);
       controller.abort(reason);
       return new Promise((_, reject) =>
-        signal.addEventListener("abort", () => reject(signal.reason))
+        signal.addEventListener("abort", () => reject(signal.reason)),
       );
     },
   });
   const model = new FnModel(() => [toolCallMessage("blocking")]);
   const emitted: Message[] = [];
 
-  const error = await assertRejects(() =>
-    agent({
-      model,
-      modelId: "stub",
-      systemPrompt: "Be helpful.",
-      tools: [blocking],
-    }).run("Hi", [], {
+  const error = await agent({
+    model,
+    modelId: "stub",
+    systemPrompt: "Be helpful.",
+    tools: [blocking],
+  })
+    .run("Hi", [], {
       signal: controller.signal,
       onMessage: (message) => {
         emitted.push(message);
       },
     })
-  );
+    .catch((e: unknown) => e);
 
-  assertStrictEquals(error, reason);
-  assertEquals(toolSignals.length, 1);
-  assertEquals(toolSignals[0].aborted, true);
-  assertEquals(model.calls.length, 1);
+  expect(error).toBe(reason);
+  expect(toolSignals.length).toStrictEqual(1);
+  expect(toolSignals[0].aborted).toStrictEqual(true);
+  expect(model.calls.length).toStrictEqual(1);
   // The tool results of the aborted batch are still emitted, so a caller
   // resuming from emitted messages has no dangling tool call.
-  assertEquals(emitted.at(-1)?.role, "tool");
+  expect(emitted.at(-1)?.role).toStrictEqual("tool");
 });
 
-Deno.test("agent - duplicate finish_turn batches forward the run signal to sibling tools", async () => {
+test("agent - duplicate finish_turn batches forward the run signal to sibling tools", async () => {
   const controller = new AbortController();
   const received: AbortSignal[] = [];
   const probe = tool({
@@ -1572,20 +1514,22 @@ Deno.test("agent - duplicate finish_turn batches forward the run signal to sibli
   const probeCall = { id: "call-3", name: "probe", props: {} as JSONSchema };
   const model = new FnModel((call) =>
     call === 1
-      ? [{
-        role: "model",
-        contents: [
-          finishTurnCall("call-1", "completion", "A."),
-          finishTurnCall("call-2", "completion", "B."),
-          { toolCall: probeCall },
-        ],
-        toolCalls: [
-          finishTurnCall("call-1", "completion", "A.").toolCall,
-          finishTurnCall("call-2", "completion", "B.").toolCall,
-          probeCall,
-        ],
-      }]
-      : [modelMessage("Done.")]
+      ? [
+          {
+            role: "model",
+            contents: [
+              finishTurnCall("call-1", "completion", "A."),
+              finishTurnCall("call-2", "completion", "B."),
+              { toolCall: probeCall },
+            ],
+            toolCalls: [
+              finishTurnCall("call-1", "completion", "A.").toolCall,
+              finishTurnCall("call-2", "completion", "B.").toolCall,
+              probeCall,
+            ],
+          },
+        ]
+      : [modelMessage("Done.")],
   );
 
   await agent({
@@ -1596,59 +1540,59 @@ Deno.test("agent - duplicate finish_turn batches forward the run signal to sibli
     finishTurn: true,
   }).run("Hi", [], { signal: controller.signal });
 
-  assertEquals(received.length, 1);
+  expect(received.length).toStrictEqual(1);
   controller.abort();
-  assertEquals(received[0].aborted, true);
+  expect(received[0].aborted).toStrictEqual(true);
 });
 
-Deno.test("agent - aborting while the final message is delivered rejects the run", async () => {
+test("agent - aborting while the final message is delivered rejects the run", async () => {
   for (const finishTurn of [false, true]) {
     const controller = new AbortController();
     const reason = new Error("stop");
     const model = new FnModel(() =>
       finishTurn
         ? [finishTurnModelMessage(finishTurnCall("call-1", "completion", "Done."))]
-        : [modelMessage("Done.")]
+        : [modelMessage("Done.")],
     );
     const finalRole = finishTurn ? "tool" : "model";
 
-    const error = await assertRejects(() =>
-      agent({
-        model,
-        modelId: "stub",
-        systemPrompt: "Be helpful.",
-        finishTurn,
-      }).run("Hi", [], {
+    const error = await agent({
+      model,
+      modelId: "stub",
+      systemPrompt: "Be helpful.",
+      finishTurn,
+    })
+      .run("Hi", [], {
         signal: controller.signal,
         onMessage: (message) => {
           if (message.role === finalRole) controller.abort(reason);
         },
       })
-    );
+      .catch((e: unknown) => e);
 
-    assertStrictEquals(error, reason);
-    assertEquals(model.calls.length, 1);
+    expect(error).toBe(reason);
+    expect(model.calls.length).toStrictEqual(1);
   }
 });
 
 // --- modelTimeout --------------------------------------------------------
 
-Deno.test("agent - modelTimeout bounds a model call that never settles", async () => {
+test("agent - modelTimeout bounds a model call that never settles", async () => {
   // An adapter that ignores its options and never settles must still be
   // bounded by the run's deadline.
   const model = new FnModel(() => new Promise<Message[]>(() => {}));
 
-  const error = await assertRejects(
-    () => loopingAgent(model, { modelTimeout: 50 }).run("Hi"),
-    DOMException,
-  );
+  const error = await loopingAgent(model, { modelTimeout: 50 })
+    .run("Hi")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(DOMException);
 
-  assertEquals(error.name, "TimeoutError");
-  assertEquals(error.message, "The model call timed out");
-  assertEquals(model.calls.length, 1);
+  expect((error as DOMException).name).toStrictEqual("TimeoutError");
+  expect((error as DOMException).message).toStrictEqual("The model call timed out");
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - modelTimeout aborts the signal of an adapter that honours only signal", async () => {
+test("agent - modelTimeout aborts the signal of an adapter that honours only signal", async () => {
   // A custom adapter that ignores `timeout` must still see its request
   // cancelled when the deadline expires, not left running and billing
   // after the run has rejected.
@@ -1656,26 +1600,24 @@ Deno.test("agent - modelTimeout aborts the signal of an adapter that honours onl
   const model = new FnModel(() => {
     adapterSignal = model.calls[0].signal;
     return new Promise<Message[]>((_, reject) => {
-      adapterSignal?.addEventListener(
-        "abort",
-        () => reject(new Error("request cancelled")),
-        { once: true },
-      );
+      adapterSignal?.addEventListener("abort", () => reject(new Error("request cancelled")), {
+        once: true,
+      });
     });
   });
 
-  const error = await assertRejects(
-    () => loopingAgent(model, { modelTimeout: 50 }).run("Hi"),
-    DOMException,
-  );
+  const error = await loopingAgent(model, { modelTimeout: 50 })
+    .run("Hi")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(DOMException);
 
-  assertEquals(error.name, "TimeoutError");
-  assert(adapterSignal);
-  assertEquals(adapterSignal.aborted, true);
-  assertStrictEquals(adapterSignal.reason, error);
+  expect((error as DOMException).name).toStrictEqual("TimeoutError");
+  expect(adapterSignal).toBeDefined();
+  expect(adapterSignal!.aborted).toStrictEqual(true);
+  expect(adapterSignal!.reason).toBe(error);
 });
 
-Deno.test("agent - the caller's abort reason wins over a pending modelTimeout", async () => {
+test("agent - the caller's abort reason wins over a pending modelTimeout", async () => {
   const controller = new AbortController();
   const reason = new Error("managed turn deadline");
   const model = new FnModel(() => {
@@ -1683,17 +1625,17 @@ Deno.test("agent - the caller's abort reason wins over a pending modelTimeout", 
     return new Promise<Message[]>(() => {});
   });
 
-  const error = await assertRejects(() =>
-    loopingAgent(model, { modelTimeout: 10_000 }).run("Hi", [], {
+  const error = await loopingAgent(model, { modelTimeout: 10_000 })
+    .run("Hi", [], {
       signal: controller.signal,
     })
-  );
+    .catch((e: unknown) => e);
 
-  assertStrictEquals(error, reason);
-  assertStrictEquals(model.calls[0].signal?.reason, reason);
+  expect(error).toBe(reason);
+  expect(model.calls[0].signal?.reason).toBe(reason);
 });
 
-Deno.test("agent - no signal reaches the adapter without modelTimeout or a run signal", async () => {
+test("agent - no signal reaches the adapter without modelTimeout or a run signal", async () => {
   const model = new FnModel(() => [modelMessage("Hi")]);
   const received: unknown[] = [];
   const originalGenerate = model.generate.bind(model);
@@ -1708,79 +1650,75 @@ Deno.test("agent - no signal reaches the adapter without modelTimeout or a run s
 
   await loopingAgent(model).run("Hi");
 
-  assertEquals(received, [undefined, undefined]);
+  expect(received).toStrictEqual([undefined, undefined]);
 });
 
-Deno.test("agent - the smaller of agent and per-run modelTimeout applies", async () => {
+test("agent - the smaller of agent and per-run modelTimeout applies", async () => {
   const lowerPerRun = new FnModel(() => new Promise<Message[]>(() => {}));
   const lowerStartedAt = Date.now();
-  const lowerError = await assertRejects(
-    () =>
-      loopingAgent(lowerPerRun, { modelTimeout: 10_000 }).run("Hi", [], {
-        modelTimeout: 50,
-      }),
-    DOMException,
-  );
-  assertEquals(lowerError.name, "TimeoutError");
+  const lowerError = await loopingAgent(lowerPerRun, { modelTimeout: 10_000 })
+    .run("Hi", [], {
+      modelTimeout: 50,
+    })
+    .catch((e: unknown) => e);
+  expect(lowerError).toBeInstanceOf(DOMException);
+  expect((lowerError as DOMException).name).toStrictEqual("TimeoutError");
   // The per-run value won: rejecting inside ten seconds proves the
   // agent-level deadline did not govern the call.
-  assert(Date.now() - lowerStartedAt < 5_000);
+  expect(Date.now() - lowerStartedAt < 5_000).toBe(true);
 
   const higherPerRun = new FnModel(() => new Promise<Message[]>(() => {}));
   const higherStartedAt = Date.now();
-  const higherError = await assertRejects(
-    () =>
-      loopingAgent(higherPerRun, { modelTimeout: 50 }).run("Hi", [], {
-        modelTimeout: 10_000,
-      }),
-    DOMException,
-  );
-  assertEquals(higherError.name, "TimeoutError");
+  const higherError = await loopingAgent(higherPerRun, { modelTimeout: 50 })
+    .run("Hi", [], {
+      modelTimeout: 10_000,
+    })
+    .catch((e: unknown) => e);
+  expect(higherError).toBeInstanceOf(DOMException);
+  expect((higherError as DOMException).name).toStrictEqual("TimeoutError");
   // The per-run value cannot loosen the agent-level deadline.
-  assert(Date.now() - higherStartedAt < 5_000);
+  expect(Date.now() - higherStartedAt < 5_000).toBe(true);
 });
 
-Deno.test("agent - a modelTimeout of 0 expires immediately", async () => {
+test("agent - a modelTimeout of 0 expires immediately", async () => {
   const model = new FnModel(() => new Promise<Message[]>(() => {}));
 
-  const error = await assertRejects(
-    () => loopingAgent(model, { modelTimeout: 0 }).run("Hi"),
-    DOMException,
-  );
+  const error = await loopingAgent(model, { modelTimeout: 0 })
+    .run("Hi")
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(DOMException);
 
-  assertEquals(error.name, "TimeoutError");
-  assertEquals(error.message, "The model call timed out");
-  assertEquals(model.calls.length, 1);
+  expect((error as DOMException).name).toStrictEqual("TimeoutError");
+  expect((error as DOMException).message).toStrictEqual("The model call timed out");
+  expect(model.calls.length).toStrictEqual(1);
 });
 
-Deno.test("agent - invalid modelTimeout fails construction and runs", async () => {
+test("agent - invalid modelTimeout fails construction and runs", async () => {
   for (const modelTimeout of [-1, -Infinity, NaN, Infinity]) {
-    assertThrows(
-      () => loopingAgent(new FnModel(() => []), { modelTimeout }),
-      TypeError,
+    expect(() => loopingAgent(new FnModel(() => []), { modelTimeout })).toThrow(TypeError);
+    expect(() => loopingAgent(new FnModel(() => []), { modelTimeout })).toThrow(
       "modelTimeout must be a finite, non-negative number",
     );
   }
 
   const model = new FnModel(() => [modelMessage("Hi")]);
-  await assertRejects(
-    () => loopingAgent(model).run("Hi", [], { modelTimeout: -1 }),
-    TypeError,
-    "modelTimeout must be a finite, non-negative number",
-  );
-  assertEquals(model.calls.length, 0);
+  const error = await loopingAgent(model)
+    .run("Hi", [], { modelTimeout: -1 })
+    .catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(TypeError);
+  expect((error as Error).message).toContain("modelTimeout must be a finite, non-negative number");
+  expect(model.calls.length).toStrictEqual(0);
 });
 
-Deno.test("agent - a model call within its deadline completes the run", async () => {
-  const model = new FnModel(() =>
-    new Promise<Message[]>((resolve) =>
-      setTimeout(() => resolve([modelMessage("Slow but fine.")]), 50)
-    )
+test("agent - a model call within its deadline completes the run", async () => {
+  const model = new FnModel(
+    () =>
+      new Promise<Message[]>((resolve) =>
+        setTimeout(() => resolve([modelMessage("Slow but fine.")]), 50),
+      ),
   );
 
-  const messages = await loopingAgent(model, { modelTimeout: 10_000 }).run(
-    "Hi",
-  );
+  const messages = await loopingAgent(model, { modelTimeout: 10_000 }).run("Hi");
 
-  assertEquals(messages.at(-1), modelMessage("Slow but fine."));
+  expect(messages.at(-1)).toStrictEqual(modelMessage("Slow but fine."));
 });

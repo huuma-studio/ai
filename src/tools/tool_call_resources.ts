@@ -20,10 +20,7 @@ export function toolCallResourceSnapshot(): ToolCallResourceSnapshot {
   return { ...resources };
 }
 
-export function armToolCallTimeout(
-  callback: () => void,
-  timeout: number,
-): () => void {
+export function armToolCallTimeout(callback: () => void, timeout: number): () => void {
   resources.armedTimeouts += 1;
   resources.activeTimeouts += 1;
   let active = true;
@@ -48,10 +45,7 @@ export function armToolCallTimeout(
   };
 }
 
-export function addToolCallAbortListener(
-  signal: AbortSignal,
-  listener: () => void,
-): () => void {
+export function addToolCallAbortListener(signal: AbortSignal, listener: () => void): () => void {
   signal.addEventListener("abort", listener, { once: true });
   resources.addedAbortListeners += 1;
   resources.activeAbortListeners += 1;

@@ -10,9 +10,9 @@
  *
  * @example
  * ```typescript
- * import { agent } from "jsr:@huuma/ai/agent";
- * import { anthropic } from "jsr:@huuma/ai/models/anthropic";
- * import { mcp } from "jsr:@huuma/ai/tools";
+ * import { agent } from "@huuma/ai/agent";
+ * import { anthropic } from "@huuma/ai/models/anthropic";
+ * import { mcp } from "@huuma/ai/tools";
  *
  * const deepwiki = await mcp({
  *   name: "deepwiki",
@@ -20,7 +20,7 @@
  * });
  *
  * const assistant = agent({
- *   model: anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY") }),
+ *   model: anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
  *   modelId: "claude-fable-5",
  *   systemPrompt: "You answer questions about open source repositories.",
  *   tools: [...deepwiki.tools()],
@@ -32,20 +32,20 @@
  *
  * @module
  */
-import { Tool, type ToolOutput } from "@/tools/mod.ts";
-import { connect } from "@/tools/mcp/client.ts";
-import { flattenResult } from "@/tools/mcp/content.ts";
-import { modelToolName, validateServerName } from "@/tools/mcp/naming.ts";
-import { PassthroughSchema } from "@/tools/mcp/schema.ts";
-import type { McpClient, McpToolDef } from "@/tools/mcp/types.ts";
-import type { McpTransportOptions } from "@/tools/mcp/types.ts";
+import { Tool, type ToolOutput } from "../mod.ts";
+import { connect } from "./client.ts";
+import { flattenResult } from "./content.ts";
+import { modelToolName, validateServerName } from "./naming.ts";
+import { PassthroughSchema } from "./schema.ts";
+import type { McpClient, McpToolDef } from "./types.ts";
+import type { McpTransportOptions } from "./types.ts";
 
 export type {
   McpHttpTransportOptions,
   McpStdioTransportOptions,
   McpTransport,
   McpTransportOptions,
-} from "@/tools/mcp/types.ts";
+} from "./types.ts";
 
 /** Options for connecting to an MCP server via {@link mcp}. */
 export interface McpToolsOptions {
@@ -80,7 +80,6 @@ export class McpConnection {
   #client: McpClient;
   #allowedTools?: string[];
   #timeout?: number;
-  // deno-lint-ignore no-explicit-any
   #tools: Tool<any, string | ToolOutput<string>>[];
 
   /** @internal Use {@link mcp} to create instances. */
@@ -99,7 +98,6 @@ export class McpConnection {
   }
 
   /** The tools listed at connect time (or at the last `refresh()`). */
-  // deno-lint-ignore no-explicit-any
   tools(): Tool<any, string | ToolOutput<string>>[] {
     return [...this.#tools];
   }
@@ -116,7 +114,6 @@ export class McpConnection {
    */
   async refresh(
     options: { signal?: AbortSignal } = {},
-    // deno-lint-ignore no-explicit-any
   ): Promise<Tool<any, string | ToolOutput<string>>[]> {
     this.#tools = this.#wrap(await this.#client.listTools(options));
     return this.tools();
@@ -127,7 +124,6 @@ export class McpConnection {
     return this.#client.close();
   }
 
-  // deno-lint-ignore no-explicit-any
   #wrap(defs: McpToolDef[]): Tool<any, string | ToolOutput<string>>[] {
     const allowed = this.#allowedTools;
     // Sanitization can collide below the length cap ("repo.search" and

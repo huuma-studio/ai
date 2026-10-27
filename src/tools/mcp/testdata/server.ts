@@ -2,15 +2,18 @@
  * Minimal MCP stdio server used by mcp_stdio.test.ts.
  *
  * Dev-only fixture (excluded from publish via the testdata exclude);
- * deliberately not named *_test.ts so the test runner never executes it.
- * Uses the SDK's low-level Server so no schema library is needed.
+ * deliberately not named *.test.ts so the test runner never collects it.
+ * Run directly by node (which strips types natively), so it must stick to
+ * erasable TypeScript syntax. Uses the SDK's low-level Server so no schema
+ * library is needed.
+ *
+ * An optional first argument names a file the server writes its PID to,
+ * so tests can check that the process exits.
  */
+import { writeFileSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const TOOLS = [
   {
@@ -62,11 +65,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOLS }));
 
 server.setRequestHandler(
   CallToolRequestSchema,
-  (
-    request: {
-      params: { name: string; arguments?: Record<string, unknown> };
-    },
-  ) => {
+  (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
     const { name, arguments: args } = request.params;
 
     switch (name) {
@@ -93,5 +92,8 @@ server.setRequestHandler(
     }
   },
 );
+
+const pidFile = process.argv[2];
+if (pidFile) writeFileSync(pidFile, String(process.pid));
 
 await server.connect(new StdioServerTransport());

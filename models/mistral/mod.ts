@@ -3,9 +3,9 @@
  *
  * @example
  * ```typescript
- * import { mistral } from "jsr:@huuma/ai/models/mistral";
+ * import { mistral } from "@huuma/ai/models/mistral";
  *
- * const model = mistral({ apiKey: Deno.env.get("MISTRAL_API_KEY") });
+ * const model = mistral({ apiKey: process.env.MISTRAL_API_KEY });
  * const result = await model.generate({
  *   modelId: "mistral-large-latest",
  *   messages: [{ role: "user", contents: "Hello!" }],
@@ -30,8 +30,8 @@ import type {
   UsageInfo,
   UserMessage as MistralUserMessage,
 } from "@mistralai/mistralai/models/components";
-import type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "@/model/mod.ts";
+import type { BaseModel, ModelResult, ModelUsage } from "../../src/model/mod.ts";
+import { dataUrlFrom, fileSourceFrom, toolFilesLabel } from "../../src/model/mod.ts";
 import type {
   FileContent,
   Message,
@@ -39,10 +39,10 @@ import type {
   TextContent,
   ToolCallContent,
   ToolResultContent,
-} from "@/mod.ts";
+} from "../../src/mod.ts";
 // Tool instances are accepted structurally via ToolLike.
 import type { JSONSchema, Schema } from "@huuma/validate";
-import { deadlineFrom } from "@/model/deadline.ts";
+import { deadlineFrom } from "../../src/model/deadline.ts";
 
 type Mistral_Large_Latest = "mistral-large-latest";
 type Mistral_Medium_Latest = "mistral-medium-latest";
@@ -76,7 +76,6 @@ export type MistralModels =
   | Codestral_Latest
   | Open_Codestral_Mamba
   | Devstral_Latest
-  // deno-lint-ignore ban-types
   | (string & {});
 
 /**
@@ -168,19 +167,27 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns A normalized {@link ModelResult}.
    */
-  async generate(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      MistralGenerateOptions,
-  ): Promise<ModelResult<MistralModels>> {
+  async generate({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: MistralGenerateOptions): Promise<ModelResult<MistralModels>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const response = await this.#client.chat.complete({
-        ...options,
-        model: modelId,
-        messages: mistralMessagesFrom(messages, system),
-        tools: tools?.length ? mistralToolsFrom(tools) : undefined,
-        stream: false,
-      } as ChatCompletionRequest, { signal: deadline.signal });
+      const response = await this.#client.chat.complete(
+        {
+          ...options,
+          model: modelId,
+          messages: mistralMessagesFrom(messages, system),
+          tools: tools?.length ? mistralToolsFrom(tools) : undefined,
+          stream: false,
+        } as ChatCompletionRequest,
+        { signal: deadline.signal },
+      );
 
       const choice = response.choices[0];
       if (!choice) {
@@ -209,19 +216,27 @@ export class MistralModel implements BaseModel<MistralModels> {
    * @param options Generation options including model ID, messages, and optional tools.
    * @returns An async generator yielding normalized {@link ModelResult} chunks.
    */
-  async stream(
-    { modelId, messages, tools, system, options, signal, timeout }:
-      MistralGenerateOptions,
-  ): Promise<AsyncGenerator<ModelResult<MistralModels>>> {
+  async stream({
+    modelId,
+    messages,
+    tools,
+    system,
+    options,
+    signal,
+    timeout,
+  }: MistralGenerateOptions): Promise<AsyncGenerator<ModelResult<MistralModels>>> {
     const deadline = deadlineFrom({ signal, timeout });
     try {
-      const stream = await this.#client.chat.stream({
-        ...options,
-        model: modelId,
-        messages: mistralMessagesFrom(messages, system),
-        tools: tools?.length ? mistralToolsFrom(tools) : undefined,
-        stream: true,
-      } as ChatCompletionStreamRequest, { signal: deadline.signal });
+      const stream = await this.#client.chat.stream(
+        {
+          ...options,
+          model: modelId,
+          messages: mistralMessagesFrom(messages, system),
+          tools: tools?.length ? mistralToolsFrom(tools) : undefined,
+          stream: true,
+        } as ChatCompletionStreamRequest,
+        { signal: deadline.signal },
+      );
 
       return deadline.guard(streamCompletions(stream, modelId));
     } catch (error) {
@@ -272,9 +287,7 @@ export function mistralMessagesFrom(
           role: "user",
           content: [
             ...pendingFileChunks,
-            ...(typeof content === "string"
-              ? [{ type: "text" as const, text: content }]
-              : content),
+            ...(typeof content === "string" ? [{ type: "text" as const, text: content }] : content),
           ],
         });
         pendingFileChunks = [];
@@ -282,12 +295,8 @@ export function mistralMessagesFrom(
         result.push({ role: "user", content } as MistralUserMessage);
       }
     } else if (message.role === "model") {
-      const textParts = message.contents.filter((c): c is TextContent =>
-        "text" in c
-      );
-      const content = textParts.length > 0
-        ? textParts.map((c) => c.text).join("")
-        : null;
+      const textParts = message.contents.filter((c): c is TextContent => "text" in c);
+      const content = textParts.length > 0 ? textParts.map((c) => c.text).join("") : null;
       const toolCalls = modelToolCallsFrom(message).map((tc) => ({
         id: tc.id,
         type: "function" as const,
@@ -348,18 +357,13 @@ export function mistralMessagesFrom(
 /**
  * Converts Huuma {@link Tool}s into Mistral function-tool definitions.
  */
-export function mistralToolsFrom(
-  tools: ToolLike[],
-): MistralTool[] {
+export function mistralToolsFrom(tools: ToolLike[]): MistralTool[] {
   return tools.map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: (tool.jsonSchema ?? tool.input.jsonSchema()) as Record<
-        string,
-        unknown
-      >,
+      parameters: (tool.jsonSchema ?? tool.input.jsonSchema()) as Record<string, unknown>,
     },
   }));
 }
@@ -367,9 +371,7 @@ export function mistralToolsFrom(
 /**
  * Maps Mistral {@link UsageInfo} to the normalized {@link ModelUsage}.
  */
-export function mistralUsageFrom(
-  usage: UsageInfo | null | undefined,
-): ModelUsage | undefined {
+export function mistralUsageFrom(usage: UsageInfo | null | undefined): ModelUsage | undefined {
   if (!usage) {
     return undefined;
   }
@@ -397,16 +399,14 @@ export function mistralUsageFrom(
  *
  * @example
  * ```typescript
- * const model = mistral({ apiKey: Deno.env.get("MISTRAL_API_KEY") });
+ * const model = mistral({ apiKey: process.env.MISTRAL_API_KEY });
  * ```
  */
 export function mistral(options: SDKOptions = {}): MistralModel {
   return new MistralModel(options);
 }
 
-function modelMessageFrom(
-  message: AssistantMessage | undefined,
-): ModelMessage {
+function modelMessageFrom(message: AssistantMessage | undefined): ModelMessage {
   const result: ModelMessage = {
     role: "model",
     contents: [],
@@ -453,7 +453,7 @@ interface PendingToolCall {
 }
 
 async function* streamCompletions(
-  stream: ReadableStream<CompletionEvent>,
+  stream: AsyncIterable<CompletionEvent>,
   modelId: MistralModels,
 ): AsyncGenerator<ModelResult<MistralModels>> {
   const pendingToolCalls: Record<number, PendingToolCall> = {};
@@ -484,9 +484,7 @@ async function* streamCompletions(
     // Update pending calls first so we do not lose deltas that complete a
     // previous call in the same chunk that also starts a new one.
     for (const toolCallDelta of toolCallDeltas) {
-      if (
-        toolCallDelta.type !== undefined && toolCallDelta.type !== "function"
-      ) {
+      if (toolCallDelta.type !== undefined && toolCallDelta.type !== "function") {
         continue;
       }
 
@@ -510,9 +508,7 @@ async function* streamCompletions(
 
     // A newly seen index higher than the previous maximum means earlier
     // pending tool calls are complete.
-    const newHigherIndex = currentIndexes.find((idx) =>
-      idx > maxSeenToolCallIndex
-    );
+    const newHigherIndex = currentIndexes.find((idx) => idx > maxSeenToolCallIndex);
     if (newHigherIndex !== undefined) {
       yield* flushPendingToolCalls(pendingToolCalls, modelId, newHigherIndex);
       maxSeenToolCallIndex = newHigherIndex;
@@ -553,11 +549,13 @@ function* flushPendingToolCalls(
     };
     yield {
       modelId,
-      messages: [{
-        role: "model",
-        contents: [{ toolCall }],
-        toolCalls: [toolCall],
-      }],
+      messages: [
+        {
+          role: "model",
+          contents: [{ toolCall }],
+          toolCalls: [toolCall],
+        },
+      ],
     };
   }
 }
@@ -583,13 +581,12 @@ function modelMessageFromDelta(delta: DeltaMessage): ModelMessage {
 }
 
 function isPopulatedModelMessage(message: ModelMessage): boolean {
-  return message.contents.length > 0 || message.toolCalls.length > 0 ||
-    message.thinking !== undefined;
+  return (
+    message.contents.length > 0 || message.toolCalls.length > 0 || message.thinking !== undefined
+  );
 }
 
-function modelToolCallsFrom(
-  message: ModelMessage,
-): ToolCallContent["toolCall"][] {
+function modelToolCallsFrom(message: ModelMessage): ToolCallContent["toolCall"][] {
   if (message.toolCalls.length > 0) {
     return message.toolCalls;
   }
@@ -614,9 +611,7 @@ function parseToolArguments(argumentsValue: unknown): JSONSchema {
 }
 
 function textFrom(contents: string | TextContent[]): string {
-  return typeof contents === "string"
-    ? contents
-    : contents.map((content) => content.text).join("");
+  return typeof contents === "string" ? contents : contents.map((content) => content.text).join("");
 }
 
 /**
@@ -637,9 +632,7 @@ function userContentFrom(
   }
 
   return contents.map((content) =>
-    "file" in content
-      ? fileChunkFrom(content.file)
-      : { type: "text" as const, text: content.text }
+    "file" in content ? fileChunkFrom(content.file) : { type: "text" as const, text: content.text },
   );
 }
 
@@ -664,9 +657,7 @@ function fileChunkFrom(file: FileContent["file"]): ContentChunk {
 
   if (file.mimeType === "application/pdf") {
     if (source.kind === "data") {
-      throw new RangeError(
-        "Mistral adapter does not support base64 PDFs; pass a URL instead",
-      );
+      throw new RangeError("Mistral adapter does not support base64 PDFs; pass a URL instead");
     }
     return { type: "document_url", documentUrl: source.url };
   }
@@ -678,9 +669,7 @@ function fileChunkFrom(file: FileContent["file"]): ContentChunk {
     };
   }
 
-  throw new RangeError(
-    `Mistral adapter does not support file content of type "${file.mimeType}"`,
-  );
+  throw new RangeError(`Mistral adapter does not support file content of type "${file.mimeType}"`);
 }
 
 /**
@@ -688,9 +677,7 @@ function fileChunkFrom(file: FileContent["file"]): ContentChunk {
  * `role: "tool"` message requires. Errors take precedence over output,
  * and non-string payloads are JSON-encoded.
  */
-function toolOutputString(
-  result: ToolResultContent["toolResult"]["result"],
-): string {
+function toolOutputString(result: ToolResultContent["toolResult"]["result"]): string {
   const value = result.error ?? result.output;
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;

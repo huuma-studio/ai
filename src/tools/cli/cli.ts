@@ -1,16 +1,7 @@
-import {
-  array,
-  type JSONSchema,
-  object,
-  type Schema,
-  string,
-} from "@huuma/validate";
-import {
-  fitJsonString,
-  formatBytes,
-  validateMaxBytes,
-} from "@/tools/bounded_text.ts";
-import { Tool } from "@/tools/mod.ts";
+import { array, type JSONSchema, object, type Schema, string } from "@huuma/validate";
+import { fitJsonString, formatBytes, validateMaxBytes } from "../bounded_text.ts";
+import { Tool } from "../mod.ts";
+import { type ChildProcess, spawnProcess } from "../process.ts";
 
 /** Options for configuring the CLI tool. */
 export interface CliToolOptions {
@@ -63,16 +54,13 @@ export const DEFAULT_CLI_MAX_OUTPUT_BYTES = 512 * 1024;
  * @param options Configuration including the list of permitted commands.
  * @returns A {@link Tool} that runs CLI commands and returns their output.
  */
-export function cli(
-  {
-    allowedCommands,
-    timeout = DEFAULT_CLI_TIMEOUT,
-    env: configuredEnv,
-    allowUnsafeEnvironmentVariables = false,
-    maxOutputBytes = DEFAULT_CLI_MAX_OUTPUT_BYTES,
-  }: CliToolOptions,
-  // deno-lint-ignore no-explicit-any
-): Tool<any, string> {
+export function cli({
+  allowedCommands,
+  timeout = DEFAULT_CLI_TIMEOUT,
+  env: configuredEnv,
+  allowUnsafeEnvironmentVariables = false,
+  maxOutputBytes = DEFAULT_CLI_MAX_OUTPUT_BYTES,
+}: CliToolOptions): Tool<any, string> {
   validateMaxBytes(maxOutputBytes);
 
   return new Tool({
@@ -81,9 +69,9 @@ export function cli(
       allowUnsafeEnvironmentVariables
         ? "Arbitrary per-call environment variables are enabled and must have string values."
         : "Per-call environment variables are disabled."
-    } Allowed commands: ${allowedCommands.join(", ")}. Output over ${
-      formatBytes(maxOutputBytes)
-    } (stdout and stderr combined) is truncated.`,
+    } Allowed commands: ${allowedCommands.join(", ")}. Output over ${formatBytes(
+      maxOutputBytes,
+    )} (stdout and stderr combined) is truncated.`,
     input: object({
       command: string(),
       args: array(string()),
@@ -93,29 +81,21 @@ export function cli(
     fn: async ({ command, args, env }, { signal }) => {
       if (!allowedCommands.includes(command)) {
         throw new Error(
-          `Command "${command}" is not allowed. Allowed commands: ${
-            allowedCommands.join(", ")
-          }`,
+          `Command "${command}" is not allowed. Allowed commands: ${allowedCommands.join(", ")}`,
         );
       }
 
       const callEnv = env ?? {};
-      if (
-        Object.keys(callEnv).length > 0 && !allowUnsafeEnvironmentVariables
-      ) {
+      if (Object.keys(callEnv).length > 0 && !allowUnsafeEnvironmentVariables) {
         throw new Error(
           "Per-call environment variables are disabled. Enable CliToolOptions.allowUnsafeEnvironmentVariables only when child processes run in an external OS sandbox.",
         );
       }
 
-      const child = new Deno.Command(command, {
-        args,
+      const child = await spawnProcess(command, args, {
         env: { ...callEnv, ...configuredEnv },
         signal,
-        stdin: "null",
-        stdout: "piped",
-        stderr: "piped",
-      }).spawn();
+      });
 
       let output: CommandOutput;
       try {
@@ -172,10 +152,7 @@ interface CommandOutput {
  * A multi-byte character split by the cut is dropped rather than decoded
  * into a replacement character.
  */
-async function readCommandOutput(
-  child: Deno.ChildProcess,
-  maxBytes: number,
-): Promise<CommandOutput> {
+async function readCommandOutput(child: ChildProcess, maxBytes: number): Promise<CommandOutput> {
   const [stdout, stderr] = await Promise.all([
     readPipe(child.stdout, maxBytes),
     readPipe(child.stderr, maxBytes),
@@ -197,10 +174,7 @@ interface KeptPipe {
 /** Read one pipe, keeping at most `maxBytes` of it and discarding the rest
  * as it arrives. The pipe is always read to its end (or cancelled on
  * failure), and only the kept pieces are returned. */
-async function readPipe(
-  stream: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): Promise<KeptPipe> {
+async function readPipe(stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<KeptPipe> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const pieces: string[] = [];
@@ -249,9 +223,7 @@ function assembleOutput(
   const parts = [...stdout];
   if (stderr.length > 0) parts.push("\n", ...stderr);
   const fitted = fitJsonString(parts.join(""), maxOutputBytes);
-  return truncated || fitted.trimmed
-    ? fitted.text + truncationNote(maxOutputBytes)
-    : fitted.text;
+  return truncated || fitted.trimmed ? fitted.text + truncationNote(maxOutputBytes) : fitted.text;
 }
 
 /** The note appended when output was lost: a pipe kept emitting past its
@@ -261,7 +233,7 @@ function truncationNote(maxOutputBytes: number): string {
 }
 
 /** Kill `child` unless it has already exited. */
-function killQuietly(child: Deno.ChildProcess): void {
+function killQuietly(child: ChildProcess): void {
   try {
     child.kill();
   } catch {
@@ -273,10 +245,7 @@ type EnvironmentJsonSchema = JSONSchema & {
   additionalProperties: JSONSchema;
 };
 
-const environmentSchema: Schema<
-  Record<string, string> | undefined,
-  EnvironmentJsonSchema
-> = {
+const environmentSchema: Schema<Record<string, string> | undefined, EnvironmentJsonSchema> = {
   infer: undefined,
   validate(value) {
     try {
@@ -284,9 +253,11 @@ const environmentSchema: Schema<
     } catch (error) {
       return {
         value: undefined,
-        errors: [{
-          message: error instanceof Error ? error.message : "Invalid CLI env",
-        }],
+        errors: [
+          {
+            message: error instanceof Error ? error.message : "Invalid CLI env",
+          },
+        ],
       };
     }
   },
@@ -307,9 +278,7 @@ function environmentFrom(value: unknown): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const [name, entry] of Object.entries(value)) {
     if (typeof entry !== "string") {
-      throw new TypeError(
-        `CLI environment variable "${name}" must have a string value`,
-      );
+      throw new TypeError(`CLI environment variable "${name}" must have a string value`);
     }
     environment[name] = entry;
   }

@@ -17,11 +17,11 @@ export class SearchTool {
       this.provider = new OllamaSearchProvider(options.apiKey);
     } else {
       // Auto-detect based on env vars
-      if (Deno.env.get("PERPLEXITY_API_KEY")) {
+      if (process.env.PERPLEXITY_API_KEY) {
         this.provider = new PerplexitySearchProvider();
-      } else if (Deno.env.get("BRAVE_API_KEY")) {
+      } else if (process.env.BRAVE_API_KEY) {
         this.provider = new BraveSearchProvider();
-      } else if (Deno.env.get("OLLAMA_SEARCH_API_KEY")) {
+      } else if (process.env.OLLAMA_SEARCH_API_KEY) {
         this.provider = new OllamaSearchProvider();
       } else {
         throw new Error(
@@ -31,10 +31,7 @@ export class SearchTool {
     }
   }
 
-  async search(
-    query: string,
-    options?: SearchOptions,
-  ): Promise<SearchResponse> {
+  async search(query: string, options?: SearchOptions): Promise<SearchResponse> {
     return await this.provider.search(query, options);
   }
 }

@@ -1,30 +1,28 @@
-import { assert, assertEquals, assertThrows } from "@std/assert";
-import { flattenResult } from "@/tools/mcp/content.ts";
-import { ToolOutput } from "@/tools/mod.ts";
+import { expect, test } from "vite-plus/test";
+import { flattenResult } from "./content.ts";
+import { ToolOutput } from "../mod.ts";
 
-Deno.test("flattenResult - joins text blocks with newlines", () => {
-  assertEquals(
+test("flattenResult - joins text blocks with newlines", () => {
+  expect(
     flattenResult({
       content: [
         { type: "text", text: "one" },
         { type: "text", text: "two" },
       ],
     }),
-    "one\ntwo",
-  );
+  ).toBe("one\ntwo");
 });
 
-Deno.test("flattenResult - structuredContent wins over text blocks", () => {
-  assertEquals(
+test("flattenResult - structuredContent wins over text blocks", () => {
+  expect(
     flattenResult({
       content: [{ type: "text", text: "duplicate rendering" }],
       structuredContent: { sum: 3 },
     }),
-    JSON.stringify({ sum: 3 }),
-  );
+  ).toBe(JSON.stringify({ sum: 3 }));
 });
 
-Deno.test("flattenResult - image and audio blocks become files, in order", () => {
+test("flattenResult - image and audio blocks become files, in order", () => {
   const result = flattenResult({
     content: [
       { type: "image", data: "aW1n", mimeType: "image/png" },
@@ -33,27 +31,27 @@ Deno.test("flattenResult - image and audio blocks become files, in order", () =>
     ],
   });
 
-  assert(result instanceof ToolOutput);
-  assertEquals(result.output, "caption");
-  assertEquals(result.files, [
+  expect(result).toBeInstanceOf(ToolOutput);
+  if (!(result instanceof ToolOutput)) return;
+  expect(result.output).toStrictEqual("caption");
+  expect(result.files).toStrictEqual([
     { file: { mimeType: "image/png", data: "aW1n" } },
     { file: { mimeType: "audio/wav", data: "YXVkaW8=" } },
   ]);
 });
 
-Deno.test("flattenResult - media-only content yields empty output with files", () => {
+test("flattenResult - media-only content yields empty output with files", () => {
   const result = flattenResult({
     content: [{ type: "image", data: "aW1n", mimeType: "image/jpeg" }],
   });
 
-  assert(result instanceof ToolOutput);
-  assertEquals(result.output, "");
-  assertEquals(result.files, [
-    { file: { mimeType: "image/jpeg", data: "aW1n" } },
-  ]);
+  expect(result).toBeInstanceOf(ToolOutput);
+  if (!(result instanceof ToolOutput)) return;
+  expect(result.output).toStrictEqual("");
+  expect(result.files).toStrictEqual([{ file: { mimeType: "image/jpeg", data: "aW1n" } }]);
 });
 
-Deno.test("flattenResult - structuredContent and files combine", () => {
+test("flattenResult - structuredContent and files combine", () => {
   const result = flattenResult({
     content: [
       { type: "text", text: "duplicate rendering" },
@@ -62,15 +60,14 @@ Deno.test("flattenResult - structuredContent and files combine", () => {
     structuredContent: { ok: true },
   });
 
-  assert(result instanceof ToolOutput);
-  assertEquals(result.output, JSON.stringify({ ok: true }));
-  assertEquals(result.files, [
-    { file: { mimeType: "image/png", data: "aW1n" } },
-  ]);
+  expect(result).toBeInstanceOf(ToolOutput);
+  if (!(result instanceof ToolOutput)) return;
+  expect(result.output).toStrictEqual(JSON.stringify({ ok: true }));
+  expect(result.files).toStrictEqual([{ file: { mimeType: "image/png", data: "aW1n" } }]);
 });
 
-Deno.test("flattenResult - resource blocks degrade to placeholders", () => {
-  assertEquals(
+test("flattenResult - resource blocks degrade to placeholders", () => {
+  expect(
     flattenResult({
       content: [
         { type: "resource_link", uri: "file:///a.txt" },
@@ -78,74 +75,57 @@ Deno.test("flattenResult - resource blocks degrade to placeholders", () => {
         { type: "text", text: "caption" },
       ],
     }),
-    "[resource file:///a.txt]\n[resource file:///b.txt]\ncaption",
-  );
+  ).toBe("[resource file:///a.txt]\n[resource file:///b.txt]\ncaption");
 });
 
-Deno.test("flattenResult - isError throws with joined text", () => {
-  assertThrows(
-    () =>
-      flattenResult({
-        content: [{ type: "text", text: "boom" }],
-        isError: true,
-      }),
-    Error,
-    "boom",
-  );
+test("flattenResult - isError throws with joined text", () => {
+  expect(() =>
+    flattenResult({
+      content: [{ type: "text", text: "boom" }],
+      isError: true,
+    }),
+  ).toThrow("boom");
 });
 
-Deno.test("flattenResult - isError without text uses a fallback message", () => {
-  assertThrows(
-    () => flattenResult({ content: [], isError: true }),
-    Error,
-    "MCP tool call failed",
-  );
+test("flattenResult - isError without text uses a fallback message", () => {
+  expect(() => flattenResult({ content: [], isError: true })).toThrow("MCP tool call failed");
 });
 
-Deno.test("flattenResult - isError without text falls back to structuredContent", () => {
-  assertThrows(
-    () =>
-      flattenResult({
-        content: [],
-        structuredContent: { code: 42, reason: "quota exceeded" },
-        isError: true,
-      }),
-    Error,
-    JSON.stringify({ code: 42, reason: "quota exceeded" }),
-  );
+test("flattenResult - isError without text falls back to structuredContent", () => {
+  expect(() =>
+    flattenResult({
+      content: [],
+      structuredContent: { code: 42, reason: "quota exceeded" },
+      isError: true,
+    }),
+  ).toThrow(JSON.stringify({ code: 42, reason: "quota exceeded" }));
 });
 
-Deno.test("flattenResult - isError text blocks win over structuredContent", () => {
-  assertThrows(
-    () =>
-      flattenResult({
-        content: [{ type: "text", text: "boom" }],
-        structuredContent: { code: 42 },
-        isError: true,
-      }),
-    Error,
-    "boom",
-  );
+test("flattenResult - isError text blocks win over structuredContent", () => {
+  expect(() =>
+    flattenResult({
+      content: [{ type: "text", text: "boom" }],
+      structuredContent: { code: 42 },
+      isError: true,
+    }),
+  ).toThrow("boom");
 });
 
-Deno.test("flattenResult - isError with media still throws text-only", () => {
+test("flattenResult - isError with media still throws text-only", () => {
   // callTool's rejection path has no files channel (ADR 0004, resolved
   // question 1), so media on errored results is not forwarded.
-  assertThrows(
-    () =>
-      flattenResult({
-        content: [
-          { type: "image", data: "aW1n", mimeType: "image/png" },
-          { type: "text", text: "boom" },
-        ],
-        isError: true,
-      }),
-    Error,
-    "boom",
-  );
+  expect(() =>
+    flattenResult({
+      content: [
+        { type: "image", data: "aW1n", mimeType: "image/png" },
+        { type: "text", text: "boom" },
+      ],
+      isError: true,
+    }),
+  ).toThrow("boom");
 });
 
-Deno.test("flattenResult - empty content flattens to empty string", () => {
-  assertEquals(flattenResult({ content: [] }), "");
-  assertEquals(flattenResult({}), "");
+test("flattenResult - empty content flattens to empty string", () => {
+  expect(flattenResult({ content: [] })).toBe("");
+  expect(flattenResult({})).toBe("");
 });

@@ -1,23 +1,10 @@
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertRejects,
-  assertThrows,
-} from "@std/assert";
+import { expect, test } from "vite-plus/test";
 import { type JSONSchema, object, type Schema, string } from "@huuma/validate";
-import type { Message, ToolMessage } from "@/mod.ts";
-import {
-  callTool,
-  DEFAULT_CLI_TIMEOUT,
-  tool,
-  toolOutput,
-  Tools,
-} from "./mod.ts";
+import type { Message, ToolMessage } from "../mod.ts";
+import { callTool, DEFAULT_CLI_TIMEOUT, tool, toolOutput, Tools } from "./mod.ts";
 import { toolCallResourceSnapshot } from "./tool_call_resources.ts";
 
 function modelMessageCalling(name: string, id = "call-1"): Message {
-  // deno-lint-ignore no-explicit-any
   const toolCall = { id, name, props: { target: "page" } as any };
   return { role: "model", contents: [{ toolCall }], toolCalls: [toolCall] };
 }
@@ -26,7 +13,6 @@ function modelMessageCallingEach(count: number, name: string): Message {
   const toolCalls = Array.from({ length: count }, (_, i) => ({
     id: `call-${i + 1}`,
     name,
-    // deno-lint-ignore no-explicit-any
     props: { target: String(i) } as any,
   }));
   return {
@@ -64,9 +50,7 @@ const REQUIRED_LEGACY_GROWTH = 1_048_576;
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = sorted.length >> 1;
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 /**
@@ -74,9 +58,7 @@ function median(values: number[]): number {
  * batches absorb one-time warmup (JIT compilation, lazy runtime state)
  * and are discarded; retention reads as growth between the windows.
  */
-function steadyStateMedians(
-  samples: number[],
-): { early: number; late: number } {
+function steadyStateMedians(samples: number[]): { early: number; late: number } {
   const steady = samples.slice(3);
   if (steady.length < 6) {
     throw new Error("steadyStateMedians needs at least 9 batches");
@@ -93,8 +75,8 @@ function formatBytes(bytes: number): string {
 
 /**
  * Runs awaited calls in batches, forcing a full GC after each batch and
- * recording `Deno.memoryUsage().heapUsed`. Forced GC needs the V8 hook
- * supplied by the test task's `--v8-flags=--expose-gc`.
+ * recording `process.memoryUsage().heapUsed`. Forced GC needs the V8 hook
+ * supplied by the `--expose-gc` worker flag in vite.config.ts.
  */
 async function sustainedHeapUsed(
   batches: number,
@@ -105,7 +87,7 @@ async function sustainedHeapUsed(
   if (!forceGc) {
     throw new Error(
       "forced GC is unavailable; run the suite with " +
-        "`--v8-flags=--expose-gc` (the `deno task test` default)",
+        "`--expose-gc` (the vite.config.ts test.execArgv default)",
     );
   }
   const samples: number[] = [];
@@ -120,7 +102,7 @@ async function sustainedHeapUsed(
     forceGc();
     await new Promise((resolve) => setTimeout(resolve, 0));
     forceGc();
-    samples.push(Deno.memoryUsage().heapUsed);
+    samples.push(process.memoryUsage().heapUsed);
   }
   return samples;
 }
@@ -132,10 +114,7 @@ async function sustainedHeapUsed(
  * promise is never removed. Completed calls leave the whole island
  * rooted until the deadline fires — the retention spec 61 fixed.
  */
-function preFixDeadlineCall(
-  fn: () => string,
-  timeout: number,
-): Promise<string> {
+function preFixDeadlineCall(fn: () => string, timeout: number): Promise<string> {
   const signal = AbortSignal.any([AbortSignal.timeout(timeout)]);
   const aborted = new Promise<never>((_, reject) => {
     const rejectOnAbort = () => reject(signal.reason);
@@ -149,45 +128,36 @@ function preFixDeadlineCall(
 /**
  * The comparison test is opt-in: it arms ten thousand real 120 s
  * deadline timers and asserts visible growth, so it stays out of the
- * default suite. `querySync` needs no permission, so runs without
- * `--allow-env` skip it instead of failing to load.
+ * default suite.
  */
 function legacyComparisonRequested(): boolean {
-  const status = Deno.permissions.querySync({
-    name: "env",
-    variable: "HUUMA_TOOL_MEMORY_LEGACY",
-  });
-  return status.state === "granted" &&
-    Deno.env.get("HUUMA_TOOL_MEMORY_LEGACY") === "1";
+  return process.env.HUUMA_TOOL_MEMORY_LEGACY === "1";
 }
 
-Deno.test("callTool unwraps toolOutput into result output and files", async () => {
+test("callTool unwraps toolOutput into result output and files", async () => {
   const screenshot = tool({
     name: "screenshot",
     description: "Take a screenshot.",
     input: object({ target: string() }),
-    fn: () =>
-      toolOutput("captured", [
-        { file: { mimeType: "image/png", data: "aGVsbG8=" } },
-      ]),
+    fn: () => toolOutput("captured", [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }]),
   });
 
-  const messages = await callTool(new Tools([screenshot]))([
-    modelMessageCalling("screenshot"),
-  ]);
+  const messages = await callTool(new Tools([screenshot]))([modelMessageCalling("screenshot")]);
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [{
-    toolResult: {
-      id: "call-1",
-      name: "screenshot",
-      result: { output: "captured" },
-      files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+  expect(toolMessage.contents).toStrictEqual([
+    {
+      toolResult: {
+        id: "call-1",
+        name: "screenshot",
+        result: { output: "captured" },
+        files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
+      },
     },
-  }]);
+  ]);
 });
 
-Deno.test("callTool keeps plain returns unchanged without files", async () => {
+test("callTool keeps plain returns unchanged without files", async () => {
   const lookup = tool({
     name: "lookup",
     description: "Look something up.",
@@ -195,21 +165,21 @@ Deno.test("callTool keeps plain returns unchanged without files", async () => {
     fn: () => "found",
   });
 
-  const messages = await callTool(new Tools([lookup]))([
-    modelMessageCalling("lookup"),
-  ]);
+  const messages = await callTool(new Tools([lookup]))([modelMessageCalling("lookup")]);
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [{
-    toolResult: {
-      id: "call-1",
-      name: "lookup",
-      result: { output: "found" },
+  expect(toolMessage.contents).toStrictEqual([
+    {
+      toolResult: {
+        id: "call-1",
+        name: "lookup",
+        result: { output: "found" },
+      },
     },
-  }]);
+  ]);
 });
 
-Deno.test("callTool does not unwrap plain objects with output and files keys", async () => {
+test("callTool does not unwrap plain objects with output and files keys", async () => {
   const data = {
     output: "captured",
     files: [{ file: { mimeType: "image/png", data: "aGVsbG8=" } }],
@@ -221,21 +191,21 @@ Deno.test("callTool does not unwrap plain objects with output and files keys", a
     fn: () => data,
   });
 
-  const messages = await callTool(new Tools([lookup]))([
-    modelMessageCalling("lookup"),
-  ]);
+  const messages = await callTool(new Tools([lookup]))([modelMessageCalling("lookup")]);
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [{
-    toolResult: {
-      id: "call-1",
-      name: "lookup",
-      result: { output: data },
+  expect(toolMessage.contents).toStrictEqual([
+    {
+      toolResult: {
+        id: "call-1",
+        name: "lookup",
+        result: { output: data },
+      },
     },
-  }]);
+  ]);
 });
 
-Deno.test("callTool maps rejections to error results without files", async () => {
+test("callTool maps rejections to error results without files", async () => {
   const failing = tool({
     name: "failing",
     description: "Always fails.",
@@ -245,21 +215,21 @@ Deno.test("callTool maps rejections to error results without files", async () =>
     },
   });
 
-  const messages = await callTool(new Tools([failing]))([
-    modelMessageCalling("failing"),
-  ]);
+  const messages = await callTool(new Tools([failing]))([modelMessageCalling("failing")]);
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [{
-    toolResult: {
-      id: "call-1",
-      name: "failing",
-      result: { error: "boom" },
+  expect(toolMessage.contents).toStrictEqual([
+    {
+      toolResult: {
+        id: "call-1",
+        name: "failing",
+        result: { error: "boom" },
+      },
     },
-  }]);
+  ]);
 });
 
-Deno.test("callTool bounds overlapping executions to maxConcurrency", async () => {
+test("callTool bounds overlapping executions to maxConcurrency", async () => {
   const events: string[] = [];
   let active = 0;
   let maxActive = 0;
@@ -273,9 +243,7 @@ Deno.test("callTool bounds overlapping executions to maxConcurrency", async () =
       events.push(`start:${target}`);
       // Staggered delays keep every settle on its own tick, so start
       // order stays deterministic without racing equal timers.
-      await new Promise((resolve) =>
-        setTimeout(resolve, 20 + Number(target) * 10)
-      );
+      await new Promise((resolve) => setTimeout(resolve, 20 + Number(target) * 10));
       events.push(`finish:${target}`);
       active -= 1;
       return `done:${target}`;
@@ -286,22 +254,22 @@ Deno.test("callTool bounds overlapping executions to maxConcurrency", async () =
     modelMessageCallingEach(5, "slow"),
   ]);
 
-  assertEquals(maxActive, 2);
-  assertEquals(events.filter((event) => event.startsWith("start:")), [
+  expect(maxActive).toBe(2);
+  expect(events.filter((event) => event.startsWith("start:"))).toStrictEqual([
     "start:0",
     "start:1",
     "start:2",
     "start:3",
     "start:4",
   ]);
-  assertEquals(events.filter((event) => event.startsWith("finish:")), [
+  expect(events.filter((event) => event.startsWith("finish:"))).toStrictEqual([
     "finish:0",
     "finish:1",
     "finish:2",
     "finish:3",
     "finish:4",
   ]);
-  assertEquals(toolResultIds(messages.at(-1) as ToolMessage), [
+  expect(toolResultIds(messages.at(-1) as ToolMessage)).toStrictEqual([
     "call-1",
     "call-2",
     "call-3",
@@ -310,7 +278,7 @@ Deno.test("callTool bounds overlapping executions to maxConcurrency", async () =
   ]);
 });
 
-Deno.test("callTool starts every call before any settles by default", async () => {
+test("callTool starts every call before any settles by default", async () => {
   const events: string[] = [];
   const releasers: Array<(value: string) => void> = [];
   const gated = tool({
@@ -324,35 +292,29 @@ Deno.test("callTool starts every call before any settles by default", async () =
       }),
   });
 
-  const pending = callTool(new Tools([gated]))([
-    modelMessageCallingEach(5, "gated"),
-  ]);
+  const pending = callTool(new Tools([gated]))([modelMessageCallingEach(5, "gated")]);
   // Yield one macrotask: the unbounded batch starts every call on
   // microtasks before any of them can settle.
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assertEquals(events, [
-    "start:0",
-    "start:1",
-    "start:2",
-    "start:3",
-    "start:4",
-  ]);
-  assertEquals(releasers.length, 5);
+  expect(events).toStrictEqual(["start:0", "start:1", "start:2", "start:3", "start:4"]);
+  expect(releasers.length).toBe(5);
 
   for (const release of releasers) release("done");
   const messages = await pending;
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents.map((content) => {
-    if (!("toolResult" in content)) {
-      throw new Error("expected a tool result content");
-    }
-    return content.toolResult.result.output;
-  }), ["done:0", "done:1", "done:2", "done:3", "done:4"]);
+  expect(
+    toolMessage.contents.map((content) => {
+      if (!("toolResult" in content)) {
+        throw new Error("expected a tool result content");
+      }
+      return content.toolResult.result.output;
+    }),
+  ).toStrictEqual(["done:0", "done:1", "done:2", "done:3", "done:4"]);
 });
 
-Deno.test("callTool keeps success and error outcomes aligned per call under the cap", async () => {
+test("callTool keeps success and error outcomes aligned per call under the cap", async () => {
   const flaky = tool({
     name: "flaky",
     description: "Fail odd targets.",
@@ -364,12 +326,12 @@ Deno.test("callTool keeps success and error outcomes aligned per call under the 
     },
   });
 
-  const messages = await callTool(new Tools([flaky]), { maxConcurrency: 2 })(
-    [modelMessageCallingEach(5, "flaky")],
-  );
+  const messages = await callTool(new Tools([flaky]), { maxConcurrency: 2 })([
+    modelMessageCallingEach(5, "flaky"),
+  ]);
 
   const toolMessage = messages.at(-1) as ToolMessage;
-  assertEquals(toolMessage.contents, [
+  expect(toolMessage.contents).toStrictEqual([
     { toolResult: { id: "call-1", name: "flaky", result: { output: "ok:0" } } },
     { toolResult: { id: "call-2", name: "flaky", result: { error: "boom:1" } } },
     { toolResult: { id: "call-3", name: "flaky", result: { output: "ok:2" } } },
@@ -378,18 +340,17 @@ Deno.test("callTool keeps success and error outcomes aligned per call under the 
   ]);
 });
 
-Deno.test("callTool rejects invalid maxConcurrency values", () => {
+test("callTool rejects invalid maxConcurrency values", () => {
   const invalid = [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
   for (const maxConcurrency of invalid) {
-    assertThrows(
-      () => callTool(new Tools([]), { maxConcurrency }),
-      TypeError,
+    expect(() => callTool(new Tools([]), { maxConcurrency })).toThrow(TypeError);
+    expect(() => callTool(new Tools([]), { maxConcurrency })).toThrow(
       "maxConcurrency must be a positive integer",
     );
   }
 });
 
-Deno.test("tool passes a cancellation signal and timeout to its callback", async () => {
+test("tool passes a cancellation signal and timeout to its callback", async () => {
   const controlled = tool({
     name: "controlled",
     description: "Observe controls.",
@@ -399,15 +360,12 @@ Deno.test("tool passes a cancellation signal and timeout to its callback", async
   });
 
   const context = await controlled.call({ target: "page" });
-  assertEquals(context.signal instanceof AbortSignal, true);
-  assertEquals(context.signal.aborted, false);
-  assertEquals(
-    context.timeout,
-    1_000,
-  );
+  expect(context.signal instanceof AbortSignal).toBe(true);
+  expect(context.signal.aborted).toBe(false);
+  expect(context.timeout).toBe(1_000);
 });
 
-Deno.test("tool uses the shortest configured or caller timeout", async () => {
+test("tool uses the shortest configured or caller timeout", async () => {
   let receivedTimeout: number | undefined;
   const controlled = tool({
     name: "controlled",
@@ -421,10 +379,10 @@ Deno.test("tool uses the shortest configured or caller timeout", async () => {
   });
 
   await controlled.call({ target: "page" }, { timeout: 50 });
-  assertEquals(receivedTimeout, 50);
+  expect(receivedTimeout).toBe(50);
 });
 
-Deno.test("tool releases deadline resources when calls settle", async () => {
+test("tool releases deadline resources when calls settle", async () => {
   const quick = tool({
     name: "quick",
     description: "Finishes immediately.",
@@ -446,21 +404,23 @@ Deno.test("tool releases deadline resources when calls settle", async () => {
   for (let index = 0; index < 1_000; index += 1) {
     await quick.call({ target: "page" });
   }
-  await assertRejects(() => failing.call({ target: "page" }), Error, "boom");
+  const error = await failing.call({ target: "page" }).then(
+    () => expect.fail("expected the call to reject"),
+    (e: unknown) => e,
+  );
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toContain("boom");
 
   const after = toolCallResourceSnapshot();
-  assertEquals(after.armedTimeouts - before.armedTimeouts, 1_001);
-  assertEquals(after.clearedTimeouts - before.clearedTimeouts, 1_001);
-  assertEquals(after.addedAbortListeners - before.addedAbortListeners, 1_001);
-  assertEquals(
-    after.removedAbortListeners - before.removedAbortListeners,
-    1_001,
-  );
-  assertEquals(after.activeTimeouts, before.activeTimeouts);
-  assertEquals(after.activeAbortListeners, before.activeAbortListeners);
+  expect(after.armedTimeouts - before.armedTimeouts).toBe(1_001);
+  expect(after.clearedTimeouts - before.clearedTimeouts).toBe(1_001);
+  expect(after.addedAbortListeners - before.addedAbortListeners).toBe(1_001);
+  expect(after.removedAbortListeners - before.removedAbortListeners).toBe(1_001);
+  expect(after.activeTimeouts).toBe(before.activeTimeouts);
+  expect(after.activeAbortListeners).toBe(before.activeAbortListeners);
 });
 
-Deno.test("tool rejects and aborts its signal when its timeout expires", async () => {
+test("tool rejects and aborts its signal when its timeout expires", async () => {
   let receivedSignal: AbortSignal | undefined;
   const before = toolCallResourceSnapshot();
   const hanging = tool({
@@ -474,22 +434,20 @@ Deno.test("tool rejects and aborts its signal when its timeout expires", async (
     },
   });
 
-  await assertRejects(
-    () => hanging.call({ target: "page" }),
-    DOMException,
-    "The operation was aborted due to timeout",
-  );
-  assertEquals(receivedSignal?.aborted, true);
+  const error = await hanging.call({ target: "page" }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(DOMException);
+  expect((error as Error).message).toContain("The operation was aborted due to timeout");
+  expect(receivedSignal?.aborted).toBe(true);
   const after = toolCallResourceSnapshot();
-  assertEquals(after.armedTimeouts - before.armedTimeouts, 1);
-  assertEquals(after.clearedTimeouts - before.clearedTimeouts, 1);
-  assertEquals(after.addedAbortListeners - before.addedAbortListeners, 1);
-  assertEquals(after.removedAbortListeners - before.removedAbortListeners, 1);
-  assertEquals(after.activeTimeouts, before.activeTimeouts);
-  assertEquals(after.activeAbortListeners, before.activeAbortListeners);
+  expect(after.armedTimeouts - before.armedTimeouts).toBe(1);
+  expect(after.clearedTimeouts - before.clearedTimeouts).toBe(1);
+  expect(after.addedAbortListeners - before.addedAbortListeners).toBe(1);
+  expect(after.removedAbortListeners - before.removedAbortListeners).toBe(1);
+  expect(after.activeTimeouts).toBe(before.activeTimeouts);
+  expect(after.activeAbortListeners).toBe(before.activeAbortListeners);
 });
 
-Deno.test("tool sustained load keeps heap flat between forced GCs", async () => {
+test("tool sustained load keeps heap flat between forced GCs", async () => {
   const quick = tool({
     name: "sustained",
     description: "Finishes immediately.",
@@ -500,46 +458,40 @@ Deno.test("tool sustained load keeps heap flat between forced GCs", async () => 
     fn: () => "done",
   });
 
-  const samples = await sustainedHeapUsed(
-    SUSTAINED_BATCHES,
-    SUSTAINED_CALLS_PER_BATCH,
-    () => quick.call({ target: "page" }),
+  const samples = await sustainedHeapUsed(SUSTAINED_BATCHES, SUSTAINED_CALLS_PER_BATCH, () =>
+    quick.call({ target: "page" }),
   );
   const { early, late } = steadyStateMedians(samples);
   const growth = late - early;
-  assert(
-    growth <= ALLOWED_HEAP_GROWTH,
+  expect(
+    growth,
     `sustained calls grew the heap between batch medians ` +
       `(${formatBytes(early)} -> ${formatBytes(late)}, +${formatBytes(growth)}): ` +
       `deadline timers or abort listeners are retained past call completion`,
-  );
+  ).toBeLessThanOrEqual(ALLOWED_HEAP_GROWTH);
 });
 
-Deno.test({
-  name:
-    "pre-fix deadline machinery retains heap under sustained load (comparison)",
-  // Comparison run for the flat-heap test above; documents the growth
-  // the cleanup fix removed. Reproduce on demand with:
-  //   HUUMA_TOOL_MEMORY_LEGACY=1 deno task test src/tools/mod.test.ts
-  ignore: !legacyComparisonRequested(),
-  async fn() {
-    const samples = await sustainedHeapUsed(
-      SUSTAINED_BATCHES,
-      SUSTAINED_CALLS_PER_BATCH,
-      () => preFixDeadlineCall(() => "done", DEFAULT_CLI_TIMEOUT),
+// Comparison run for the flat-heap test above; documents the growth
+// the cleanup fix removed. Reproduce on demand with:
+//   HUUMA_TOOL_MEMORY_LEGACY=1 vp test run src/tools/mod.test.ts
+test.skipIf(!legacyComparisonRequested())(
+  "pre-fix deadline machinery retains heap under sustained load (comparison)",
+  async () => {
+    const samples = await sustainedHeapUsed(SUSTAINED_BATCHES, SUSTAINED_CALLS_PER_BATCH, () =>
+      preFixDeadlineCall(() => "done", DEFAULT_CLI_TIMEOUT),
     );
     const { early, late } = steadyStateMedians(samples);
     const growth = late - early;
-    assert(
-      growth >= REQUIRED_LEGACY_GROWTH,
+    expect(
+      growth,
       `expected pre-fix retention growth between batch medians ` +
         `(${formatBytes(early)} -> ${formatBytes(late)}, +${formatBytes(growth)}): ` +
         `the comparison no longer shows the original leak and needs recalibrating`,
-    );
+    ).toBeGreaterThanOrEqual(REQUIRED_LEGACY_GROWTH);
   },
-});
+);
 
-Deno.test("callTool forwards cancellation and returns an error result", async () => {
+test("callTool forwards cancellation and returns an error result", async () => {
   const controller = new AbortController();
   const waiting = tool({
     name: "waiting",
@@ -547,11 +499,9 @@ Deno.test("callTool forwards cancellation and returns an error result", async ()
     input: object({ target: string() }),
     fn: (_, context) =>
       new Promise<string>((_, reject) => {
-        context.signal.addEventListener(
-          "abort",
-          () => reject(context.signal.reason),
-          { once: true },
-        );
+        context.signal.addEventListener("abort", () => reject(context.signal.reason), {
+          once: true,
+        });
       }),
   });
 
@@ -564,13 +514,10 @@ Deno.test("callTool forwards cancellation and returns an error result", async ()
   const toolMessage = messages.at(-1) as ToolMessage;
   const result = toolMessage.contents[0];
   if (!("toolResult" in result)) throw new Error("Expected a tool result");
-  assertEquals(
-    result.toolResult.result.error,
-    "run cancelled",
-  );
+  expect(result.toolResult.result.error).toBe("run cancelled");
 });
 
-Deno.test("tool rejects invalid timeout configuration", () => {
+test("tool rejects invalid timeout configuration", () => {
   for (const timeout of [-1, Number.POSITIVE_INFINITY, Number.NaN]) {
     try {
       tool({
@@ -582,12 +529,12 @@ Deno.test("tool rejects invalid timeout configuration", () => {
       });
       throw new Error("Expected constructor to reject invalid timeout");
     } catch (error) {
-      assertInstanceOf(error, TypeError);
+      expect(error).toBeInstanceOf(TypeError);
     }
   }
 });
 
-Deno.test("tool rejects a zero timeout before invoking its callback", async () => {
+test("tool rejects a zero timeout before invoking its callback", async () => {
   let invoked = false;
   const controlled = tool({
     name: "controlled",
@@ -599,15 +546,13 @@ Deno.test("tool rejects a zero timeout before invoking its callback", async () =
     },
   });
 
-  await assertRejects(
-    () => controlled.call({ target: "page" }, { timeout: 0 }),
-    DOMException,
-    "The tool operation timed out",
-  );
-  assertEquals(invoked, false);
+  const error = await controlled.call({ target: "page" }, { timeout: 0 }).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(DOMException);
+  expect((error as Error).message).toContain("The tool operation timed out");
+  expect(invoked).toBe(false);
 });
 
-Deno.test("tool memoizes its input's JSON Schema on first access", () => {
+test("tool memoizes its input's JSON Schema on first access", () => {
   const wrapped = object({ target: string() });
   let conversions = 0;
   const counting: Schema<unknown> = {
@@ -629,16 +574,16 @@ Deno.test("tool memoizes its input's JSON Schema on first access", () => {
 
   const first = memoized.jsonSchema;
   const second = memoized.jsonSchema;
-  assertEquals(conversions, 1);
-  assertEquals(first === second, true);
-  assertEquals(first, {
+  expect(conversions).toBe(1);
+  expect(first === second).toBe(true);
+  expect(first).toStrictEqual({
     type: "object",
     properties: { target: { type: "string" } },
     required: ["target"],
   });
 });
 
-Deno.test("tool freezes its cached JSON Schema against mutation", () => {
+test("tool freezes its cached JSON Schema against mutation", () => {
   const frozen = tool({
     name: "frozen",
     description: "Guard the shared schema.",
@@ -647,16 +592,15 @@ Deno.test("tool freezes its cached JSON Schema against mutation", () => {
   });
 
   const schema = frozen.jsonSchema;
-  assertThrows(() => {
+  expect(() => {
     (schema as { type?: string }).type = "number";
-  }, TypeError);
-  assertThrows(() => {
+  }).toThrow(TypeError);
+  expect(() => {
     const properties = schema.properties as Record<string, unknown>;
     (properties.target as { type?: string }).type = "number";
-  }, TypeError);
-  assertEquals(frozen.jsonSchema.type, "object");
-  assertEquals(
-    (frozen.jsonSchema.properties as Record<string, unknown>).target,
-    { type: "string" },
-  );
+  }).toThrow(TypeError);
+  expect(frozen.jsonSchema.type).toBe("object");
+  expect((frozen.jsonSchema.properties as Record<string, unknown>).target).toStrictEqual({
+    type: "string",
+  });
 });

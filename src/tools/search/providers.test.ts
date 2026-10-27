@@ -1,4 +1,6 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { expect, test } from "vite-plus/test";
 import { BraveSearchProvider } from "./brave.ts";
 import { OllamaSearchProvider } from "./ollama.ts";
 import { PerplexitySearchProvider } from "./perplexity.ts";
@@ -10,7 +12,7 @@ import type { SearchProvider } from "./types.ts";
  * request) and non-OK responses must have their bodies cancelled before
  * throwing (an unconsumed body pins the connection until finalized).
  *
- * Note: this runtime no longer exposes Deno.resources(), so the leak
+ * Note: the runtime exposes no open-resource table, so the leak
  * assertion uses a tracked body stream whose cancel callback fires only
  * when the provider explicitly cancels the response body.
  */
@@ -42,11 +44,7 @@ async function withFetchStub(
 }
 
 /** Resolve once the condition holds; reject with `message` after `timeoutMs`. */
-function pollUntil(
-  condition: () => boolean,
-  message: string,
-  timeoutMs = 2_000,
-): Promise<void> {
+function pollUntil(condition: () => boolean, message: string, timeoutMs = 2_000): Promise<void> {
   const started = Date.now();
   return new Promise<void>((resolve, reject) => {
     const tick = () => {
@@ -59,7 +57,7 @@ function pollUntil(
 }
 
 for (const [name, make] of providers) {
-  Deno.test(`${name} - forwards the cancellation signal to fetch`, async () => {
+  test(`${name} - forwards the cancellation signal to fetch`, async () => {
     let received: AbortSignal | null | undefined;
 
     await withFetchStub(
@@ -71,36 +69,31 @@ for (const [name, make] of providers) {
         const provider = make();
         const controller = new AbortController();
         await provider.search("test", { signal: controller.signal });
-        assertEquals(
-          received,
+        expect(received, "the provider did not pass the caller's signal to fetch").toBe(
           controller.signal,
-          "the provider did not pass the caller's signal to fetch",
         );
       },
     );
   });
 
-  Deno.test(`${name} - aborting the signal cancels the in-flight request`, async () => {
+  test(`${name} - aborting the signal cancels the in-flight request`, async () => {
     let handled = false;
     let clientGone = false;
 
     // Hangs until the client disconnects; the timer is a fallback so a
     // provider that ignores the signal still cannot wedge the test.
-    const server = Deno.serve({ port: 0, onListen: () => {} }, (request) => {
+    const server = createServer((_request, response) => {
       handled = true;
-      return new Promise<Response>((resolve) => {
-        const fallback = setTimeout(
-          () => resolve(new Response("late", { status: 500 })),
-          3_000,
-        );
-        request.signal.addEventListener("abort", () => {
-          clearTimeout(fallback);
-          clientGone = true;
-          resolve(new Response("gone", { status: 499 }));
-        });
+      const fallback = setTimeout(() => {
+        response.writeHead(500).end("late");
+      }, 3_000);
+      response.on("close", () => {
+        clearTimeout(fallback);
+        if (!response.writableFinished) clientGone = true;
       });
     });
-    const port = server.addr.port;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
 
     // Redirect provider traffic to the local server; init (including the
     // provider-supplied signal) passes through untouched.
@@ -113,24 +106,20 @@ for (const [name, make] of providers) {
       const controller = new AbortController();
       const pending = provider.search("test", { signal: controller.signal });
 
-      await pollUntil(
-        () => handled,
-        "the request never reached the test server",
-      );
+      await pollUntil(() => handled, "the request never reached the test server");
       controller.abort();
 
-      await assertRejects(() => pending, DOMException);
-      await pollUntil(
-        () => clientGone,
-        "the test server never observed the connection close",
-      );
+      const error = await pending.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DOMException);
+      await pollUntil(() => clientGone, "the test server never observed the connection close");
     } finally {
       globalThis.fetch = original;
-      await server.shutdown();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
-  Deno.test(`${name} - cancels the response body before throwing on a non-OK status`, async () => {
+  test(`${name} - cancels the response body before throwing on a non-OK status`, async () => {
     let cancelled = false;
     const body = new ReadableStream({
       start(controller) {
@@ -149,15 +138,14 @@ for (const [name, make] of providers) {
       () => Promise.resolve(response),
       async () => {
         const provider = make();
-        await assertRejects(
-          () => provider.search("test"),
-          Error,
-          "Search failed: 502",
+        const error = await provider.search("test").then(
+          () => expect.fail("expected the search to reject"),
+          (e: unknown) => e,
         );
-        assertEquals(
-          cancelled,
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("Search failed: 502");
+        expect(cancelled, "the provider threw without cancelling the error response body").toBe(
           true,
-          "the provider threw without cancelling the error response body",
         );
       },
     );

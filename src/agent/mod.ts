@@ -3,12 +3,12 @@
  *
  * @example
  * ```typescript
- * import { agent } from "jsr:@huuma/ai/agent";
- * import { openai } from "jsr:@huuma/ai/models/openai";
- * import { cli } from "jsr:@huuma/ai/tools";
+ * import { agent } from "@huuma/ai/agent";
+ * import { openai } from "@huuma/ai/models/openai";
+ * import { cli } from "@huuma/ai/tools";
  *
  * const assistant = agent({
- *   model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+ *   model: openai({ apiKey: process.env.OPENAI_API_KEY }),
  *   modelId: "gpt-4o-mini",
  *   systemPrompt: "You are a helpful assistant.",
  *   tools: [cli({ allowedCommands: ["deno"] })],
@@ -34,24 +34,13 @@
  *
  * @module
  */
-import { mapSettled, validateMaxConcurrency } from "@/tools/concurrency.ts";
-import {
-  callTool,
-  tool,
-  type Tool,
-  ToolOutput,
-  Tools,
-} from "@/tools/mod.ts";
-import {
-  type BaseModel,
-  type ModelResult,
-  type ModelUsage,
-  sumModelUsage,
-} from "@/model/mod.ts";
-import { deadlineFrom } from "@/model/deadline.ts";
-export type { BaseModel, ModelResult, ModelUsage } from "@/model/mod.ts";
-export { sumModelUsage } from "@/model/mod.ts";
-export type { JSONSchema, Schema, Tool } from "@/tools/mod.ts";
+import { mapSettled, validateMaxConcurrency } from "../tools/concurrency.ts";
+import { callTool, tool, type Tool, ToolOutput, Tools } from "../tools/mod.ts";
+import { type BaseModel, type ModelResult, type ModelUsage, sumModelUsage } from "../model/mod.ts";
+import { deadlineFrom } from "../model/deadline.ts";
+export type { BaseModel, ModelResult, ModelUsage } from "../model/mod.ts";
+export { sumModelUsage } from "../model/mod.ts";
+export type { JSONSchema, Schema, Tool } from "../tools/mod.ts";
 export type {
   FileContent,
   Message,
@@ -64,13 +53,8 @@ export type {
   ToolMessage,
   ToolResultContent,
   UserMessage,
-} from "@/mod.ts";
-import type {
-  FileContent,
-  Message,
-  TextContent,
-  ToolResultContent,
-} from "@/mod.ts";
+} from "../mod.ts";
+import type { FileContent, Message, TextContent, ToolResultContent } from "../mod.ts";
 import { enums, object, string } from "@huuma/validate";
 
 /** Reserved name of the opt-in control tool that ends a run with a
@@ -89,16 +73,14 @@ export interface FinishTurnOutput {
 const finishTurnTool = tool({
   name: FINISH_TURN_TOOL,
   description:
-    "End the current run with a structured outcome. Call this exactly once per turn when you are blocked on user input (outcome: \"question\") or when the requested work is complete (outcome: \"completion\"). The message field carries the natural-language question or completion summary intended for the user.",
+    'End the current run with a structured outcome. Call this exactly once per turn when you are blocked on user input (outcome: "question") or when the requested work is complete (outcome: "completion"). The message field carries the natural-language question or completion summary intended for the user.',
   input: object({
     outcome: enums(["question", "completion"]),
     message: string(),
   }),
   fn: ({ outcome, message }: { outcome: FinishTurnOutcome; message: string }): FinishTurnOutput => {
     if (message.trim().length === 0) {
-      throw new Error(
-        "finish_turn message must contain at least one non-whitespace character",
-      );
+      throw new Error("finish_turn message must contain at least one non-whitespace character");
     }
     return { outcome, message };
   },
@@ -117,8 +99,7 @@ function isSuccessfulFinishTurn(content: ToolResultContent): boolean {
 function endsWithSuccessfulFinishTurn(message: Message | undefined): boolean {
   if (!message || message.role !== "tool") return false;
   return message.contents.some(
-    (content) =>
-      "toolResult" in content && isSuccessfulFinishTurn(content),
+    (content) => "toolResult" in content && isSuccessfulFinishTurn(content),
   );
 }
 
@@ -146,25 +127,19 @@ export const DEFAULT_MAX_MODEL_CALLS = 100;
  * `Infinity` disables the cap; anything else must be a positive integer. */
 function validateMaxModelCalls(maxModelCalls: number | undefined): void {
   if (
-    maxModelCalls !== undefined && maxModelCalls !== Infinity &&
+    maxModelCalls !== undefined &&
+    maxModelCalls !== Infinity &&
     (!Number.isInteger(maxModelCalls) || maxModelCalls < 1)
   ) {
-    throw new TypeError(
-      "maxModelCalls must be a positive integer or Infinity",
-    );
+    throw new TypeError("maxModelCalls must be a positive integer or Infinity");
   }
 }
 
 /** Validate a `modelTimeout` option. `undefined` means "not configured";
  * anything else must be a finite, non-negative number. */
 function validateModelTimeout(modelTimeout: number | undefined): void {
-  if (
-    modelTimeout !== undefined &&
-    (!Number.isFinite(modelTimeout) || modelTimeout < 0)
-  ) {
-    throw new TypeError(
-      "modelTimeout must be a finite, non-negative number",
-    );
+  if (modelTimeout !== undefined && (!Number.isFinite(modelTimeout) || modelTimeout < 0)) {
+    throw new TypeError("modelTimeout must be a finite, non-negative number");
   }
 }
 
@@ -189,9 +164,7 @@ function raceAbort<R>(promise: Promise<R>, signal?: AbortSignal): Promise<R> {
     const onAbort = () => reject(runAbortReason(signal));
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() =>
-      signal.removeEventListener("abort", onAbort)
-    );
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
   });
 }
 
@@ -224,10 +197,7 @@ function lastToolCallName(messages: Message[]): string | undefined {
  * The handling of a rejected callback is governed by
  * {@link AgentOptions.onMessageError} / {@link RunOptions.onMessageError}.
  */
-export type OnMessage = (
-  message: Message,
-  usage?: ModelUsage,
-) => void | Promise<void>;
+export type OnMessage = (message: Message, usage?: ModelUsage) => void | Promise<void>;
 
 /** Policy for handling {@link OnMessage} callback rejections during a run.
  *
@@ -283,7 +253,6 @@ export interface AgentOptions<T extends string> {
   /** Tools available to the agent. A tool named `finish_turn` is
    * reserved by the runtime and rejected at construction; enable the
    * built-in control tool with {@link finishTurn} instead. */
-  // deno-lint-ignore no-explicit-any
   tools?: Tool<any>[];
   /** System prompt sent with each model request. */
   systemPrompt: string;
@@ -347,20 +316,18 @@ export class Agent<T extends string> {
   #maxModelCalls?: number;
   #modelTimeout?: number;
   /** Create an agent instance. */
-  constructor(
-    {
-      model,
-      modelId,
-      tools,
-      systemPrompt,
-      onMessage,
-      onMessageError,
-      finishTurn,
-      maxConcurrency,
-      maxModelCalls,
-      modelTimeout,
-    }: AgentOptions<T>,
-  ) {
+  constructor({
+    model,
+    modelId,
+    tools,
+    systemPrompt,
+    onMessage,
+    onMessageError,
+    finishTurn,
+    maxConcurrency,
+    maxModelCalls,
+    modelTimeout,
+  }: AgentOptions<T>) {
     this.#model = model;
     this.#modelId = modelId;
     this.#systemPrompt = systemPrompt ?? "";
@@ -403,28 +370,24 @@ export class Agent<T extends string> {
     history: Message[] = [],
     options?: RunOptions,
   ): Promise<Message[]> {
-    const maxConcurrency = options?.maxConcurrency ??
-      this.#maxConcurrency;
+    const maxConcurrency = options?.maxConcurrency ?? this.#maxConcurrency;
     validateMaxConcurrency(maxConcurrency);
     validateMaxModelCalls(options?.maxModelCalls);
-    const configuredCaps = [this.#maxModelCalls, options?.maxModelCalls]
-      .filter((cap): cap is number => cap !== undefined);
-    const maxModelCalls = configuredCaps.length > 0
-      ? Math.min(...configuredCaps)
-      : DEFAULT_MAX_MODEL_CALLS;
+    const configuredCaps = [this.#maxModelCalls, options?.maxModelCalls].filter(
+      (cap): cap is number => cap !== undefined,
+    );
+    const maxModelCalls =
+      configuredCaps.length > 0 ? Math.min(...configuredCaps) : DEFAULT_MAX_MODEL_CALLS;
     validateModelTimeout(options?.modelTimeout);
-    const configuredModelTimeouts = [
-      this.#modelTimeout,
-      options?.modelTimeout,
-    ].filter((timeout): timeout is number => timeout !== undefined);
-    const modelTimeout = configuredModelTimeouts.length > 0
-      ? Math.min(...configuredModelTimeouts)
-      : undefined;
+    const configuredModelTimeouts = [this.#modelTimeout, options?.modelTimeout].filter(
+      (timeout): timeout is number => timeout !== undefined,
+    );
+    const modelTimeout =
+      configuredModelTimeouts.length > 0 ? Math.min(...configuredModelTimeouts) : undefined;
     const signal = options?.signal;
     throwIfAborted(signal);
     const onMessage = options?.onMessage ?? this.#onMessage;
-    const onMessageError = options?.onMessageError ??
-      this.#onMessageError ?? "warn";
+    const onMessageError = options?.onMessageError ?? this.#onMessageError ?? "warn";
     let runUsage: ModelUsage | undefined;
     const emit = async (...messages: Message[]) => {
       for (const message of messages) {
@@ -496,11 +459,7 @@ export class Agent<T extends string> {
       if (last?.role !== "model" || !last.toolCalls?.length) break;
 
       throwIfAborted(signal);
-      const updated = await this.#executeToolCalls(
-        messages,
-        maxConcurrency,
-        signal,
-      );
+      const updated = await this.#executeToolCalls(messages, maxConcurrency, signal);
       await emit(...updated.slice(messages.length));
       messages = updated;
 
@@ -539,9 +498,7 @@ export class Agent<T extends string> {
     const toolCalls = lastMessage.toolCalls;
     if (!toolCalls?.length) return messages;
 
-    const finishTurnCount = toolCalls.filter((tc) =>
-      tc.name === FINISH_TURN_TOOL
-    ).length;
+    const finishTurnCount = toolCalls.filter((tc) => tc.name === FINISH_TURN_TOOL).length;
     if (!this.#finishTurn || finishTurnCount <= 1) {
       return await callTool(this.#tools, { maxConcurrency, signal })(messages);
     }

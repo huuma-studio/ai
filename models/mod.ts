@@ -3,9 +3,9 @@
  *
  * @example
  * ```typescript
- * import { openai } from "jsr:@huuma/ai/models/openai";
+ * import { openai } from "@huuma/ai/models/openai";
  *
- * const model = openai({ apiKey: Deno.env.get("OPENAI_API_KEY") });
+ * const model = openai({ apiKey: process.env.OPENAI_API_KEY });
  * ```
  *
  * @module

@@ -4,7 +4,7 @@
  *
  * @example
  * ```typescript
- * import { step, workflow } from "jsr:@huuma/ai/workflow";
+ * import { step, workflow } from "@huuma/ai/workflow";
  *
  * const double = step((n: number) => n * 2);
  * const increment = step((n: number) => n + 1);
@@ -77,9 +77,7 @@ export class Workflow<T> {
   #maxSteps?: number;
 
   /** Create a workflow instance. */
-  constructor(
-    { name, description, start, state, maxSteps }: WorkflowOptions<T>,
-  ) {
+  constructor({ name, description, start, state, maxSteps }: WorkflowOptions<T>) {
     this.#name = name;
     this.#description = description;
     this.#start = start;
@@ -211,16 +209,18 @@ export class Decision<T> implements Callable<T> {
   #then: Callable<T>;
   #else: Callable<T>;
   /** Create a decision with condition, then branch, and else branch. */
-  constructor(
-    { condition, then: then, else: _else }: {
-      /** Predicate used to choose a branch. */
-      condition: (state: T) => Promise<boolean> | boolean;
-      /** Branch executed when the condition is true. */
-      then: Callable<T>;
-      /** Branch executed when the condition is false. */
-      else: Callable<T>;
-    },
-  ) {
+  constructor({
+    condition,
+    then: then,
+    else: _else,
+  }: {
+    /** Predicate used to choose a branch. */
+    condition: (state: T) => Promise<boolean> | boolean;
+    /** Branch executed when the condition is true. */
+    then: Callable<T>;
+    /** Branch executed when the condition is false. */
+    else: Callable<T>;
+  }) {
     this.#condition = condition;
     this.#then = then;
     this.#else = _else;

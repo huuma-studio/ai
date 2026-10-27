@@ -1,46 +1,41 @@
-import {
-  assertEquals,
-  assertMatch,
-  assertNotEquals,
-  assertThrows,
-} from "@std/assert";
-import { modelToolName, validateServerName } from "@/tools/mcp/naming.ts";
+import { expect, test } from "vite-plus/test";
+import { modelToolName, validateServerName } from "./naming.ts";
 
 const VALID = /^[a-zA-Z0-9_-]{1,64}$/;
 
-Deno.test("validateServerName - accepts provider-safe names", () => {
+test("validateServerName - accepts provider-safe names", () => {
   validateServerName("github");
   validateServerName("my-srv_2");
 });
 
-Deno.test("validateServerName - rejects unsafe names", () => {
-  assertThrows(() => validateServerName("my server"), RangeError);
-  assertThrows(() => validateServerName("srv.1"), RangeError);
+test("validateServerName - rejects unsafe names", () => {
+  expect(() => validateServerName("my server")).toThrow(RangeError);
+  expect(() => validateServerName("srv.1")).toThrow(RangeError);
 });
 
-Deno.test("modelToolName - plain prefix", () => {
-  assertEquals(modelToolName("github", "create_issue"), "github_create_issue");
+test("modelToolName - plain prefix", () => {
+  expect(modelToolName("github", "create_issue")).toBe("github_create_issue");
 });
 
-Deno.test("modelToolName - sanitizes characters providers reject", () => {
-  assertEquals(modelToolName("srv", "repo.search"), "srv_repo_search");
+test("modelToolName - sanitizes characters providers reject", () => {
+  expect(modelToolName("srv", "repo.search")).toBe("srv_repo_search");
 });
 
-Deno.test("modelToolName - caps over-long names at exactly 64", () => {
+test("modelToolName - caps over-long names at exactly 64", () => {
   const name = modelToolName("server", "a".repeat(80));
-  assertEquals(name.length, 64);
-  assertMatch(name, VALID);
+  expect(name.length).toBe(64);
+  expect(name).toMatch(VALID);
 });
 
-Deno.test("modelToolName - long names sharing a prefix stay distinct", () => {
+test("modelToolName - long names sharing a prefix stay distinct", () => {
   const shared = "a".repeat(70);
   const one = modelToolName("server", `${shared}_one`);
   const two = modelToolName("server", `${shared}_two`);
-  assertNotEquals(one, two);
-  assertEquals(one.slice(0, 60), two.slice(0, 60));
+  expect(one).not.toStrictEqual(two);
+  expect(one.slice(0, 60)).toBe(two.slice(0, 60));
 });
 
-Deno.test("modelToolName - deterministic across calls", () => {
+test("modelToolName - deterministic across calls", () => {
   const tool = "b".repeat(90);
-  assertEquals(modelToolName("server", tool), modelToolName("server", tool));
+  expect(modelToolName("server", tool)).toBe(modelToolName("server", tool));
 });

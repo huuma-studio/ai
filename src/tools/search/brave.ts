@@ -7,11 +7,8 @@ export class BraveSearchProvider implements SearchProvider {
     this.#apiKey = apiKey;
   }
 
-  async search(
-    query: string,
-    options?: SearchOptions,
-  ): Promise<SearchResponse> {
-    const apiKey = this.#apiKey ?? Deno.env.get("BRAVE_API_KEY");
+  async search(query: string, options?: SearchOptions): Promise<SearchResponse> {
+    const apiKey = this.#apiKey ?? process.env.BRAVE_API_KEY;
 
     if (!apiKey) {
       throw new Error("Brave API Key is required");
@@ -25,7 +22,7 @@ export class BraveSearchProvider implements SearchProvider {
 
     const response = await fetch(url.toString(), {
       headers: {
-        "Accept": "application/json",
+        Accept: "application/json",
         "X-Subscription-Token": apiKey,
       },
       signal: options?.signal,
@@ -35,14 +32,11 @@ export class BraveSearchProvider implements SearchProvider {
       // Cancel the body so an unconsumed response does not pin the
       // connection until it is finalized.
       await response.body?.cancel();
-      throw new Error(
-        `Brave Search failed: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Brave Search failed: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
 
-    // deno-lint-ignore no-explicit-any
     const results = (data.web?.results || []).map((item: any) => ({
       title: item.title,
       link: item.url,

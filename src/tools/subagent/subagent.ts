@@ -1,7 +1,7 @@
 import { object, string } from "@huuma/validate";
-import { Tool } from "@/tools/mod.ts";
-import type { Agent } from "@/agent/mod.ts";
-import type { Message, TextContent } from "@/mod.ts";
+import { Tool } from "../mod.ts";
+import type { Agent } from "../../agent/mod.ts";
+import type { Message, TextContent } from "../../mod.ts";
 
 /** Options for configuring the subagent tool. */
 export interface SubagentToolOptions<T extends string> {
@@ -37,12 +37,12 @@ function finalText(messages: Message[]): string {
  *
  * @example
  * ```typescript
- * import { agent } from "jsr:@huuma/ai/agent";
- * import { openai } from "jsr:@huuma/ai/models/openai";
- * import { cli, subagent } from "jsr:@huuma/ai/tools";
+ * import { agent } from "@huuma/ai/agent";
+ * import { openai } from "@huuma/ai/models/openai";
+ * import { cli, subagent } from "@huuma/ai/tools";
  *
  * const researcher = agent({
- *   model: openai({ apiKey: Deno.env.get("OPENAI_API_KEY") }),
+ *   model: openai({ apiKey: process.env.OPENAI_API_KEY }),
  *   modelId: "gpt-5.5",
  *   systemPrompt: "You research topics and answer concisely.",
  *   tools: [cli({ allowedCommands: ["deno"] })],
@@ -59,10 +59,11 @@ function finalText(messages: Message[]): string {
  * @param options Configuration including the tool name, description, and sub-agent.
  * @returns A {@link Tool} that runs the sub-agent and returns its final assistant text.
  */
-export function subagent<T extends string>(
-  { name, description, agent }: SubagentToolOptions<T>,
-  // deno-lint-ignore no-explicit-any
-): Tool<any, string> {
+export function subagent<T extends string>({
+  name,
+  description,
+  agent,
+}: SubagentToolOptions<T>): Tool<any, string> {
   return new Tool({
     name,
     description,

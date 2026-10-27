@@ -3,10 +3,13 @@
  *
  * @module
  */
+import type { Stats } from "node:fs";
+import { type FileHandle, open, stat } from "node:fs/promises";
+import { hasErrorCode, IS_A_DIRECTORY, NOT_FOUND, PERMISSION_DENIED } from "./fs_errors.ts";
 
 /** A regular file opened for reading, and its size when it was opened. */
 export interface OpenedFile {
-  file: Deno.FsFile;
+  file: FileHandle;
   size: number;
 }
 
@@ -26,19 +29,16 @@ export interface OpenedFile {
  * @param subject What the path is expected to be, e.g. `File` or `Image`,
  * naming it in the not-found message.
  */
-export async function openRegularFile(
-  path: string,
-  subject = "File",
-): Promise<OpenedFile> {
+export async function openRegularFile(path: string, subject = "File"): Promise<OpenedFile> {
   try {
-    assertRegularFile(await Deno.stat(path), path);
-    const file = await Deno.open(path, { read: true });
+    assertRegularFile(await stat(path), path);
+    const file = await open(path, "r");
     try {
       const info = await file.stat();
       assertRegularFile(info, path);
       return { file, size: info.size };
     } catch (error) {
-      file.close();
+      await file.close();
       throw error;
     }
   } catch (error) {
@@ -52,30 +52,24 @@ export async function openRegularFile(
  * @param subject What the path was expected to be, e.g. `File` or `Image`,
  * naming it in the not-found message.
  */
-export function mapReadError(
-  error: unknown,
-  path: string,
-  subject = "File",
-): unknown {
-  if (error instanceof Deno.errors.NotFound) {
+export function mapReadError(error: unknown, path: string, subject = "File"): unknown {
+  if (hasErrorCode(error, NOT_FOUND)) {
     return new Error(`${subject} not found: ${path}`);
   }
-  if (error instanceof Deno.errors.PermissionDenied) {
-    return new Error(
-      `Permission denied: ${path}. Make sure to run with --allow-read.`,
-    );
+  if (hasErrorCode(error, ...PERMISSION_DENIED)) {
+    return new Error(`Permission denied: ${path}`);
   }
-  if (error instanceof Deno.errors.IsADirectory) {
+  if (hasErrorCode(error, IS_A_DIRECTORY)) {
     return new Error(`Path is a directory, not a file: ${path}`);
   }
   return error;
 }
 
-function assertRegularFile(info: Deno.FileInfo, path: string): void {
-  if (info.isDirectory) {
+function assertRegularFile(info: Stats, path: string): void {
+  if (info.isDirectory()) {
     throw new Error(`Path is a directory, not a file: ${path}`);
   }
-  if (!info.isFile) {
+  if (!info.isFile()) {
     throw new Error(`Path is not a regular file: ${path}`);
   }
 }
