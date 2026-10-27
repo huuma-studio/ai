@@ -1,20 +1,64 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "vite-plus/test";
+import { afterEach, expect, test } from "vite-plus/test";
 // Dev-only SDK import for the pre-built transport; publish excludes tests.
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mcp, type McpTransport } from "./mcp.ts";
 
 const FIXTURE = fileURLToPath(new URL("./testdata/server.ts", import.meta.url));
 
+// Every child here writes its PID to the file named by its last argument,
+// so each test can check that the child exited: close(), a failed
+// handshake and a cancelled one must all terminate it.
+const WRITE_PID = `require("node:fs").writeFileSync(process.argv.at(-1), String(process.pid));`;
+
+const tempDirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+/** A path for a child's PID file, in a temp dir removed after the test. */
+async function pidFilePath(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "huuma-ai-mcp-"));
+  tempDirs.push(dir);
+  return join(dir, "pid");
+}
+
+/** Waits up to 5 s for the process whose PID is in `pidFile` to exit. */
+async function expectExited(pidFile: string): Promise<void> {
+  const pid = Number(await readFile(pidFile, "utf8"));
+  expect(pid, "child wrote no PID").toBeGreaterThan(0);
+  const deadline = Date.now() + 5_000;
+  while (isRunning(pid)) {
+    if (Date.now() > deadline) {
+      process.kill(pid, "SIGKILL");
+      expect.fail(`child ${pid} still running 5 s after cleanup`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 // Guards the child-process path (spawn, stdio framing) end to end. Node
 // strips the fixture's TypeScript types natively, so it runs without a
 // loader. close() must terminate the child.
 test("mcp - stdio round-trip against a child-process server", async () => {
+  const pidFile = await pidFilePath();
   const fixture = await mcp({
     name: "fixture",
     transport: {
       command: process.execPath,
-      args: [FIXTURE],
+      args: [FIXTURE, pidFile],
     },
   });
 
@@ -29,12 +73,14 @@ test("mcp - stdio round-trip against a child-process server", async () => {
   } finally {
     await fixture.close();
   }
+  await expectExited(pidFile);
 });
 
 // A process that speaks JSON-RPC but rejects the MCP handshake: the child
 // is already running when connect() fails, so connect() must close the
 // transport rather than leak the child.
 const NOT_AN_MCP_SERVER = `
+  ${WRITE_PID}
   let buffer = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => {
@@ -55,15 +101,17 @@ const NOT_AN_MCP_SERVER = `
 `;
 
 test("mcp - stdio child is cleaned up when the handshake fails", async () => {
+  const pidFile = await pidFilePath();
   await expect(
     mcp({
       name: "broken",
       transport: {
         command: process.execPath,
-        args: ["--eval", NOT_AN_MCP_SERVER],
+        args: ["--eval", NOT_AN_MCP_SERVER, pidFile],
       },
     }),
   ).rejects.toThrow();
+  await expectExited(pidFile);
 });
 
 /**
@@ -99,6 +147,7 @@ async function firstStderrOutput(
 // A child that prints to stderr, then keeps stdin open forever without ever
 // answering `initialize`, holding the handshake open until the caller aborts.
 const STALLING_SERVER = `
+  ${WRITE_PID}
   process.stderr.write("booting slowly\\n");
   process.stdin.resume(); // never reply
 `;
@@ -110,9 +159,10 @@ test("mcp - aborting the stdio handshake rejects with the reason and cleans up t
   // listeners run in registration order — so once the test sees the
   // output, the client has already captured it and the stderr-enrichment
   // path is live when the abort lands.
+  const pidFile = await pidFilePath();
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--eval", STALLING_SERVER],
+    args: ["--eval", STALLING_SERVER, pidFile],
     stderr: "pipe",
   });
   const controller = new AbortController();
@@ -133,6 +183,7 @@ test("mcp - aborting the stdio handshake rejects with the reason and cleans up t
   // outlive the rejection.
   const error = await pending.catch((e: unknown) => e);
   expect(error).toBe(reason);
+  await expectExited(pidFile);
 });
 
 // Prints a diagnostic, then rejects the MCP handshake like
@@ -144,9 +195,10 @@ const FAILING_SERVER = `
 
 test("mcp - an abort during cleanup keeps a failed handshake's stderr diagnostics", async () => {
   const controller = new AbortController();
+  const pidFile = await pidFilePath();
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ["--eval", FAILING_SERVER],
+    args: ["--eval", FAILING_SERVER, pidFile],
     stderr: "pipe",
   });
   // The handshake fails on its own; the abort must land while connect()
@@ -176,4 +228,5 @@ test("mcp - an abort during cleanup keeps a failed handshake's stderr diagnostic
   const { message } = error as Error;
   expect(message).toContain("not an MCP server");
   expect(message).toContain("Child stderr: missing libnss3");
+  await expectExited(pidFile);
 });

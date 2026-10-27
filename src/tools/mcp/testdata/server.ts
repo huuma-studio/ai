@@ -6,7 +6,11 @@
  * Run directly by node (which strips types natively), so it must stick to
  * erasable TypeScript syntax. Uses the SDK's low-level Server so no schema
  * library is needed.
+ *
+ * An optional first argument names a file the server writes its PID to,
+ * so tests can check that the process exits.
  */
+import { writeFileSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -88,5 +92,8 @@ server.setRequestHandler(
     }
   },
 );
+
+const pidFile = process.argv[2];
+if (pidFile) writeFileSync(pidFile, String(process.pid));
 
 await server.connect(new StdioServerTransport());
