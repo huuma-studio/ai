@@ -393,17 +393,20 @@ firing, cancels the MCP request (the server receives
 initial tool listing, and `refresh({ signal })` cancels a re-listing,
 keeping the previous tools.
 
-The client implements the **MCP 2026-07-28** specification revision via
-`@modelcontextprotocol/sdk@^1.30.0`. Tool definitions with a `title` field
-have it surfaced in the model-visible description. `resource_link` content
+The client is built on `@modelcontextprotocol/client` 2.x and connects with
+the 2025 initialize handshake, which every MCP server supports. Tool
+definitions with a `title` field have it surfaced in the model-visible
+description. `resource_link` content
 blocks carry optional `description`, `size`, `title`, and `icons` fields.
 
-**MRTR (Model Requesting Tool Result):** when a server returns
-`resultType: "input_required"`, the tool call throws an error with the
+**MRTR (Model Requesting Tool Result):** when a server returns an
+`input_required` result, the tool call throws an error with the
 server's text content (or a descriptive fallback) rather than silently
 returning incomplete data. This client has no user-in-the-loop, so
 interactive tool flows are not supported — the error surfaces to the agent
-so it can self-correct or report the need for additional input.
+so it can self-correct or report the need for additional input. Servers built
+on the v2 SDK resolve `input_required` themselves for 2025-era clients and
+report a failure when they can't.
 
 **Deprecated features:** Roots, Sampling, Logging, HTTP+SSE transport, and
 OAuth Dynamic Client Registration are still functional in the SDK but are
@@ -466,11 +469,13 @@ requests.
 ```sh
 pnpm install
 vp check
+vp run typecheck   # full tsc, including isolatedDeclarations
 vp test
 vp run test:deno   # the same suite on Deno
 vp run test:bun    # and on Bun
 vp run jsr:dry-run
 ```
 
-JSR publishes from `jsr.json`, whose import map names the JSR and npm versions;
-`package.json` only drives the Node tooling.
+`package.json` declares all dependencies, JSR ones with `jsr:` specifiers, and
+`jsr.json` holds the package metadata. Publishing uses `deno publish`, which
+rewrites the imports to the `package.json` versions.

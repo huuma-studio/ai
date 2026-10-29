@@ -31,7 +31,7 @@ export interface FetchWebsiteOptions {
 export const DEFAULT_FETCH_WEBSITE_TIMEOUT = 30_000;
 
 /** Default maximum number of response-body bytes kept per fetch. */
-export const DEFAULT_FETCH_WEBSITE_MAX_BYTES = 2 * 1024 * 1024;
+export const DEFAULT_FETCH_WEBSITE_MAX_BYTES: number = 2 * 1024 * 1024;
 
 /** How long a body that reached the cap exactly, with no known length, may
  * take to end before it is treated as truncated. */

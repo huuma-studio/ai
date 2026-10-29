@@ -11,11 +11,10 @@
  * so tests can check that the process exits.
  */
 import { writeFileSync } from "node:fs";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server, type Tool } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
-const TOOLS = [
+const TOOLS: Tool[] = [
   {
     name: "add",
     description: "Add two numbers.",
@@ -61,10 +60,10 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
-server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOLS }));
+server.setRequestHandler("tools/list", () => ({ tools: TOOLS }));
 
 server.setRequestHandler(
-  CallToolRequestSchema,
+  "tools/call",
   (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
     const { name, arguments: args } = request.params;
 

@@ -30,7 +30,7 @@ export interface ReadFileOptions {
  * Huuma API's 1 MiB message limit, leaving room for JSON escaping, the
  * truncation note, and the rest of the conversation in the same request.
  */
-export const DEFAULT_READ_FILE_MAX_BYTES = 512 * 1024;
+export const DEFAULT_READ_FILE_MAX_BYTES: number = 512 * 1024;
 
 /** Create a tool that reads a text file.
  *

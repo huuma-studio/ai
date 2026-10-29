@@ -1,23 +1,14 @@
 import { expect, test } from "vite-plus/test";
 // Dev-only SDK imports for the in-process server; publish excludes tests.
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { InMemoryTransport, Server, type Tool } from "@modelcontextprotocol/server";
 import { mcp, type McpTransport } from "./mcp.ts";
 import { callTool, ToolOutput, tools } from "../mod.ts";
 import { agent } from "../../agent/mod.ts";
 import type { BaseModel, JSONSchema, Message, ModelResult } from "../../agent/mod.ts";
 
-interface ToolDef {
-  name: string;
-  description?: string;
-  title?: string;
-  icons?: { src: string; mimeType?: string; sizes?: string[]; theme?: "light" | "dark" }[];
-  inputSchema: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-}
+type ToolDef = Tool;
 
-const ECHO_SCHEMA = {
+const ECHO_SCHEMA: Tool["inputSchema"] = {
   type: "object",
   properties: { message: { type: "string" } },
   required: ["message"],
@@ -66,9 +57,9 @@ async function connectFixture(options: { allowedTools?: string[] } = {}) {
     { name: "huuma-in-memory-fixture", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: defs }));
+  server.setRequestHandler("tools/list", () => ({ tools: defs }));
   server.setRequestHandler(
-    CallToolRequestSchema,
+    "tools/call",
     (request: { params: { name: string; arguments?: Record<string, unknown> } }) => {
       const { name, arguments: args } = request.params;
       calledWith.push(name);
@@ -98,6 +89,8 @@ async function connectFixture(options: { allowedTools?: string[] } = {}) {
           return {
             content: [{ type: "text", text: "Please specify the file path." }],
             resultType: "input_required",
+            // The 2026-07-28 spec requires inputRequests or requestState.
+            requestState: "awaiting-file-path",
           };
         default:
           return { content: [{ type: "text", text: "ok" }] };
@@ -355,14 +348,65 @@ test("mcp - tool title is surfaced in the model-visible description", async () =
   }
 });
 
+/**
+ * Transport that answers JSON-RPC by hand, so a tools/call result reaches
+ * the client exactly as written. The SDK's Server rewrites input_required
+ * results for 2025-era clients, so it cannot stand in for a server that
+ * sends one raw.
+ */
+function rawServerTransport(callResult: Record<string, unknown>): McpTransport {
+  const transport: McpTransport = {
+    async start() {},
+    async close() {
+      transport.onclose?.();
+    },
+    async send(message: { id?: number | string; method?: string }) {
+      // Notifications carry no id and get no answer.
+      if (message.id === undefined) return;
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: "2025-11-25",
+              capabilities: { tools: {} },
+              serverInfo: { name: "huuma-raw-fixture", version: "0.0.1" },
+            }
+          : message.method === "tools/list"
+            ? { tools: [{ name: "needs_input", inputSchema: { type: "object", properties: {} } }] }
+            : message.method === "tools/call"
+              ? callResult
+              : {};
+      queueMicrotask(() => transport.onmessage?.({ jsonrpc: "2.0", id: message.id, result }));
+    },
+  };
+  return transport;
+}
+
 test("mcp - resultType input_required throws a descriptive error", async () => {
+  const transport = rawServerTransport({
+    content: [{ type: "text", text: "Please specify the file path." }],
+    resultType: "input_required",
+    requestState: "awaiting-file-path",
+  });
+  const connection = await mcp({ name: "raw", transport });
+  try {
+    const needsInput = connection.tools().find((tool) => tool.name === "raw_needs_input");
+    expect(needsInput, "needs_input tool missing").toBeDefined();
+    const error = await needsInput!.call({}).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Please specify the file path.");
+  } finally {
+    await connection.close();
+  }
+});
+
+test("mcp - an SDK server reports input_required to a 2025-era client as a failure", async () => {
   const { connection } = await connectFixture();
   try {
     const needsInput = connection.tools().find((tool) => tool.name === "fixture_needs_input");
     expect(needsInput, "needs_input tool missing").toBeDefined();
     const error = await needsInput!.call({}).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Please specify the file path.");
+    expect((error as Error).message).toContain("still required input");
   } finally {
     await connection.close();
   }
@@ -383,7 +427,7 @@ async function paginatingServer(
     { name: "huuma-pagination-fixture", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  server.setRequestHandler(ListToolsRequestSchema, (request: { params?: { cursor?: string } }) => {
+  server.setRequestHandler("tools/list", (request: { params?: { cursor?: string } }) => {
     // The first request carries no params at all (the client sends
     // `listTools(undefined)`), so `params` is optional here.
     const cursor = request.params?.cursor;

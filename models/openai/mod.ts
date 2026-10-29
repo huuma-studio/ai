@@ -452,7 +452,7 @@ export function usageFrom(
 export function* flushPendingToolCalls<T extends string>(
   pendingToolCalls: Record<number, PendingToolCall>,
   modelId: T,
-  beforeIndex = Infinity,
+  beforeIndex: number = Infinity,
 ): Generator<ModelResult<T>> {
   const indexes = Object.keys(pendingToolCalls)
     .map(Number)

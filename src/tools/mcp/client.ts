@@ -1,23 +1,24 @@
 /**
  * Internal seam around the official MCP SDK.
  *
- * Every `@modelcontextprotocol/sdk` import lives in this file behind the
- * narrow types in `types.ts`, so the v1 → v2 SDK swap after the 2026-07-28
- * spec revision touches only this module (ADR 0002).
+ * Every `@modelcontextprotocol/client` import lives in this file behind the
+ * narrow types in `types.ts`, so SDK changes touch only this module
+ * (ADR 0002).
  *
- * The 2026-07-28 revision introduces a stateless protocol model where the
- * initialize handshake is optional.  SDK 1.30.0 still performs it inside
- * `connect()`, but this module no longer *depends* on handshake state for
- * its logic — the version probe is best-effort and tool calls are
- * per-request.  When a future SDK version drops the handshake entirely
- * this code will keep working unchanged.
+ * The client connects with the 2025 initialize handshake, the SDK's default
+ * and what every server understands; 2026-07-28 version negotiation is
+ * opt-in in the SDK and not enabled here. This module does not depend on
+ * handshake state: the version probe is best-effort and tool calls are
+ * per-request.
  *
  * @module
  */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  type Transport,
+} from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { JSONSchema } from "@huuma/validate";
 import type {
   McpCallResult,
@@ -53,7 +54,12 @@ export async function connect(
 ): Promise<McpClient> {
   // Sent to every server in the initialize handshake; sourced from
   // jsr.json so version bumps can't leave it behind.
-  const client = new Client({ name: jsrJson.name, version: jsrJson.version });
+  // No elicitation/sampling handlers are registered, so input_required
+  // results are never auto-fulfilled; callTool() reports them instead.
+  const client = new Client(
+    { name: jsrJson.name, version: jsrJson.version },
+    { inputRequired: { autoFulfill: false } },
+  );
   const transport = transportFrom(options);
 
   // Collect stderr from stdio transports so connection failures can surface
@@ -92,7 +98,7 @@ export async function connect(
 
     // A stdio transport may have already spawned the child process when the
     // MCP handshake fails; close so it doesn't outlive the rejected connect.
-    // SDK v1 fires an unawaited close() itself on init failure, but that is
+    // The SDK may fire an unawaited close() itself on init failure, but that is
     // an implementation detail this seam must not depend on (ADR 0002).
     await client.close().catch(() => {});
 
@@ -139,8 +145,14 @@ export async function connect(
       let cursor: string | undefined;
       let pages = 0;
       do {
+        // listTools() without a cursor walks and caches every page itself,
+        // with weaker loop guards than the ones below, so the first page is
+        // a raw request and later pages use the SDK's single-page path.
+        const options = signal ? { signal } : undefined;
         const page: Awaited<ReturnType<typeof client.listTools>> = await withAbortReason(
-          client.listTools(cursor ? { cursor } : undefined, signal ? { signal } : undefined),
+          cursor
+            ? client.listTools({ cursor }, options)
+            : client.request({ method: "tools/list" }, options),
           signal,
         );
         pages++;
@@ -181,16 +193,16 @@ export async function connect(
       return tools;
     },
     async callTool(name, args, timeout, signal) {
-      // Unset options stay absent so the request shape is unchanged.
-      const requestOptions =
-        timeout === undefined && !signal
-          ? undefined
-          : {
-              ...(timeout === undefined ? {} : { timeout }),
-              ...(signal ? { signal } : {}),
-            };
+      // allowInputRequired hands input_required results back instead of
+      // rejecting with a generic SDK error, so the check below can surface
+      // the server's own message. Unset timeout and signal stay absent.
+      const requestOptions = {
+        allowInputRequired: true,
+        ...(timeout === undefined ? {} : { timeout }),
+        ...(signal ? { signal } : {}),
+      };
       const result = await withAbortReason(
-        client.callTool({ name, arguments: args }, undefined, requestOptions),
+        client.callTool({ name, arguments: args }, requestOptions),
         signal,
       );
       const callResult = result as McpCallResult;
@@ -200,7 +212,14 @@ export async function connect(
       // from a user-in-the-loop before the result is usable.  This client
       // has no interactive loop, so MRTR results are surfaced as errors
       // rather than silently returning incomplete data.
-      if (callResult.resultType === "input_required") {
+      // The SDK strips resultType from 2025-era results, but every
+      // input_required result carries inputRequests or requestState, which
+      // a complete result never does.
+      if (
+        callResult.resultType === "input_required" ||
+        callResult.inputRequests !== undefined ||
+        callResult.requestState !== undefined
+      ) {
         const text = (callResult.content ?? [])
           .filter(
             (block): block is Extract<{ type: "text"; text: string }, { type: "text" }> =>

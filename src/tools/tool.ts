@@ -235,7 +235,7 @@ export class Tools {
   }
 
   /** Add or replace a tool in the collection. */
-  add(tool: Tool<any>) {
+  add(tool: Tool<any>): void {
     this.#tools.set(tool.name, tool);
   }
 

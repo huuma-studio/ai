@@ -20,16 +20,5 @@
   "publish": {
     "include": ["src", "models", "README.md", "LICENSE"],
     "exclude": ["**/*.test.ts", "**/testdata/"]
-  },
-  "imports": {
-    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@^0.112.5",
-    "@google/genai": "npm:@google/genai@^2.13.0",
-    "@huuma/validate": "jsr:@huuma/validate@^0.2.1",
-    "@mistralai/mistralai": "npm:@mistralai/mistralai@^2.5.0",
-    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.30.0",
-    "@std/front-matter": "jsr:@std/front-matter@^1.0.9",
-    "node-html-markdown": "npm:node-html-markdown@^2.0.0",
-    "ollama": "npm:ollama@^0.6.3",
-    "openai": "npm:openai@^6.48.0"
   }
 }
