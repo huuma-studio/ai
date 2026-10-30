@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 // Dev-only SDK import for the pre-built transport; publish excludes tests.
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { mcp, type McpTransport } from "./mcp.ts";
 
 const FIXTURE = fileURLToPath(new URL("./testdata/server.ts", import.meta.url));

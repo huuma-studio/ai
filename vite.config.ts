@@ -1,6 +1,7 @@
-import { defineConfig } from "vite-plus";
+import { defineConfig, type ViteUserConfig } from "vite-plus";
 
-export default defineConfig({
+// Typed explicitly: tsconfig enables isolatedDeclarations for JSR.
+const config: ViteUserConfig = defineConfig({
   test: {
     include: ["src/**/*.test.ts", "models/**/*.test.ts"],
     // The memory regression tests force garbage collection with gc().
@@ -16,7 +17,9 @@ export default defineConfig({
   run: {
     tasks: {
       // Runs every check JSR publish runs, including slow types.
-      "jsr:dry-run": { command: "jsr publish --dry-run", cache: false },
+      "jsr:dry-run": { command: "deno publish --dry-run", cache: false },
     },
   },
 });
+
+export default config;

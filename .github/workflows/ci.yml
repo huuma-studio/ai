@@ -15,7 +15,12 @@ jobs:
           cache: true
       # Format, lint and type check.
       - run: vp check
+      # Full tsc run: vp check skips isolatedDeclarations, which JSR needs.
+      - run: vp run typecheck
       - run: vp test
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
       # Catches JSR publish errors (slow types, missing exports) before merge.
       - run: vp run jsr:dry-run
 

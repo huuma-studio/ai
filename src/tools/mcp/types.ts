@@ -73,6 +73,10 @@ export interface McpCallResult {
   isError?: boolean;
   /** Spec 2026-07-28: result type discriminator (absent = `"complete"`). */
   resultType?: McpResultType;
+  /** Spec 2026-07-28: input requests of an `input_required` result. */
+  inputRequests?: unknown;
+  /** Spec 2026-07-28: opaque state an `input_required` result carries. */
+  requestState?: unknown;
 }
 
 /**

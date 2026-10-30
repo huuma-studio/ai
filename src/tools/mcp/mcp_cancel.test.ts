@@ -1,13 +1,11 @@
 import { expect, test } from "vite-plus/test";
 // Dev-only SDK imports for the in-process server; publish excludes tests.
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { InMemoryTransport, Server } from "@modelcontextprotocol/server";
 import { mcp, type McpTransport } from "./mcp.ts";
 import { callTool, tools } from "../mod.ts";
 import type { JSONSchema, Message, ToolMessage } from "../../agent/mod.ts";
 
-const EMPTY_SCHEMA = { type: "object", properties: {} };
+const EMPTY_SCHEMA = { type: "object" as const, properties: {} };
 
 /**
  * In-process server whose `hang` tool — and, once `hangListing` is set,
@@ -36,23 +34,23 @@ async function cancellableServer() {
       });
     });
   server.setRequestHandler(
-    ListToolsRequestSchema,
-    (_request: unknown, extra: { signal: AbortSignal }) => {
+    "tools/list",
+    (_request: unknown, ctx: { mcpReq: { signal: AbortSignal } }) => {
       state.listRequests++;
       if (!state.hangListing) {
         return { tools: [{ name: "hang", inputSchema: EMPTY_SCHEMA }] };
       }
       state.started++;
       notifyStarted();
-      return untilCancelled(extra.signal);
+      return untilCancelled(ctx.mcpReq.signal);
     },
   );
   server.setRequestHandler(
-    CallToolRequestSchema,
-    (_request: unknown, extra: { signal: AbortSignal }) => {
+    "tools/call",
+    (_request: unknown, ctx: { mcpReq: { signal: AbortSignal } }) => {
       state.started++;
       notifyStarted();
-      return untilCancelled(extra.signal);
+      return untilCancelled(ctx.mcpReq.signal);
     },
   );
 

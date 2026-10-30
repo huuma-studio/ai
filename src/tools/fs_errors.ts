@@ -11,7 +11,7 @@ export function hasErrorCode(error: unknown, ...codes: string[]): boolean {
 /** Codes Node.js reports for a missing path. */
 export const NOT_FOUND = "ENOENT";
 /** Codes Node.js reports for a denied file-system operation. */
-export const PERMISSION_DENIED = ["EACCES", "EPERM"];
+export const PERMISSION_DENIED: string[] = ["EACCES", "EPERM"];
 /** Code Node.js reports when a file operation hits a directory. */
 export const IS_A_DIRECTORY = "EISDIR";
 /** Code Node.js reports when a path already exists. */
